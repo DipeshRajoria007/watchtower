@@ -1,0 +1,94 @@
+import { describe, expect, it } from 'vitest';
+import { detectMention, extractPrContext, normalizeTask } from '../src/router/intentParser.js';
+import type { AppConfig, SlackEventEnvelope } from '../src/types/contracts.js';
+
+const config: AppConfig = {
+  platformPolicy: 'macos_only',
+  bundleTargets: ['app', 'dmg'],
+  ownerSlackUserIds: ['UOWNER1'],
+  botUserId: 'UBOT1',
+  slackBotToken: 'xoxb-test',
+  slackAppToken: 'xapp-test',
+  bugsAndUpdatesChannelId: 'C01H25RNLJH',
+  allowedChannelsForBugFix: ['C01H25RNLJH'],
+  repoPaths: {
+    newtonWeb: '/Users/dipesh/code/newton-web',
+    newtonApi: '/Users/dipesh/code/newton-api',
+  },
+  githubOwnerTokenEnv: 'GITHUB_TOKEN',
+  workflowTimeouts: {
+    prReviewMs: 720000,
+    bugFixMs: 2700000,
+  },
+  unknownTaskPolicy: 'desktop_only',
+  uncertainRepoPolicy: 'desktop_only',
+  unmappedPrRepoPolicy: 'desktop_only',
+  maxConcurrentJobs: 2,
+  repoClassifierThreshold: 0.75,
+  allowedPrOrg: 'Newton-School',
+};
+
+const baseEvent: SlackEventEnvelope = {
+  eventId: 'Ev1',
+  channelId: 'C01H25RNLJH',
+  threadTs: '123.45',
+  eventTs: '123.45',
+  userId: 'U123',
+  text: '',
+  rawEvent: {},
+};
+
+describe('intentParser', () => {
+  it('detects bot and owner mentions', () => {
+    expect(detectMention('ping <@UBOT1>', config)).toEqual({ detected: true, type: 'bot' });
+    expect(detectMention('ping <@UOWNER1>', config)).toEqual({ detected: true, type: 'owner' });
+    expect(detectMention('no mention', config)).toEqual({ detected: false, type: 'none' });
+  });
+
+  it('extracts PR context from text', () => {
+    const result = extractPrContext(['https://github.com/Newton-School/newton-web/pull/123']);
+    expect(result?.owner).toBe('Newton-School');
+    expect(result?.repo).toBe('newton-web');
+    expect(result?.number).toBe(123);
+  });
+
+  it('classifies PR review intent', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        text: '<@UBOT1> please review this PR https://github.com/Newton-School/newton-web/pull/123',
+      },
+      config,
+      [],
+    );
+
+    expect(task.intent).toBe('PR_REVIEW');
+    expect(task.mentionDetected).toBe(true);
+    expect(task.prContext?.repo).toBe('newton-web');
+  });
+
+  it('classifies bug-fix intent only for allowed channel', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        text: '<@UBOT1> fix this bug please',
+      },
+      config,
+      [],
+    );
+
+    expect(task.intent).toBe('BUG_FIX');
+
+    const nonAllowed = normalizeTask(
+      {
+        ...baseEvent,
+        channelId: 'COTHER',
+        text: '<@UBOT1> fix this bug please',
+      },
+      config,
+      [],
+    );
+
+    expect(nonAllowed.intent).toBe('UNKNOWN');
+  });
+});

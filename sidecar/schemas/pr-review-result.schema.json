@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["status", "summary", "prUrl"],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "no_findings"]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "prUrl": {
+      "type": "string",
+      "pattern": "^https://github\\.com/.+"
+    }
+  }
+}
