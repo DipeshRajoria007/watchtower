@@ -39,6 +39,22 @@ function parseOwnerIds(raw: string): string[] {
     .filter(Boolean);
 }
 
+function parseChannelIds(raw: string): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const value of raw.split(',')) {
+    const id = value.trim();
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    result.push(id);
+  }
+
+  return result;
+}
+
 export function loadConfigFromDb(dbPath: string): AppConfig {
   const db = new Database(dbPath);
 
@@ -80,13 +96,14 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
 
 function mapSettingsToConfig(settings: SettingsRow): AppConfig {
   const ownerSlackUserIds = parseOwnerIds(settings.owner_slack_user_ids);
+  const bugFixChannelIds = parseChannelIds(settings.bugs_and_updates_channel_id);
 
   const missingFields: string[] = [];
   if (!settings.slack_bot_token.trim()) missingFields.push('slack_bot_token');
   if (!settings.slack_app_token.trim()) missingFields.push('slack_app_token');
   if (!settings.bot_user_id.trim()) missingFields.push('bot_user_id');
   if (ownerSlackUserIds.length === 0) missingFields.push('owner_slack_user_ids');
-  if (!settings.bugs_and_updates_channel_id.trim()) missingFields.push('bugs_and_updates_channel_id');
+  if (bugFixChannelIds.length === 0) missingFields.push('bugs_and_updates_channel_id');
   if (!settings.newton_web_path.trim()) missingFields.push('newton_web_path');
   if (!settings.newton_api_path.trim()) missingFields.push('newton_api_path');
 
@@ -106,8 +123,8 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
     botUserId: settings.bot_user_id.trim(),
     slackBotToken: settings.slack_bot_token.trim(),
     slackAppToken: settings.slack_app_token.trim(),
-    bugsAndUpdatesChannelId: settings.bugs_and_updates_channel_id.trim(),
-    allowedChannelsForBugFix: [settings.bugs_and_updates_channel_id.trim()],
+    bugsAndUpdatesChannelId: bugFixChannelIds[0],
+    allowedChannelsForBugFix: bugFixChannelIds,
     repoPaths: {
       newtonWeb,
       newtonApi,

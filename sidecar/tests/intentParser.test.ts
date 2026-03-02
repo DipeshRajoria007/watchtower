@@ -10,7 +10,7 @@ const config: AppConfig = {
   slackBotToken: 'xoxb-test',
   slackAppToken: 'xapp-test',
   bugsAndUpdatesChannelId: 'C01H25RNLJH',
-  allowedChannelsForBugFix: ['C01H25RNLJH'],
+  allowedChannelsForBugFix: ['C01H25RNLJH', 'C02BUGS'],
   repoPaths: {
     newtonWeb: '/Users/dipesh/code/newton-web',
     newtonApi: '/Users/dipesh/code/newton-api',
@@ -78,6 +78,18 @@ describe('intentParser', () => {
 
     expect(task.intent).toBe('BUG_FIX');
 
+    const secondAllowed = normalizeTask(
+      {
+        ...baseEvent,
+        channelId: 'C02BUGS',
+        text: '<@UBOT1> fix this bug please',
+      },
+      config,
+      [],
+    );
+
+    expect(secondAllowed.intent).toBe('BUG_FIX');
+
     const nonAllowed = normalizeTask(
       {
         ...baseEvent,
@@ -89,5 +101,20 @@ describe('intentParser', () => {
     );
 
     expect(nonAllowed.intent).toBe('UNKNOWN');
+  });
+
+  it('classifies PR review in any channel when mentioned', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        channelId: 'CANY123',
+        text: '<@UBOT1> review https://github.com/Newton-School/newton-web/pull/22',
+      },
+      config,
+      [],
+    );
+
+    expect(task.intent).toBe('PR_REVIEW');
+    expect(task.mentionDetected).toBe(true);
   });
 });

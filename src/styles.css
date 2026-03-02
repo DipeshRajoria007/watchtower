@@ -366,6 +366,12 @@ h2 {
   font-family: 'IBM Plex Mono', 'SF Mono', 'Menlo', monospace;
 }
 
+.field-hint {
+  color: #9aa4bb;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .field input {
   border: 1px solid #444;
   border-radius: 9px;

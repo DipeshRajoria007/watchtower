@@ -18,7 +18,7 @@ Watchtower is a macOS-only Tauri desktop automation app that listens to Slack me
 4. Open **Settings** tab in app and fill required values:
    - Slack bot/app tokens
    - owner IDs and bot user ID
-   - channel ID
+   - bug-fix channel IDs (comma separated, e.g. `C01...,C02...`)
    - `newton-web` and `newton-api` absolute local paths
    - concurrency/timeouts/classifier threshold
 5. Save settings. Sidecar starts automatically once settings are complete.
@@ -31,4 +31,5 @@ Watchtower is a macOS-only Tauri desktop automation app that listens to Slack me
 
 - Supported platform: macOS only.
 - Runtime workflow config is no longer loaded from `.env`; it is managed from the app Settings page.
+- Mention events are listened across all channels where the bot is present; bug-fix auto-run is restricted to configured bug-fix channel IDs.
 - `gh auth login` is recommended for GitHub auth. If unavailable, Codex GitHub MCP auth can be used.

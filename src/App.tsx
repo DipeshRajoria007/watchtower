@@ -277,13 +277,17 @@ function App() {
 
             <div className="field-group">
               <label className="field">
-                <span>Bugs & Updates Channel ID</span>
+                <span>Bug-fix Channel IDs (comma separated)</span>
                 <input
                   type="text"
                   value={settings.bugsAndUpdatesChannelId}
                   onChange={event => setSettings({ ...settings, bugsAndUpdatesChannelId: event.target.value })}
-                  placeholder="C01H25RNLJH"
+                  placeholder="C01H25RNLJH,C02XXXXXXX"
                 />
+                <small className="field-hint">
+                  Mentions are processed from all channels where the bot is present. This list only controls where
+                  bug-fix workflow auto-runs.
+                </small>
               </label>
 
               <label className="field">

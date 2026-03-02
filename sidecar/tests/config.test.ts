@@ -57,7 +57,7 @@ describe('loadConfigFromDb', () => {
       'xapp-valid',
       'U1,U2',
       'UBOT',
-      'C01H25RNLJH',
+      'C01H25RNLJH, C02BUGS, C01H25RNLJH',
       '/Users/dipesh/code/newton-web',
       '/Users/dipesh/code/newton-api',
       2,
@@ -71,6 +71,8 @@ describe('loadConfigFromDb', () => {
     const config = loadConfigFromDb(dbPath);
     expect(config.botUserId).toBe('UBOT');
     expect(config.ownerSlackUserIds).toEqual(['U1', 'U2']);
+    expect(config.allowedChannelsForBugFix).toEqual(['C01H25RNLJH', 'C02BUGS']);
+    expect(config.bugsAndUpdatesChannelId).toBe('C01H25RNLJH');
     expect(config.repoPaths.newtonWeb).toBe('/Users/dipesh/code/newton-web');
   });
 

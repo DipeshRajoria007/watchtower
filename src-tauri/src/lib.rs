@@ -432,6 +432,10 @@ fn has_owner_ids(raw: &str) -> bool {
     raw.split(',').any(|value| !value.trim().is_empty())
 }
 
+fn has_channel_ids(raw: &str) -> bool {
+    raw.split(',').any(|value| !value.trim().is_empty())
+}
+
 fn is_absolute_directory(path_value: &str) -> bool {
     let path = Path::new(path_value.trim());
     path.is_absolute() && path.is_dir()
@@ -442,7 +446,7 @@ fn is_settings_complete(settings: &AppSettings) -> bool {
         && !settings.slack_app_token.trim().is_empty()
         && !settings.bot_user_id.trim().is_empty()
         && has_owner_ids(&settings.owner_slack_user_ids)
-        && !settings.bugs_and_updates_channel_id.trim().is_empty()
+        && has_channel_ids(&settings.bugs_and_updates_channel_id)
         && is_absolute_directory(&settings.newton_web_path)
         && is_absolute_directory(&settings.newton_api_path)
 }
