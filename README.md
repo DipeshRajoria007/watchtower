@@ -13,9 +13,10 @@ Watchtower is a macOS-only Tauri desktop automation app that listens to Slack me
 ## Quick Start
 
 1. Copy `.env.example` to `.env` and fill values.
-2. Install root deps: `npm install`
-3. Install sidecar deps: `npm --prefix sidecar install`
-4. Run app: `npm run tauri:dev`
+2. Ensure GitHub auth is available via `gh auth login` (preferred) or existing Codex GitHub MCP auth.
+3. Install root deps: `npm install`
+4. Install sidecar deps: `npm --prefix sidecar install`
+5. Run app: `npm run tauri:dev`
 
 ## Build (macOS)
 
@@ -26,3 +27,4 @@ Watchtower is a macOS-only Tauri desktop automation app that listens to Slack me
 - Supported platform: macOS only.
 - Requires local access to `/Users/dipesh/code/newton-web` and `/Users/dipesh/code/newton-api`.
 - Requires `codex` CLI authenticated on host.
+- GitHub token in `.env` is not required; sidecar resolves auth via `gh auth token` and falls back to Codex GitHub MCP.

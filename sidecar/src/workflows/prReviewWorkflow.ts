@@ -11,6 +11,7 @@ import { fetchThreadContext } from '../slack/threadContext.js';
 import { extractPrContext } from '../router/intentParser.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { runCodex } from '../codex/runCodex.js';
+import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 
 function mapRepoPath(config: AppConfig, pr: PrContext): string | null {
   if (pr.repo === 'newton-web') {
@@ -83,12 +84,15 @@ export async function runPrReviewWorkflow(params: {
     text: 'Running PR review...',
   });
 
+  const githubToken = await resolveGithubTokenForCodex();
+
   const prompt = `
 You are executing Watchtower PR review automation.
 
 Context:
 - PR URL: ${prContext.url}
 - Repository path: ${repoPath}
+- GitHub auth mode: ${githubAuthModeHint(Boolean(githubToken))}
 
 Requirements:
 1. Use the frontend-pr-review skill for analysis.
@@ -102,7 +106,7 @@ Requirements:
     prompt,
     timeoutMs: config.workflowTimeouts.prReviewMs,
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/pr-review-result.schema.json'),
-    githubToken: process.env[config.githubOwnerTokenEnv],
+    githubToken,
   };
 
   const result = await runCodex(request);

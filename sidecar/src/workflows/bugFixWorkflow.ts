@@ -5,6 +5,7 @@ import { fetchThreadContext } from '../slack/threadContext.js';
 import { classifyRepo } from '../router/repoClassifier.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { runCodex } from '../codex/runCodex.js';
+import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 
 export async function runBugFixWorkflow(params: {
   task: NormalizedTask;
@@ -53,11 +54,16 @@ export async function runBugFixWorkflow(params: {
     text: `Working on bug fix in ${classification.selectedRepo}...`,
   });
 
+  const githubToken = await resolveGithubTokenForCodex();
+
   const prompt = `
 You are running Watchtower bug-fix automation.
 
 Thread summary:
 ${texts.join('\n---\n')}
+
+GitHub auth mode:
+${githubAuthModeHint(Boolean(githubToken))}
 
 Requirements:
 1. Work only in repo path ${repoPath}
@@ -73,7 +79,7 @@ Requirements:
     prompt,
     timeoutMs: config.workflowTimeouts.bugFixMs,
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/bug-fix-result.schema.json'),
-    githubToken: process.env[config.githubOwnerTokenEnv],
+    githubToken,
   };
 
   const result = await runCodex(request);

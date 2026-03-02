@@ -15,7 +15,6 @@ const config: AppConfig = {
     newtonWeb: '/Users/dipesh/code/newton-web',
     newtonApi: '/Users/dipesh/code/newton-api',
   },
-  githubOwnerTokenEnv: 'GITHUB_TOKEN',
   workflowTimeouts: {
     prReviewMs: 720000,
     bugFixMs: 2700000,

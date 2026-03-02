@@ -14,7 +14,6 @@ export interface AppConfig {
     newtonWeb: string;
     newtonApi: string;
   };
-  githubOwnerTokenEnv: string;
   workflowTimeouts: {
     prReviewMs: number;
     bugFixMs: number;

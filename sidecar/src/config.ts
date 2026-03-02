@@ -11,7 +11,6 @@ const schema = z.object({
   BUGS_AND_UPDATES_CHANNEL_ID: z.string().default('C01H25RNLJH'),
   NEWTON_WEB_PATH: z.string().default('/Users/dipesh/code/newton-web'),
   NEWTON_API_PATH: z.string().default('/Users/dipesh/code/newton-api'),
-  GITHUB_TOKEN: z.string().min(1),
   MAX_CONCURRENT_JOBS: z.string().default('2'),
   PR_REVIEW_TIMEOUT_MS: z.string().default('720000'),
   BUG_FIX_TIMEOUT_MS: z.string().default('2700000'),
@@ -56,7 +55,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       newtonWeb,
       newtonApi,
     },
-    githubOwnerTokenEnv: 'GITHUB_TOKEN',
     workflowTimeouts: {
       prReviewMs: Number(parsed.data.PR_REVIEW_TIMEOUT_MS),
       bugFixMs: Number(parsed.data.BUG_FIX_TIMEOUT_MS),
