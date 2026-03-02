@@ -15,7 +15,7 @@ body {
 }
 
 header {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 h1 {
@@ -33,6 +33,26 @@ section {
   border-radius: 12px;
   padding: 12px 16px;
   margin-bottom: 14px;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tab {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.tab.active {
+  background: #dbeafe;
+  border-color: #60a5fa;
 }
 
 .run-list {
@@ -72,6 +92,61 @@ section {
 
 .status {
   color: #334155;
+}
+
+.settings-form {
+  display: grid;
+  gap: 10px;
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+}
+
+.field span {
+  font-size: 13px;
+  color: #334155;
+}
+
+.field input {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 14px;
+  background: #fff;
+}
+
+.actions {
+  margin-top: 6px;
+}
+
+.actions button {
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.warning {
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fbbf24;
+  border-radius: 8px;
+  padding: 6px 8px;
+  width: fit-content;
+}
+
+.success {
+  color: #166534;
 }
 
 .muted {

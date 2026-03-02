@@ -8,15 +8,20 @@ Watchtower is a macOS-only Tauri desktop automation app that listens to Slack me
 - Node sidecar orchestrator supervised by Tauri
 - Slack mention routing for PR review and bug-fix workflows
 - Guardrails for repo selection, timeout handling, dedupe, and retries
-- SQLite job/event store with run history surfaced in UI
+- SQLite-backed settings and run history
 
 ## Quick Start
 
-1. Copy `.env.example` to `.env` and fill values.
-2. Ensure GitHub auth is available via `gh auth login` (preferred) or existing Codex GitHub MCP auth.
-3. Install root deps: `npm install`
-4. Install sidecar deps: `npm --prefix sidecar install`
-5. Run app: `npm run tauri:dev`
+1. Install root deps: `npm install`
+2. Install sidecar deps: `npm --prefix sidecar install`
+3. Run app: `npm run tauri:dev`
+4. Open **Settings** tab in app and fill required values:
+   - Slack bot/app tokens
+   - owner IDs and bot user ID
+   - channel ID
+   - `newton-web` and `newton-api` absolute local paths
+   - concurrency/timeouts/classifier threshold
+5. Save settings. Sidecar starts automatically once settings are complete.
 
 ## Build (macOS)
 
@@ -25,6 +30,5 @@ Watchtower is a macOS-only Tauri desktop automation app that listens to Slack me
 ## Notes
 
 - Supported platform: macOS only.
-- Requires local access to `/Users/dipesh/code/newton-web` and `/Users/dipesh/code/newton-api`.
-- Requires `codex` CLI authenticated on host.
-- GitHub token in `.env` is not required; sidecar resolves auth via `gh auth token` and falls back to Codex GitHub MCP.
+- Runtime workflow config is no longer loaded from `.env`; it is managed from the app Settings page.
+- `gh auth login` is recommended for GitHub auth. If unavailable, Codex GitHub MCP auth can be used.

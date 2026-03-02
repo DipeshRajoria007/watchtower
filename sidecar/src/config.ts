@@ -1,69 +1,126 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 import { z } from 'zod';
 import type { AppConfig } from './types/contracts.js';
 
-const schema = z.object({
-  SLACK_BOT_TOKEN: z.string().min(1),
-  SLACK_APP_TOKEN: z.string().min(1),
-  SLACK_OWNER_USER_IDS: z.string().min(1),
-  SLACK_BOT_USER_ID: z.string().min(1),
-  BUGS_AND_UPDATES_CHANNEL_ID: z.string().default('C01H25RNLJH'),
-  NEWTON_WEB_PATH: z.string().default('/Users/dipesh/code/newton-web'),
-  NEWTON_API_PATH: z.string().default('/Users/dipesh/code/newton-api'),
-  MAX_CONCURRENT_JOBS: z.string().default('2'),
-  PR_REVIEW_TIMEOUT_MS: z.string().default('720000'),
-  BUG_FIX_TIMEOUT_MS: z.string().default('2700000'),
-  REPO_CLASSIFIER_THRESHOLD: z.string().default('0.75'),
+const settingsSchema = z.object({
+  slack_bot_token: z.string(),
+  slack_app_token: z.string(),
+  owner_slack_user_ids: z.string(),
+  bot_user_id: z.string(),
+  bugs_and_updates_channel_id: z.string().default('C01H25RNLJH'),
+  newton_web_path: z.string(),
+  newton_api_path: z.string(),
+  max_concurrent_jobs: z.number().int().positive().default(2),
+  pr_review_timeout_ms: z.number().int().positive().default(720000),
+  bug_fix_timeout_ms: z.number().int().positive().default(2700000),
+  repo_classifier_threshold: z.number().min(0).max(1).default(0.75),
 });
 
-function mustBeAbsoluteExistingDir(p: string): string {
+type SettingsRow = z.infer<typeof settingsSchema>;
+
+function mustBeAbsoluteExistingDir(p: string, label: string): string {
   if (!path.isAbsolute(p)) {
-    throw new Error(`Path must be absolute: ${p}`);
+    throw new Error(`${label} must be an absolute path: ${p}`);
   }
   const real = fs.realpathSync(p);
   const stat = fs.statSync(real);
   if (!stat.isDirectory()) {
-    throw new Error(`Path must be a directory: ${real}`);
+    throw new Error(`${label} must point to an existing directory: ${real}`);
   }
   return real;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
-  const parsed = schema.safeParse(env);
-  if (!parsed.success) {
-    throw new Error(`Invalid env config: ${parsed.error.message}`);
-  }
-
-  const ownerSlackUserIds = parsed.data.SLACK_OWNER_USER_IDS.split(',')
+function parseOwnerIds(raw: string): string[] {
+  return raw
+    .split(',')
     .map(value => value.trim())
     .filter(Boolean);
+}
 
-  const newtonWeb = mustBeAbsoluteExistingDir(parsed.data.NEWTON_WEB_PATH);
-  const newtonApi = mustBeAbsoluteExistingDir(parsed.data.NEWTON_API_PATH);
+export function loadConfigFromDb(dbPath: string): AppConfig {
+  const db = new Database(dbPath);
+
+  try {
+    const row = db
+      .prepare(
+        `SELECT
+          slack_bot_token,
+          slack_app_token,
+          owner_slack_user_ids,
+          bot_user_id,
+          bugs_and_updates_channel_id,
+          newton_web_path,
+          newton_api_path,
+          max_concurrent_jobs,
+          pr_review_timeout_ms,
+          bug_fix_timeout_ms,
+          repo_classifier_threshold
+         FROM app_settings
+         WHERE id = 1
+         LIMIT 1`
+      )
+      .get() as Record<string, unknown> | undefined;
+
+    if (!row) {
+      throw new Error('Settings row missing; open app settings page and save configuration.');
+    }
+
+    const parsed = settingsSchema.safeParse(row);
+    if (!parsed.success) {
+      throw new Error(`Invalid settings row: ${parsed.error.message}`);
+    }
+
+    return mapSettingsToConfig(parsed.data);
+  } finally {
+    db.close();
+  }
+}
+
+function mapSettingsToConfig(settings: SettingsRow): AppConfig {
+  const ownerSlackUserIds = parseOwnerIds(settings.owner_slack_user_ids);
+
+  const missingFields: string[] = [];
+  if (!settings.slack_bot_token.trim()) missingFields.push('slack_bot_token');
+  if (!settings.slack_app_token.trim()) missingFields.push('slack_app_token');
+  if (!settings.bot_user_id.trim()) missingFields.push('bot_user_id');
+  if (ownerSlackUserIds.length === 0) missingFields.push('owner_slack_user_ids');
+  if (!settings.bugs_and_updates_channel_id.trim()) missingFields.push('bugs_and_updates_channel_id');
+  if (!settings.newton_web_path.trim()) missingFields.push('newton_web_path');
+  if (!settings.newton_api_path.trim()) missingFields.push('newton_api_path');
+
+  if (missingFields.length > 0) {
+    throw new Error(
+      `Settings incomplete (${missingFields.join(', ')}). Update Watchtower settings in the desktop app.`
+    );
+  }
+
+  const newtonWeb = mustBeAbsoluteExistingDir(settings.newton_web_path, 'newton_web_path');
+  const newtonApi = mustBeAbsoluteExistingDir(settings.newton_api_path, 'newton_api_path');
 
   return {
     platformPolicy: 'macos_only',
     bundleTargets: ['app', 'dmg'],
     ownerSlackUserIds,
-    botUserId: parsed.data.SLACK_BOT_USER_ID,
-    slackBotToken: parsed.data.SLACK_BOT_TOKEN,
-    slackAppToken: parsed.data.SLACK_APP_TOKEN,
-    bugsAndUpdatesChannelId: parsed.data.BUGS_AND_UPDATES_CHANNEL_ID,
-    allowedChannelsForBugFix: [parsed.data.BUGS_AND_UPDATES_CHANNEL_ID],
+    botUserId: settings.bot_user_id.trim(),
+    slackBotToken: settings.slack_bot_token.trim(),
+    slackAppToken: settings.slack_app_token.trim(),
+    bugsAndUpdatesChannelId: settings.bugs_and_updates_channel_id.trim(),
+    allowedChannelsForBugFix: [settings.bugs_and_updates_channel_id.trim()],
     repoPaths: {
       newtonWeb,
       newtonApi,
     },
     workflowTimeouts: {
-      prReviewMs: Number(parsed.data.PR_REVIEW_TIMEOUT_MS),
-      bugFixMs: Number(parsed.data.BUG_FIX_TIMEOUT_MS),
+      prReviewMs: settings.pr_review_timeout_ms,
+      bugFixMs: settings.bug_fix_timeout_ms,
     },
     unknownTaskPolicy: 'desktop_only',
     uncertainRepoPolicy: 'desktop_only',
     unmappedPrRepoPolicy: 'desktop_only',
-    maxConcurrentJobs: Number(parsed.data.MAX_CONCURRENT_JOBS),
-    repoClassifierThreshold: Number(parsed.data.REPO_CLASSIFIER_THRESHOLD),
+    maxConcurrentJobs: settings.max_concurrent_jobs,
+    repoClassifierThreshold: settings.repo_classifier_threshold,
     allowedPrOrg: 'Newton-School',
   };
 }

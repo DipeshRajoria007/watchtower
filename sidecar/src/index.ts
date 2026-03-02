@@ -1,9 +1,7 @@
 import path from 'node:path';
-import fs from 'node:fs';
 import { v4 as uuidv4 } from 'uuid';
 import type { WebClient } from '@slack/web-api';
-import dotenv from 'dotenv';
-import { loadConfig } from './config.js';
+import { loadConfigFromDb } from './config.js';
 import { logger } from './logging/logger.js';
 import { notifyDesktop } from './notify/desktopNotifier.js';
 import { assertMacOS } from './platform.js';
@@ -14,23 +12,10 @@ import { fetchThreadContext } from './slack/threadContext.js';
 import { JobStore } from './state/jobStore.js';
 import type { SlackEventEnvelope } from './types/contracts.js';
 
-const envPathCandidates = [
-  process.env.WATCHTOWER_ENV_PATH,
-  path.resolve(process.cwd(), '.env'),
-  path.resolve(process.cwd(), '../.env'),
-].filter(Boolean) as string[];
-
-for (const candidate of envPathCandidates) {
-  if (fs.existsSync(candidate)) {
-    dotenv.config({ path: candidate, override: false });
-    break;
-  }
-}
-
 assertMacOS();
 
-const config = loadConfig();
 const dbPath = process.env.WATCHTOWER_DB_PATH ?? path.resolve(process.cwd(), 'watchtower.db');
+const config = loadConfigFromDb(dbPath);
 const store = new JobStore(dbPath);
 
 const queue: Array<{ event: SlackEventEnvelope; client: WebClient }> = [];
