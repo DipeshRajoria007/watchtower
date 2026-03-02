@@ -1,0 +1,14 @@
+node_modules
+.DS_Store
+dist
+src-tauri/target
+src-tauri/gen
+*.log
+.env
+sidecar/node_modules
+sidecar/dist
+sidecar/.env
+*.sqlite
+*.sqlite-journal
+*.db
+*.db-journal
