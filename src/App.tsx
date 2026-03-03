@@ -317,28 +317,6 @@ function App() {
 
       <section className="panel-grid">
         <section className="panel">
-          <PanelHeader title="Last 50 Runs" subtitle="Most recent execution history" count={summary.recent} />
-          <RunList
-            runs={data?.recentRuns ?? []}
-            empty="No run history yet."
-            selectedRunId={selectedRunId}
-            onSelect={runId => setSelectedRunId(runId)}
-          />
-        </section>
-
-        <section className="panel">
-          <PanelHeader title="Failures" subtitle="Items requiring manual attention" count={summary.failures} />
-          <RunList
-            runs={data?.failures ?? []}
-            empty="No failures. System stable."
-            selectedRunId={selectedRunId}
-            onSelect={runId => setSelectedRunId(runId)}
-          />
-        </section>
-      </section>
-
-      <section className="panel-grid">
-        <section className="panel">
           <PanelHeader
             title="Execution Trace"
             subtitle={selectedRun ? `job=${selectedRun.id}` : 'Select a run to inspect every step'}
@@ -354,6 +332,28 @@ function App() {
             count={liveSidecarLogs.length}
           />
           <LiveLogConsole lines={liveSidecarLogs} />
+        </section>
+      </section>
+
+      <section className="panel-grid">
+        <section className="panel">
+          <PanelHeader title="Failures" subtitle="Items requiring manual attention" count={summary.failures} />
+          <RunList
+            runs={data?.failures ?? []}
+            empty="No failures. System stable."
+            selectedRunId={selectedRunId}
+            onSelect={runId => setSelectedRunId(runId)}
+          />
+        </section>
+
+        <section className="panel">
+          <PanelHeader title="Last 50 Runs" subtitle="Most recent execution history" count={summary.recent} />
+          <RunList
+            runs={data?.recentRuns ?? []}
+            empty="No run history yet."
+            selectedRunId={selectedRunId}
+            onSelect={runId => setSelectedRunId(runId)}
+          />
         </section>
       </section>
 
