@@ -78,6 +78,60 @@ struct DashboardData {
     active_jobs: Vec<RunSummary>,
     recent_runs: Vec<RunSummary>,
     failures: Vec<RunSummary>,
+    metrics: DashboardMetrics,
+    learning: LearningInsights,
+    recommendations: Vec<DashboardRecommendation>,
+    channel_heat: Vec<ChannelHeat>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DashboardMetrics {
+    runs_24h: i64,
+    success_rate_24h: f64,
+    failed_runs_24h: i64,
+    avg_resolution_seconds_24h: i64,
+    unknown_tasks_24h: i64,
+    catchup_recovered_24h: i64,
+    success_streak: i64,
+    chaos_index: i64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DashboardRecommendation {
+    id: String,
+    priority: String,
+    title: String,
+    detail: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ChannelHeat {
+    channel_id: String,
+    runs: i64,
+    failures: i64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LearningInsights {
+    signals_24h: i64,
+    corrections_learned: i64,
+    corrections_applied_24h: i64,
+    personality_profiles: i64,
+    dominant_personality_mode: String,
+    top_failure_kind: String,
+    top_failure_count: i64,
+    profiles_by_mode: Vec<PersonalityModeStats>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PersonalityModeStats {
+    mode: String,
+    count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,6 +246,10 @@ async fn get_dashboard_data(state: State<'_, AppState>) -> Result<DashboardData,
         &connection,
         "SELECT id, workflow, status, channel_id, thread_ts, created_at, updated_at, error_message FROM jobs WHERE status = 'FAILED' ORDER BY updated_at DESC LIMIT 50",
     )?;
+    let metrics = query_dashboard_metrics(&connection)?;
+    let learning = query_learning_insights(&connection)?;
+    let channel_heat = query_channel_heat(&connection)?;
+    let recommendations = build_recommendations(&metrics, &channel_heat);
 
     let settings = read_app_settings(&connection)?;
 
@@ -201,6 +259,10 @@ async fn get_dashboard_data(state: State<'_, AppState>) -> Result<DashboardData,
         active_jobs,
         recent_runs,
         failures,
+        metrics,
+        learning,
+        recommendations,
+        channel_heat,
     })
 }
 
@@ -291,6 +353,296 @@ fn query_runs(connection: &Connection, sql: &str) -> Result<Vec<RunSummary>, Str
     Ok(output)
 }
 
+fn query_dashboard_metrics(connection: &Connection) -> Result<DashboardMetrics, String> {
+    let runs_24h: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM jobs WHERE julianday(created_at) >= julianday('now', '-1 day')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("db query runs_24h failed: {err}"))?;
+
+    let failed_runs_24h: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM jobs WHERE status = 'FAILED' AND julianday(created_at) >= julianday('now', '-1 day')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("db query failed_runs_24h failed: {err}"))?;
+
+    let success_runs_24h: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM jobs WHERE status = 'SUCCESS' AND julianday(created_at) >= julianday('now', '-1 day')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("db query success_runs_24h failed: {err}"))?;
+
+    let avg_resolution_seconds_24h: f64 = connection
+        .query_row(
+            "SELECT COALESCE(AVG((julianday(updated_at) - julianday(created_at)) * 86400.0), 0.0)
+             FROM jobs
+             WHERE julianday(created_at) >= julianday('now', '-1 day')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("db query avg_resolution_seconds_24h failed: {err}"))?;
+
+    let unknown_tasks_24h: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM jobs WHERE workflow = 'UNKNOWN' AND julianday(created_at) >= julianday('now', '-1 day')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("db query unknown_tasks_24h failed: {err}"))?;
+
+    let catchup_recovered_24h: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE event_id LIKE 'replay:%' AND julianday(created_at) >= julianday('now', '-1 day')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("db query catchup_recovered_24h failed: {err}"))?;
+
+    let success_rate_24h = if runs_24h <= 0 {
+        100.0
+    } else {
+        ((success_runs_24h as f64 / runs_24h as f64) * 100.0 * 10.0).round() / 10.0
+    };
+
+    let success_streak = query_success_streak(connection)?;
+    let mut chaos_index = failed_runs_24h * 4 + unknown_tasks_24h * 2;
+    if avg_resolution_seconds_24h >= 600.0 {
+        chaos_index += 2;
+    }
+    chaos_index = chaos_index.clamp(0, 100);
+
+    Ok(DashboardMetrics {
+        runs_24h,
+        success_rate_24h,
+        failed_runs_24h,
+        avg_resolution_seconds_24h: avg_resolution_seconds_24h.round() as i64,
+        unknown_tasks_24h,
+        catchup_recovered_24h,
+        success_streak,
+        chaos_index,
+    })
+}
+
+fn query_success_streak(connection: &Connection) -> Result<i64, String> {
+    let mut stmt = connection
+        .prepare("SELECT status FROM jobs ORDER BY updated_at DESC LIMIT 200")
+        .map_err(|err| format!("db prepare success streak failed: {err}"))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|err| format!("db query success streak failed: {err}"))?;
+
+    let mut streak = 0i64;
+    for row in rows {
+        let status = row.map_err(|err| format!("db row success streak failed: {err}"))?;
+        if status == "SUCCESS" {
+            streak += 1;
+        } else {
+            break;
+        }
+    }
+    Ok(streak)
+}
+
+fn query_channel_heat(connection: &Connection) -> Result<Vec<ChannelHeat>, String> {
+    let mut stmt = connection
+        .prepare(
+            "SELECT
+               channel_id,
+               COUNT(*) as runs,
+               SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failures
+             FROM jobs
+             WHERE channel_id != ''
+               AND julianday(created_at) >= julianday('now', '-7 day')
+             GROUP BY channel_id
+             ORDER BY runs DESC
+             LIMIT 8",
+        )
+        .map_err(|err| format!("db prepare channel heat failed: {err}"))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ChannelHeat {
+                channel_id: row.get(0)?,
+                runs: row.get(1)?,
+                failures: row.get(2)?,
+            })
+        })
+        .map_err(|err| format!("db query channel heat failed: {err}"))?;
+
+    let mut output = Vec::new();
+    for row in rows {
+        output.push(row.map_err(|err| format!("db row channel heat failed: {err}"))?);
+    }
+    Ok(output)
+}
+
+fn query_learning_insights(connection: &Connection) -> Result<LearningInsights, String> {
+    let signals_24h: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM learning_signals WHERE julianday(created_at) >= julianday('now', '-1 day')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("db query learning_signals 24h failed: {err}"))?;
+
+    let corrections_learned: i64 = connection
+        .query_row("SELECT COUNT(*) FROM intent_corrections", [], |row| row.get(0))
+        .map_err(|err| format!("db query intent corrections failed: {err}"))?;
+
+    let corrections_applied_24h: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM learning_signals WHERE correction_applied = 1 AND julianday(created_at) >= julianday('now', '-1 day')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("db query correction-applied 24h failed: {err}"))?;
+
+    let personality_profiles: i64 = connection
+        .query_row("SELECT COUNT(*) FROM personality_profiles", [], |row| row.get(0))
+        .map_err(|err| format!("db query personality profile count failed: {err}"))?;
+
+    let mut mode_stmt = connection
+        .prepare(
+            "SELECT mode, COUNT(*) as cnt
+             FROM personality_profiles
+             GROUP BY mode
+             ORDER BY cnt DESC, mode ASC
+             LIMIT 8",
+        )
+        .map_err(|err| format!("db prepare personality mode stats failed: {err}"))?;
+    let mode_rows = mode_stmt
+        .query_map([], |row| {
+            Ok(PersonalityModeStats {
+                mode: row.get(0)?,
+                count: row.get(1)?,
+            })
+        })
+        .map_err(|err| format!("db query personality mode stats failed: {err}"))?;
+
+    let mut profiles_by_mode = Vec::new();
+    for row in mode_rows {
+        profiles_by_mode.push(row.map_err(|err| format!("db row personality mode failed: {err}"))?);
+    }
+
+    let dominant_personality_mode = profiles_by_mode
+        .first()
+        .map(|entry| entry.mode.clone())
+        .unwrap_or_else(|| "dark_humor".to_string());
+
+    let (top_failure_kind, top_failure_count) = connection
+        .query_row(
+            "SELECT error_kind, COUNT(*) as cnt
+             FROM learning_signals
+             WHERE error_kind IS NOT NULL AND error_kind != ''
+             GROUP BY error_kind
+             ORDER BY cnt DESC, error_kind ASC
+             LIMIT 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()
+        .map_err(|err| format!("db query failure doctor stats failed: {err}"))?
+        .unwrap_or_else(|| ("none".to_string(), 0));
+
+    Ok(LearningInsights {
+        signals_24h,
+        corrections_learned,
+        corrections_applied_24h,
+        personality_profiles,
+        dominant_personality_mode,
+        top_failure_kind,
+        top_failure_count,
+        profiles_by_mode,
+    })
+}
+
+fn build_recommendations(
+    metrics: &DashboardMetrics,
+    channel_heat: &[ChannelHeat],
+) -> Vec<DashboardRecommendation> {
+    let mut recommendations = Vec::new();
+
+    if metrics.failed_runs_24h >= 5 {
+        recommendations.push(DashboardRecommendation {
+            id: "stability-drill".to_string(),
+            priority: "HIGH".to_string(),
+            title: "Run a stability drill".to_string(),
+            detail: format!(
+                "{} failed runs in the last 24h. Prioritize failure triage before new automations.",
+                metrics.failed_runs_24h
+            ),
+        });
+    }
+
+    if metrics.unknown_tasks_24h >= 4 {
+        recommendations.push(DashboardRecommendation {
+            id: "intent-gap".to_string(),
+            priority: "MEDIUM".to_string(),
+            title: "Teach Watchtower new intents".to_string(),
+            detail: format!(
+                "{} unknown requests in 24h. Add one workflow route to reduce manual replies.",
+                metrics.unknown_tasks_24h
+            ),
+        });
+    }
+
+    if metrics.catchup_recovered_24h > 0 {
+        recommendations.push(DashboardRecommendation {
+            id: "catchup-win".to_string(),
+            priority: "LOW".to_string(),
+            title: "Sleep recovery is paying off".to_string(),
+            detail: format!(
+                "Recovered {} missed mentions after wake/relaunch in the last 24h.",
+                metrics.catchup_recovered_24h
+            ),
+        });
+    }
+
+    if metrics.success_streak >= 10 {
+        recommendations.push(DashboardRecommendation {
+            id: "streak".to_string(),
+            priority: "LOW".to_string(),
+            title: "Hot streak detected".to_string(),
+            detail: format!(
+                "{} successful jobs in a row. Good time to raise max concurrency slightly.",
+                metrics.success_streak
+            ),
+        });
+    }
+
+    if let Some(hottest) = channel_heat.first() {
+        if hottest.failures >= 3 {
+            recommendations.push(DashboardRecommendation {
+                id: "channel-hotspot".to_string(),
+                priority: "MEDIUM".to_string(),
+                title: "Channel hotspot".to_string(),
+                detail: format!(
+                    "Channel {} has {} failures this week. Consider channel-specific prompts/guardrails.",
+                    hottest.channel_id, hottest.failures
+                ),
+            });
+        }
+    }
+
+    if recommendations.is_empty() {
+        recommendations.push(DashboardRecommendation {
+            id: "steady".to_string(),
+            priority: "LOW".to_string(),
+            title: "System healthy".to_string(),
+            detail: "No urgent optimization needed. Keep iterating on workflow coverage and response quality."
+                .to_string(),
+        });
+    }
+
+    recommendations
+}
+
 fn initialize_db(path: &PathBuf) -> Result<(), String> {
     let connection = Connection::open(path).map_err(|err| format!("db open failed: {err}"))?;
     connection
@@ -332,6 +684,52 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
               thread_ts TEXT,
               created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS sidecar_state (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS learning_signals (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              job_id TEXT,
+              event_id TEXT,
+              channel_id TEXT,
+              user_id TEXT,
+              workflow TEXT,
+              status TEXT,
+              intent TEXT,
+              correction_applied INTEGER NOT NULL DEFAULT 0,
+              personality_mode TEXT,
+              error_kind TEXT,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_learning_signals_created_at ON learning_signals(created_at);
+            CREATE INDEX IF NOT EXISTS idx_learning_signals_channel_id ON learning_signals(channel_id);
+
+            CREATE TABLE IF NOT EXISTS intent_corrections (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              channel_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              phrase_key TEXT NOT NULL,
+              corrected_intent TEXT NOT NULL,
+              hits INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              UNIQUE(channel_id, user_id, phrase_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_intent_corrections_channel_user ON intent_corrections(channel_id, user_id);
+
+            CREATE TABLE IF NOT EXISTS personality_profiles (
+              scope TEXT NOT NULL,
+              scope_id TEXT NOT NULL,
+              mode TEXT NOT NULL,
+              source TEXT,
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY(scope, scope_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_personality_profiles_scope ON personality_profiles(scope, scope_id);
 
             CREATE TABLE IF NOT EXISTS app_settings (
               id INTEGER PRIMARY KEY CHECK (id = 1),

@@ -55,6 +55,48 @@ describe('jobStore', () => {
     expect(logs[0].stage).toBe('intake.received');
     expect(logs[0].level).toBe('INFO');
 
+    const latest = store.latestJobForThread('C1', '123');
+    expect(latest?.workflow).toBe('PR_REVIEW');
+
+    store.saveIntentCorrection({
+      channelId: 'C1',
+      userId: 'U1',
+      phraseKey: 'review this pr again',
+      correctedIntent: 'PR_REVIEW',
+    });
+    expect(
+      store.findIntentCorrection({
+        channelId: 'C1',
+        userId: 'U1',
+        phraseKey: 'review this pr again',
+      })
+    ).toBe('PR_REVIEW');
+
+    store.setPersonalityProfile({
+      scope: 'user',
+      scopeId: 'U1',
+      mode: 'professional',
+      source: 'test',
+    });
+    expect(
+      store.getPersonalityMode({
+        channelId: 'C1',
+        userId: 'U1',
+      })
+    ).toBe('professional');
+
+    store.recordLearningSignal({
+      jobId: 'job-1',
+      eventId: 'event-1',
+      channelId: 'C1',
+      userId: 'U1',
+      workflow: 'PR_REVIEW',
+      intent: 'PR_REVIEW',
+      status: 'SUCCESS',
+      correctionApplied: false,
+      personalityMode: 'professional',
+    });
+
     store.close();
   });
 });

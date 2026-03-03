@@ -1,6 +1,13 @@
 import path from 'node:path';
 import type { WebClient } from '@slack/web-api';
-import type { AppConfig, CodexRunRequest, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
+import type {
+  AppConfig,
+  CodexRunRequest,
+  NormalizedTask,
+  PersonalityMode,
+  WorkflowResult,
+  WorkflowStepLogger,
+} from '../types/contracts.js';
 import { runCodex } from '../codex/runCodex.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
@@ -10,7 +17,43 @@ type UnknownReply = {
   reaction: string;
 };
 
-const FALLBACK_REACTIONS = ['skull', 'eyes', 'ghost', 'warning', 'satellite'];
+const FALLBACK_REACTIONS: Record<PersonalityMode, string[]> = {
+  dark_humor: ['skull', 'eyes', 'ghost', 'warning', 'satellite'],
+  professional: ['memo', 'mag', 'warning', 'spiral_note_pad'],
+  friendly: ['wave', 'thinking_face', 'sparkles', 'eyes'],
+  chaos: ['dizzy_face', 'boom', 'cyclone', 'fire'],
+};
+
+const FALLBACK_REPLIES: Record<PersonalityMode, string[]> = {
+  dark_humor: [
+    'bold request, bold liability. send a concrete bug or PR before i become a case study.',
+    'you summoned chaos without requirements. drop a real task and i will get surgical.',
+    'this request reads like a postmortem teaser. give me a PR or bug and i will haunt it.',
+    'i heard your ask and compliance flinched. send clear scope and i will execute.',
+    'respect for the audacity, but i only run concrete tasks. bug ID or PR URL please.',
+  ],
+  professional: [
+    'request received. please provide a concrete PR URL or bug context so i can execute.',
+    'i need actionable scope to proceed. share the target repo, issue, or PR.',
+    'unable to route this safely without specifics. please provide a defined engineering task.',
+    'this appears out of workflow scope. add concrete acceptance criteria and i can continue.',
+    'please rephrase with clear intent and references so automation can proceed reliably.',
+  ],
+  friendly: [
+    'i can help, but i need a concrete bug or PR to start. share one and i am on it.',
+    'almost there. send a clear task with repo/PR details and i will run it.',
+    'happy to jump in. give me specific context so i can do useful work.',
+    'could you share the exact bug or PR link? then i can take it from there.',
+    'i need one concrete engineering task to begin. once shared, i will execute.',
+  ],
+  chaos: [
+    'chaos acknowledged, mission unclear. give me a real bug or PR before reality forks.',
+    'request received from the void. attach concrete scope and i will launch.',
+    'i can improvise, but prod deserves specifics. send target + intent.',
+    'this is high entropy and low instructions. feed me exact context.',
+    'chaos mode is ready, but i still need coordinates: repo, bug, or PR.',
+  ],
+};
 
 function hashString(input: string): number {
   let hash = 0;
@@ -31,22 +74,16 @@ function summarizeUserIntent(text: string): string {
   return cleaned.split(' ').slice(0, 8).join(' ');
 }
 
-function buildFallbackUnknownReply(task: NormalizedTask): UnknownReply {
+function buildFallbackUnknownReply(task: NormalizedTask, personalityMode: PersonalityMode): UnknownReply {
   const snippet = summarizeUserIntent(task.event.text);
   const seed = hashString(`${task.event.userId}:${task.event.text}:${task.event.eventTs}`);
-  const variant = seed % 5;
-  const reaction = FALLBACK_REACTIONS[seed % FALLBACK_REACTIONS.length];
-
-  const replies = [
-    `bold request: "${snippet}". i respect the chaos, but i need an actual bug or PR before i become evidence.`,
-    `you asked for "${snippet}" and my risk detector started laughing. send a concrete task before production writes my autobiography.`,
-    `"${snippet}" is peak villain monologue. give me a real PR or bug ticket and i will happily haunt it.`,
-    `i heard "${snippet}" and the incident channel got goosebumps. i only execute concrete tasks, not plot twists.`,
-    `that "${snippet}" request is suspicious enough to wake compliance. drop a real bug/PR and i will do the dirty work.`,
-  ];
+  const replies = FALLBACK_REPLIES[personalityMode];
+  const variant = seed % replies.length;
+  const reactions = FALLBACK_REACTIONS[personalityMode];
+  const reaction = reactions[seed % reactions.length];
 
   return {
-    reply: replies[variant],
+    reply: `${replies[variant]} (${snippet})`,
     reaction,
   };
 }
@@ -74,9 +111,10 @@ async function generateUnknownReplyWithCodex(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
+  personalityMode: PersonalityMode;
   logStep?: WorkflowStepLogger;
 }): Promise<UnknownReply> {
-  const { task, config, slack, logStep } = params;
+  const { task, config, slack, personalityMode, logStep } = params;
 
   const threadMessages = await fetchThreadContext(slack, task.event.channelId, task.event.threadTs).catch(() => []);
   const threadContext = [task.event.text, ...threadMessages.map(message => message.text)]
@@ -87,7 +125,7 @@ async function generateUnknownReplyWithCodex(params: {
 Generate a Slack reply for an unknown/random bot mention.
 
 Rules:
-1. Tone: dark/suspicious humor, witty, short.
+1. Tone profile: ${toneForPersonalityMode(personalityMode)}
 2. Safe: no hate, no abuse, no threats.
 3. Keep reply to max 24 words.
 4. Reply text must NOT include user mention. Mention is added externally.
@@ -118,6 +156,7 @@ Return strict JSON with keys:
     data: {
       timeoutMs: request.timeoutMs,
       threadMessages: threadMessages.length,
+      personalityMode,
     },
   });
 
@@ -136,44 +175,61 @@ Return strict JSON with keys:
   });
 
   if (!result.ok || !result.parsedJson) {
-    return buildFallbackUnknownReply(task);
+    return buildFallbackUnknownReply(task, personalityMode);
   }
 
   const reply = String(result.parsedJson.reply ?? '').trim();
   const reaction = sanitizeReaction(String(result.parsedJson.reaction ?? ''));
   if (!reply) {
-    return buildFallbackUnknownReply(task);
+    return buildFallbackUnknownReply(task, personalityMode);
   }
 
   return { reply, reaction };
+}
+
+function toneForPersonalityMode(mode: PersonalityMode): string {
+  if (mode === 'professional') {
+    return 'crisp, neutral, technical, no jokes';
+  }
+  if (mode === 'friendly') {
+    return 'warm, polite, practical';
+  }
+  if (mode === 'chaos') {
+    return 'playful-chaotic but still concise and safe';
+  }
+  return 'dark/suspicious humor, witty, short';
 }
 
 export async function runUnknownTaskWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
+  personalityMode?: PersonalityMode;
   logStep?: WorkflowStepLogger;
   generateUnknownReply?: (input: {
     task: NormalizedTask;
     config: AppConfig;
     slack: WebClient;
+    personalityMode: PersonalityMode;
     logStep?: WorkflowStepLogger;
   }) => Promise<UnknownReply>;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, logStep, generateUnknownReply } = params;
+  const { task, config, slack, personalityMode, logStep, generateUnknownReply } = params;
+  const mode = personalityMode ?? 'dark_humor';
 
   logStep?.({
     stage: 'unknown.notify.desktop',
-    message: 'No configured workflow matched; generating dark-humor reply with Codex and notifying desktop.',
+    message: 'No configured workflow matched; generating personality-aware reply with Codex and notifying desktop.',
     level: 'WARN',
     data: {
       channelId: task.event.channelId,
       threadTs: task.event.threadTs,
+      personalityMode: mode,
     },
   });
 
   const generator = generateUnknownReply ?? generateUnknownReplyWithCodex;
-  const generated = await generator({ task, config, slack, logStep });
+  const generated = await generator({ task, config, slack, personalityMode: mode, logStep });
   const replyText = sanitizeReply(generated.reply, task.event.userId);
   const reaction = sanitizeReaction(generated.reaction);
 
@@ -239,7 +295,7 @@ export async function runUnknownTaskWorkflow(params: {
   return {
     workflow: 'UNKNOWN',
     status: 'SKIPPED',
-    message: 'Unknown task; Codex-generated dark-humor Slack reply sent.',
+    message: `Unknown task; Codex-generated ${mode} Slack reply sent.`,
     notifyDesktop: true,
     slackPosted: Boolean(postedTs),
   };

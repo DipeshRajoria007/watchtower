@@ -1,6 +1,7 @@
 export type WorkflowIntent = 'PR_REVIEW' | 'BUG_FIX' | 'OWNER_AUTOPILOT' | 'UNKNOWN';
 export type WorkflowStatus = 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED';
 export type JobLogLevel = 'INFO' | 'WARN' | 'ERROR';
+export type PersonalityMode = 'dark_humor' | 'professional' | 'friendly' | 'chaos';
 
 export interface AppConfig {
   platformPolicy: 'macos_only';

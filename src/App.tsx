@@ -13,12 +13,56 @@ type RunSummary = {
   errorMessage: string | null;
 };
 
+type DashboardMetrics = {
+  runs24h: number;
+  successRate24h: number;
+  failedRuns24h: number;
+  avgResolutionSeconds24h: number;
+  unknownTasks24h: number;
+  catchupRecovered24h: number;
+  successStreak: number;
+  chaosIndex: number;
+};
+
+type DashboardRecommendation = {
+  id: string;
+  priority: 'HIGH' | 'MEDIUM' | 'LOW' | string;
+  title: string;
+  detail: string;
+};
+
+type ChannelHeat = {
+  channelId: string;
+  runs: number;
+  failures: number;
+};
+
+type PersonalityModeStats = {
+  mode: string;
+  count: number;
+};
+
+type LearningInsights = {
+  signals24h: number;
+  correctionsLearned: number;
+  correctionsApplied24h: number;
+  personalityProfiles: number;
+  dominantPersonalityMode: string;
+  topFailureKind: string;
+  topFailureCount: number;
+  profilesByMode: PersonalityModeStats[];
+};
+
 type DashboardData = {
   sidecarStatus: string;
   settingsConfigured: boolean;
   activeJobs: RunSummary[];
   recentRuns: RunSummary[];
   failures: RunSummary[];
+  metrics: DashboardMetrics;
+  learning: LearningInsights;
+  recommendations: DashboardRecommendation[];
+  channelHeat: ChannelHeat[];
 };
 
 type JobLogEntry = {
@@ -305,14 +349,44 @@ function App() {
         <StatCard label="Failures" value={summary.failures} tone="failures" />
       </section>
 
+      <section className="panel">
+        <PanelHeader
+          title="Adaptive Intelligence"
+          subtitle="Learning Memory Engine + Intent Self-Correction + Failure Doctor + Personality Profiles"
+          count={data?.learning.profilesByMode.length ?? 0}
+        />
+        {data?.learning ? <LearningInsightsPanel learning={data.learning} /> : null}
+      </section>
+
+      <section className="panel-grid autonomy-grid">
         <section className="panel">
-          <PanelHeader title="Active Jobs" subtitle="In-flight workflow executions" count={summary.active} />
-          <RunList
-            runs={data?.activeJobs ?? []}
-            empty="No active jobs. Idle and watching Slack."
-            selectedRunId={selectedRunId}
-            onSelect={runId => setSelectedRunId(runId)}
+          <PanelHeader
+            title="Autonomy Center"
+            subtitle="Self-learning recommendations generated from local runtime behavior"
+            count={data?.recommendations.length ?? 0}
           />
+          <RecommendationList recommendations={data?.recommendations ?? []} />
+        </section>
+
+        <section className="panel">
+          <PanelHeader
+            title="Ops Pulse"
+            subtitle="Productivity telemetry + fun signals"
+            count={data?.channelHeat.length ?? 0}
+          />
+          {data?.metrics ? <PulseMetrics metrics={data.metrics} /> : null}
+          <ChannelHeatList channels={data?.channelHeat ?? []} />
+        </section>
+      </section>
+
+      <section className="panel">
+        <PanelHeader title="Active Jobs" subtitle="In-flight workflow executions" count={summary.active} />
+        <RunList
+          runs={data?.activeJobs ?? []}
+          empty="No active jobs. Idle and watching Slack."
+          selectedRunId={selectedRunId}
+          onSelect={runId => setSelectedRunId(runId)}
+        />
       </section>
 
       <section className="panel-grid">
@@ -643,12 +717,156 @@ function LiveLogConsole({ lines }: { lines: string[] }) {
   );
 }
 
+function RecommendationList({ recommendations }: { recommendations: DashboardRecommendation[] }) {
+  if (recommendations.length === 0) {
+    return <p className="empty-state">No recommendations generated yet.</p>;
+  }
+
+  return (
+    <ul className="recommendation-list">
+      {recommendations.map(item => (
+        <li key={item.id}>
+          <div className="recommendation-top">
+            <strong>{item.title}</strong>
+            <span className={`badge priority-${item.priority.toLowerCase()}`}>{item.priority}</span>
+          </div>
+          <p>{item.detail}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function PulseMetrics({ metrics }: { metrics: DashboardMetrics }) {
+  return (
+    <div className="pulse-metrics">
+      <article className="pulse-metric">
+        <span>24h Success</span>
+        <strong>{metrics.successRate24h}%</strong>
+      </article>
+      <article className="pulse-metric">
+        <span>Avg Resolution</span>
+        <strong>{formatDurationSeconds(metrics.avgResolutionSeconds24h)}</strong>
+      </article>
+      <article className="pulse-metric">
+        <span>Success Streak</span>
+        <strong>{metrics.successStreak}</strong>
+      </article>
+      <article className="pulse-metric">
+        <span>Catch-up Wins</span>
+        <strong>{metrics.catchupRecovered24h}</strong>
+      </article>
+      <article className="pulse-metric">
+        <span>Unknown 24h</span>
+        <strong>{metrics.unknownTasks24h}</strong>
+      </article>
+      <article className="pulse-metric">
+        <span>Chaos Index</span>
+        <strong>{metrics.chaosIndex}</strong>
+      </article>
+    </div>
+  );
+}
+
+function ChannelHeatList({ channels }: { channels: ChannelHeat[] }) {
+  if (channels.length === 0) {
+    return <p className="empty-state">No channel activity yet for this week.</p>;
+  }
+
+  return (
+    <ul className="channel-heat-list">
+      {channels.map(channel => (
+        <li key={channel.channelId}>
+          <span className="channel-id">{channel.channelId}</span>
+          <span className="channel-runs">runs={channel.runs}</span>
+          <span className={`badge ${channel.failures > 0 ? 'warn' : 'success'}`}>failures={channel.failures}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function LearningInsightsPanel({ learning }: { learning: LearningInsights }) {
+  return (
+    <div className="learning-block">
+      <div className="learning-metrics">
+        <article className="learning-metric">
+          <span>Signals 24h</span>
+          <strong>{learning.signals24h}</strong>
+        </article>
+        <article className="learning-metric">
+          <span>Corrections Learned</span>
+          <strong>{learning.correctionsLearned}</strong>
+        </article>
+        <article className="learning-metric">
+          <span>Corrections Applied 24h</span>
+          <strong>{learning.correctionsApplied24h}</strong>
+        </article>
+        <article className="learning-metric">
+          <span>Personality Profiles</span>
+          <strong>{learning.personalityProfiles}</strong>
+        </article>
+        <article className="learning-metric">
+          <span>Dominant Mode</span>
+          <strong>{humanizeMode(learning.dominantPersonalityMode)}</strong>
+        </article>
+        <article className="learning-metric">
+          <span>Top Failure Signature</span>
+          <strong>
+            {learning.topFailureKind === 'none'
+              ? 'None'
+              : `${learning.topFailureKind} (${learning.topFailureCount})`}
+          </strong>
+        </article>
+      </div>
+
+      <ul className="mode-heat-list">
+        {learning.profilesByMode.length === 0 ? (
+          <li className="mode-heat-empty">No personality profiles learned yet.</li>
+        ) : (
+          learning.profilesByMode.map(mode => (
+            <li key={mode.mode}>
+              <span>{humanizeMode(mode.mode)}</span>
+              <span className="chip">{mode.count}</span>
+            </li>
+          ))
+        )}
+      </ul>
+    </div>
+  );
+}
+
 function prettyJson(raw: string): string {
   try {
     return JSON.stringify(JSON.parse(raw), null, 2);
   } catch {
     return raw;
   }
+}
+
+function formatDurationSeconds(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return '0s';
+  }
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rem = seconds % 60;
+  if (minutes < 60) {
+    return `${minutes}m ${rem}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const minuteRem = minutes % 60;
+  return `${hours}h ${minuteRem}m`;
+}
+
+function humanizeMode(mode: string): string {
+  const value = mode.replace(/[_-]+/g, ' ').trim();
+  if (!value) {
+    return 'Dark Humor';
+  }
+  return value.replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
 function formatSidecarLine(raw: string): string {

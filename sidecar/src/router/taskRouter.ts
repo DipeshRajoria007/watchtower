@@ -1,5 +1,11 @@
 import type { WebClient } from '@slack/web-api';
-import type { AppConfig, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
+import type {
+  AppConfig,
+  NormalizedTask,
+  PersonalityMode,
+  WorkflowResult,
+  WorkflowStepLogger,
+} from '../types/contracts.js';
 import type { JobStore } from '../state/jobStore.js';
 import { runBugFixWorkflow } from '../workflows/bugFixWorkflow.js';
 import { runOwnerAutopilotWorkflow } from '../workflows/ownerAutopilotWorkflow.js';
@@ -11,9 +17,10 @@ export async function routeTask(params: {
   config: AppConfig;
   slack: WebClient;
   store: JobStore;
+  personalityMode?: PersonalityMode;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, store, logStep } = params;
+  const { task, config, slack, store, personalityMode, logStep } = params;
 
   if (task.intent === 'PR_REVIEW') {
     return runPrReviewWorkflow({ task, config, slack, store, logStep });
@@ -27,5 +34,5 @@ export async function routeTask(params: {
     return runOwnerAutopilotWorkflow({ task, config, slack, logStep });
   }
 
-  return runUnknownTaskWorkflow({ task, config, slack, logStep });
+  return runUnknownTaskWorkflow({ task, config, slack, personalityMode, logStep });
 }

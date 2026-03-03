@@ -1,5 +1,11 @@
 import Database from 'better-sqlite3';
-import type { JobLogLevel, JobLogRecord, JobRecord, WorkflowIntent } from '../types/contracts.js';
+import type {
+  JobLogLevel,
+  JobLogRecord,
+  JobRecord,
+  PersonalityMode,
+  WorkflowIntent,
+} from '../types/contracts.js';
 
 export class JobStore {
   private db: Database.Database;
@@ -47,6 +53,52 @@ export class JobStore {
         thread_ts TEXT,
         created_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS sidecar_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS learning_signals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT,
+        event_id TEXT,
+        channel_id TEXT,
+        user_id TEXT,
+        workflow TEXT,
+        status TEXT,
+        intent TEXT,
+        correction_applied INTEGER NOT NULL DEFAULT 0,
+        personality_mode TEXT,
+        error_kind TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_learning_signals_created_at ON learning_signals(created_at);
+      CREATE INDEX IF NOT EXISTS idx_learning_signals_channel_id ON learning_signals(channel_id);
+
+      CREATE TABLE IF NOT EXISTS intent_corrections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        phrase_key TEXT NOT NULL,
+        corrected_intent TEXT NOT NULL,
+        hits INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(channel_id, user_id, phrase_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_intent_corrections_channel_user ON intent_corrections(channel_id, user_id);
+
+      CREATE TABLE IF NOT EXISTS personality_profiles (
+        scope TEXT NOT NULL,
+        scope_id TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        source TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(scope, scope_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_personality_profiles_scope ON personality_profiles(scope, scope_id);
     `);
   }
 
@@ -68,6 +120,86 @@ export class JobStore {
          VALUES(?, ?, ?, ?)`
       )
       .run(eventId, channelId, threadTs, new Date().toISOString());
+  }
+
+  hasJobForEventTs(channelId: string, eventTs: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT id
+         FROM jobs
+         WHERE channel_id = ?
+           AND json_extract(payload_json, '$.eventTs') = ?
+           AND status IN ('RUNNING', 'SUCCESS', 'PAUSED', 'SKIPPED')
+         LIMIT 1`
+      )
+      .get(channelId, eventTs) as { id?: string } | undefined;
+    return Boolean(row?.id);
+  }
+
+  listKnownChannels(limit = 200): string[] {
+    const stmt = this.db.prepare(
+      `SELECT channel_id
+       FROM events
+       WHERE channel_id IS NOT NULL AND channel_id != ''
+       GROUP BY channel_id
+       ORDER BY MAX(created_at) DESC
+       LIMIT ?`
+    ) as unknown as {
+      all: (limitArg: number) => Array<{
+        channel_id: string;
+      }>;
+    };
+    const rows = stmt.all(limit);
+    return rows.map(row => row.channel_id).filter(Boolean);
+  }
+
+  getState(key: string): string | undefined {
+    const row = this.db
+      .prepare('SELECT value FROM sidecar_state WHERE key = ? LIMIT 1')
+      .get(key) as { value?: string } | undefined;
+    return row?.value;
+  }
+
+  setState(key: string, value: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO sidecar_state(key, value, updated_at)
+         VALUES(?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+           value = excluded.value,
+           updated_at = excluded.updated_at`
+      )
+      .run(key, value, now);
+  }
+
+  latestJobForThread(channelId: string, threadTs: string): { workflow: WorkflowIntent; status: JobRecord['status']; updatedAt: string } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT workflow, status, updated_at
+         FROM jobs
+         WHERE channel_id = ?
+           AND thread_ts = ?
+         ORDER BY updated_at DESC
+         LIMIT 1`
+      )
+      .get(channelId, threadTs) as
+      | {
+          workflow?: WorkflowIntent;
+          status?: JobRecord['status'];
+          updated_at?: string;
+        }
+      | undefined;
+
+    if (!row?.workflow || !row?.status || !row?.updated_at) {
+      return undefined;
+    }
+
+    return {
+      workflow: row.workflow,
+      status: row.status,
+      updatedAt: row.updated_at,
+    };
   }
 
   hasDedupeKey(dedupeKey: string): boolean {
@@ -185,6 +317,149 @@ export class JobStore {
       dataJson: row.data_json ?? undefined,
       createdAt: row.created_at,
     }));
+  }
+
+  saveIntentCorrection(input: {
+    channelId: string;
+    userId: string;
+    phraseKey: string;
+    correctedIntent: WorkflowIntent;
+  }): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO intent_corrections(
+           channel_id, user_id, phrase_key, corrected_intent, hits, created_at, updated_at
+         ) VALUES(?, ?, ?, ?, 1, ?, ?)
+         ON CONFLICT(channel_id, user_id, phrase_key) DO UPDATE SET
+           corrected_intent = excluded.corrected_intent,
+           hits = intent_corrections.hits + 1,
+           updated_at = excluded.updated_at`
+      )
+      .run(input.channelId, input.userId, input.phraseKey, input.correctedIntent, now, now);
+  }
+
+  findIntentCorrection(input: {
+    channelId: string;
+    userId: string;
+    phraseKey: string;
+  }): WorkflowIntent | undefined {
+    const exact = this.db
+      .prepare(
+        `SELECT corrected_intent
+         FROM intent_corrections
+         WHERE channel_id = ?
+           AND user_id = ?
+           AND phrase_key = ?
+         LIMIT 1`
+      )
+      .get(input.channelId, input.userId, input.phraseKey) as { corrected_intent?: WorkflowIntent } | undefined;
+    if (exact?.corrected_intent) {
+      return exact.corrected_intent;
+    }
+
+    const stem = input.phraseKey.slice(0, 24);
+    if (!stem) {
+      return undefined;
+    }
+
+    const fuzzy = this.db
+      .prepare(
+        `SELECT corrected_intent
+         FROM intent_corrections
+         WHERE channel_id = ?
+           AND user_id = ?
+           AND phrase_key LIKE ?
+         ORDER BY hits DESC, updated_at DESC
+         LIMIT 1`
+      )
+      .get(input.channelId, input.userId, `${stem}%`) as { corrected_intent?: WorkflowIntent } | undefined;
+
+    return fuzzy?.corrected_intent;
+  }
+
+  setPersonalityProfile(input: {
+    scope: 'channel' | 'user';
+    scopeId: string;
+    mode: PersonalityMode;
+    source: string;
+  }): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO personality_profiles(scope, scope_id, mode, source, updated_at)
+         VALUES(?, ?, ?, ?, ?)
+         ON CONFLICT(scope, scope_id) DO UPDATE SET
+           mode = excluded.mode,
+           source = excluded.source,
+           updated_at = excluded.updated_at`
+      )
+      .run(input.scope, input.scopeId, input.mode, input.source, now);
+  }
+
+  getPersonalityMode(input: {
+    channelId: string;
+    userId: string;
+  }): PersonalityMode {
+    const userRow = this.db
+      .prepare(
+        `SELECT mode
+         FROM personality_profiles
+         WHERE scope = 'user' AND scope_id = ?
+         LIMIT 1`
+      )
+      .get(input.userId) as { mode?: PersonalityMode } | undefined;
+    if (userRow?.mode) {
+      return userRow.mode;
+    }
+
+    const channelRow = this.db
+      .prepare(
+        `SELECT mode
+         FROM personality_profiles
+         WHERE scope = 'channel' AND scope_id = ?
+         LIMIT 1`
+      )
+      .get(input.channelId) as { mode?: PersonalityMode } | undefined;
+    if (channelRow?.mode) {
+      return channelRow.mode;
+    }
+
+    return 'dark_humor';
+  }
+
+  recordLearningSignal(input: {
+    jobId: string;
+    eventId: string;
+    channelId: string;
+    userId: string;
+    workflow: WorkflowIntent;
+    intent: WorkflowIntent;
+    status: JobRecord['status'];
+    correctionApplied: boolean;
+    personalityMode: PersonalityMode;
+    errorKind?: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO learning_signals(
+           job_id, event_id, channel_id, user_id, workflow, status, intent,
+           correction_applied, personality_mode, error_kind, created_at
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        input.jobId,
+        input.eventId,
+        input.channelId,
+        input.userId,
+        input.workflow,
+        input.status,
+        input.intent,
+        input.correctionApplied ? 1 : 0,
+        input.personalityMode,
+        input.errorKind ?? null,
+        new Date().toISOString()
+      );
   }
 
   findLatestReviewedPrHeadSha(input: {
