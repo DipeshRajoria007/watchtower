@@ -9,6 +9,7 @@ const HELP_TEXT = [
   '- `wt status` -> show current runtime health snapshot',
   '- `wt runs [n]` -> show latest runs (default 5)',
   '- `wt failures [n]` -> show latest failed runs (default 5)',
+  '- `wt trace <jobId> [lines]` -> show recent trace lines for a job',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -183,6 +184,63 @@ export async function runDevAssistWorkflow(params: {
         command: 'FAILURES',
         limit: command.limit,
         count: runs.length,
+      },
+    };
+  }
+
+  if (command.type === 'TRACE') {
+    const resolvedJobId = store.resolveJobId(command.jobId);
+    if (!resolvedJobId) {
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: `Could not find job \`${command.jobId}\`. Use \`wt runs\` or \`wt failures\` to copy a valid job id.`,
+      });
+
+      return {
+        workflow: 'DEV_ASSIST',
+        status: 'SKIPPED',
+        message: 'Trace lookup failed: unknown job id.',
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+
+    const logs = store.listJobLogsTail(resolvedJobId, command.limit);
+    const lines = logs.map(log => {
+      return `[${log.level}] ${log.stage} - ${log.message}`;
+    });
+
+    const text = logs.length
+      ? [`Trace for job ${resolvedJobId}:`, ...lines].join('\n')
+      : `No trace logs found for job ${resolvedJobId}.`;
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+
+    logStep?.({
+      stage: 'dev_assist.trace.posted',
+      message: 'Posted job trace snippet in Slack thread.',
+      data: {
+        jobId: resolvedJobId,
+        requested: command.limit,
+        returned: logs.length,
+      },
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Posted job trace.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'TRACE',
+        jobId: resolvedJobId,
+        count: logs.length,
       },
     };
   }

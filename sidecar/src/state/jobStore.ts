@@ -609,4 +609,61 @@ export class JobStore {
       errorMessage: row.error_message ?? undefined,
     }));
   }
+
+  resolveJobId(prefixOrId: string): string | undefined {
+    const value = prefixOrId.trim();
+    if (!value) {
+      return undefined;
+    }
+
+    const exact = this.db
+      .prepare(`SELECT id FROM jobs WHERE id = ? LIMIT 1`)
+      .get(value) as { id?: string } | undefined;
+    if (exact?.id) {
+      return exact.id;
+    }
+
+    const fuzzy = this.db
+      .prepare(
+        `SELECT id
+         FROM jobs
+         WHERE id LIKE ?
+         ORDER BY updated_at DESC
+         LIMIT 1`
+      )
+      .get(`${value}%`) as { id?: string } | undefined;
+    return fuzzy?.id;
+  }
+
+  listJobLogsTail(jobId: string, limit = 20): JobLogRecord[] {
+    const safeLimit = Math.min(Math.max(limit, 1), 500);
+    const stmt = this.db.prepare(
+      `SELECT id, job_id, level, stage, message, data_json, created_at
+       FROM job_logs
+       WHERE job_id = ?
+       ORDER BY id DESC
+       LIMIT ?`
+    ) as unknown as {
+      all: (jobIdArg: string, limitArg: number) => Array<{
+        id: number;
+        job_id: string;
+        level: JobLogLevel;
+        stage: string;
+        message: string;
+        data_json?: string | null;
+        created_at: string;
+      }>;
+    };
+
+    const rows = stmt.all(jobId, safeLimit).reverse();
+    return rows.map(row => ({
+      id: row.id,
+      jobId: row.job_id,
+      level: row.level,
+      stage: row.stage,
+      message: row.message,
+      dataJson: row.data_json ?? undefined,
+      createdAt: row.created_at,
+    }));
+  }
 }

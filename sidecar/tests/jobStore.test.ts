@@ -55,6 +55,13 @@ describe('jobStore', () => {
     expect(logs[0].stage).toBe('intake.received');
     expect(logs[0].level).toBe('INFO');
 
+    const resolved = store.resolveJobId('job-');
+    expect(resolved).toBe('job-1');
+
+    const tail = store.listJobLogsTail('job-1', 5);
+    expect(tail).toHaveLength(1);
+    expect(tail[0].stage).toBe('intake.received');
+
     const latest = store.latestJobForThread('C1', '123');
     expect(latest?.workflow).toBe('PR_REVIEW');
 

@@ -22,6 +22,19 @@ describe('devAssistParser', () => {
     expect(parseDevAssistCommand('<@UBOT1> wt failures 9')).toEqual({ type: 'FAILURES', limit: 9 });
   });
 
+  it('parses wt trace command with optional lines', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt trace abc123')).toEqual({
+      type: 'TRACE',
+      jobId: 'abc123',
+      limit: 20,
+    });
+    expect(parseDevAssistCommand('<@UBOT1> wt trace abc123 40')).toEqual({
+      type: 'TRACE',
+      jobId: 'abc123',
+      limit: 40,
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);
