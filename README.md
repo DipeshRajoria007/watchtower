@@ -2,6 +2,16 @@
 
 Watchtower is a macOS-only Tauri desktop automation app that listens to Slack mentions via Socket Mode and routes tasks to Codex workflows.
 
+## In Plain English
+
+Watchtower is like an always-on teammate that lives on your Mac and watches Slack mentions.
+
+- If someone tags the bot and asks for a PR review, it runs the review flow and replies in the same thread.
+- If someone tags the bot with a bug-fix request in allowed bug channels, it tries to fix code and open a PR.
+- If the owner tags the bot, it can run in override/autopilot mode and handle broader requests.
+- If a request is random or unsupported, it replies with a context-aware dark-humor message and a reaction.
+- The app dashboard shows every step so you can see exactly what it did and why.
+
 ## Features
 
 - macOS-only desktop runtime with tray + launch-on-login
