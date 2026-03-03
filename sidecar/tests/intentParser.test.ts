@@ -134,4 +134,19 @@ describe('intentParser', () => {
     expect(task.isOwnerAuthor).toBe(true);
     expect(task.intent).toBe('OWNER_AUTOPILOT');
   });
+
+  it('routes explicit wt commands to dev-assist workflow', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        userId: 'UOWNER1',
+        text: '<@UBOT1> wt help',
+      },
+      config,
+      [],
+    );
+
+    expect(task.mentionDetected).toBe(true);
+    expect(task.intent).toBe('DEV_ASSIST');
+  });
 });

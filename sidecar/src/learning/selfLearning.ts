@@ -101,7 +101,7 @@ export function applyLearning(input: {
     });
   }
 
-  if (intent !== 'OWNER_AUTOPILOT') {
+  if (intent !== 'OWNER_AUTOPILOT' && intent !== 'DEV_ASSIST') {
     const corrected = store.findIntentCorrection({
       channelId: task.event.channelId,
       userId: task.event.userId,
@@ -169,4 +169,3 @@ function detectPersonalityDirective(text: string): PersonalityDirective | undefi
   }
   return undefined;
 }
-

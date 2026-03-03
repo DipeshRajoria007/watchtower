@@ -1,4 +1,5 @@
 import type { AppConfig, NormalizedTask, PrContext, SlackEventEnvelope, WorkflowIntent } from '../types/contracts.js';
+import { hasDevAssistCommand } from './devAssistParser.js';
 
 const PR_REVIEW_KEYWORDS = [
   /review/i,
@@ -63,6 +64,10 @@ function inferIntent(
   config: AppConfig,
   mention: { detected: boolean; type: 'bot' | 'owner' | 'none' }
 ): WorkflowIntent {
+  if (mention.detected && hasDevAssistCommand(event.text ?? '')) {
+    return 'DEV_ASSIST';
+  }
+
   const isOwnerAuthor = config.ownerSlackUserIds.includes(event.userId);
   if (mention.detected && mention.type === 'bot' && isOwnerAuthor) {
     return 'OWNER_AUTOPILOT';

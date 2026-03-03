@@ -8,6 +8,7 @@ import type {
 } from '../types/contracts.js';
 import type { JobStore } from '../state/jobStore.js';
 import { runBugFixWorkflow } from '../workflows/bugFixWorkflow.js';
+import { runDevAssistWorkflow } from '../workflows/devAssistWorkflow.js';
 import { runOwnerAutopilotWorkflow } from '../workflows/ownerAutopilotWorkflow.js';
 import { runPrReviewWorkflow } from '../workflows/prReviewWorkflow.js';
 import { runUnknownTaskWorkflow } from '../workflows/unknownTaskWorkflow.js';
@@ -32,6 +33,10 @@ export async function routeTask(params: {
 
   if (task.intent === 'OWNER_AUTOPILOT') {
     return runOwnerAutopilotWorkflow({ task, config, slack, logStep });
+  }
+
+  if (task.intent === 'DEV_ASSIST') {
+    return runDevAssistWorkflow({ task, config, slack, logStep });
   }
 
   return runUnknownTaskWorkflow({ task, config, slack, personalityMode, logStep });
