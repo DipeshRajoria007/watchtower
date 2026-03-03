@@ -12,6 +12,7 @@ const HELP_TEXT = [
   '- `wt failures [n]` -> show latest failed runs (default 5)',
   '- `wt trace <jobId> [lines]` -> show recent trace lines for a job',
   '- `wt diagnose <jobId>` -> run Failure Doctor diagnosis on a job',
+  '- `wt learn` -> show learning engine stats',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -314,6 +315,42 @@ export async function runDevAssistWorkflow(params: {
         jobId: resolvedJobId,
         diagnosed: Boolean(diagnosis),
         errorKind: diagnosis?.errorKind,
+      },
+    };
+  }
+
+  if (command.type === 'LEARN') {
+    const snapshot = store.getDevLearningSnapshot();
+    const text = [
+      'Learning engine snapshot:',
+      `- Signals (24h): ${snapshot.signals24h}`,
+      `- Corrections learned: ${snapshot.correctionsLearned}`,
+      `- Corrections applied (24h): ${snapshot.correctionsApplied24h}`,
+      `- Personality profiles: ${snapshot.personalityProfiles}`,
+      `- Top failure pattern: ${snapshot.topErrorKind}`,
+    ].join('\n');
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+
+    logStep?.({
+      stage: 'dev_assist.learn.posted',
+      message: 'Posted learning engine snapshot in Slack thread.',
+      data: snapshot,
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Posted learning snapshot.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'LEARN',
+        ...snapshot,
       },
     };
   }

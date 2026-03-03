@@ -108,6 +108,10 @@ describe('jobStore', () => {
       personalityMode: 'professional',
     });
 
+    const learning = store.getDevLearningSnapshot();
+    expect(learning.signals24h).toBeGreaterThanOrEqual(1);
+    expect(learning.personalityProfiles).toBeGreaterThanOrEqual(1);
+
     store.close();
   });
 });

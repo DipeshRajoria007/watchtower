@@ -42,6 +42,12 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt learn command', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt learn')).toEqual({
+      type: 'LEARN',
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);

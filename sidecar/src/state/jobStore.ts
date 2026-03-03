@@ -695,4 +695,63 @@ export class JobStore {
       errorMessage: row.error_message ?? undefined,
     };
   }
+
+  getDevLearningSnapshot(): {
+    signals24h: number;
+    correctionsLearned: number;
+    correctionsApplied24h: number;
+    personalityProfiles: number;
+    topErrorKind: string;
+  } {
+    const signals24h = Number(
+      (this.db
+        .prepare(`SELECT COUNT(*) as count FROM learning_signals WHERE julianday(created_at) >= julianday('now', '-1 day')`)
+        .get() as { count?: number } | undefined)?.count ?? 0
+    );
+
+    const correctionsLearned = Number(
+      (this.db
+        .prepare(`SELECT COUNT(*) as count FROM intent_corrections`)
+        .get() as { count?: number } | undefined)?.count ?? 0
+    );
+
+    const correctionsApplied24h = Number(
+      (this.db
+        .prepare(
+          `SELECT COUNT(*) as count
+           FROM learning_signals
+           WHERE correction_applied = 1
+             AND julianday(created_at) >= julianday('now', '-1 day')`
+        )
+        .get() as { count?: number } | undefined)?.count ?? 0
+    );
+
+    const personalityProfiles = Number(
+      (this.db
+        .prepare(`SELECT COUNT(*) as count FROM personality_profiles`)
+        .get() as { count?: number } | undefined)?.count ?? 0
+    );
+
+    const topErrorKind =
+      (
+        this.db
+          .prepare(
+            `SELECT error_kind
+             FROM learning_signals
+             WHERE error_kind IS NOT NULL AND error_kind != ''
+             GROUP BY error_kind
+             ORDER BY COUNT(*) DESC, error_kind ASC
+             LIMIT 1`
+          )
+          .get() as { error_kind?: string } | undefined
+      )?.error_kind ?? 'none';
+
+    return {
+      signals24h,
+      correctionsLearned,
+      correctionsApplied24h,
+      personalityProfiles,
+      topErrorKind,
+    };
+  }
 }
