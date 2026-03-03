@@ -11,3 +11,10 @@ export type BugFixCodexOutput = {
   branch: string;
   tests: string[];
 };
+
+export type OwnerAutopilotCodexOutput = {
+  status: 'success' | 'failed' | 'no_action';
+  summary: string;
+  actions: string[];
+  prUrl: string;
+};

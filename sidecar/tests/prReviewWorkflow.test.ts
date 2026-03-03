@@ -50,6 +50,7 @@ describe('prReviewWorkflow', () => {
       },
       mentionDetected: true,
       mentionType: 'bot',
+      isOwnerAuthor: false,
       intent: 'PR_REVIEW',
     };
 

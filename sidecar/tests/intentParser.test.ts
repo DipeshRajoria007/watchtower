@@ -63,6 +63,7 @@ describe('intentParser', () => {
 
     expect(task.intent).toBe('PR_REVIEW');
     expect(task.mentionDetected).toBe(true);
+    expect(task.isOwnerAuthor).toBe(false);
     expect(task.prContext?.repo).toBe('newton-web');
   });
 
@@ -116,5 +117,21 @@ describe('intentParser', () => {
 
     expect(task.intent).toBe('PR_REVIEW');
     expect(task.mentionDetected).toBe(true);
+  });
+
+  it('routes owner-authored bot mention to owner-autopilot', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        userId: 'UOWNER1',
+        text: '<@UBOT1> fix this quickly and push',
+      },
+      config,
+      [],
+    );
+
+    expect(task.mentionDetected).toBe(true);
+    expect(task.isOwnerAuthor).toBe(true);
+    expect(task.intent).toBe('OWNER_AUTOPILOT');
   });
 });

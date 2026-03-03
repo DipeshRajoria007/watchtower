@@ -50,6 +50,7 @@ describe('bugFixWorkflow', () => {
       },
       mentionDetected: true,
       mentionType: 'bot',
+      isOwnerAuthor: false,
       intent: 'BUG_FIX',
     };
 

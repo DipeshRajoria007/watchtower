@@ -1,0 +1,205 @@
+import os from 'node:os';
+import path from 'node:path';
+import type { WebClient } from '@slack/web-api';
+import type { AppConfig, CodexRunRequest, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
+import { runCodex } from '../codex/runCodex.js';
+import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
+import { notifyDesktop } from '../notify/desktopNotifier.js';
+import { fetchThreadContext } from '../slack/threadContext.js';
+
+function resolveOwnerWorkspaceRoot(config: AppConfig): string {
+  const webParent = path.dirname(config.repoPaths.newtonWeb);
+  const apiParent = path.dirname(config.repoPaths.newtonApi);
+  if (webParent === apiParent) {
+    return webParent;
+  }
+  return process.env.HOME ?? os.homedir();
+}
+
+function formatThreadContext(task: NormalizedTask, messages: Array<{ text: string; user: string; ts: string }>): string {
+  const lines: string[] = [];
+  lines.push(`[root] user=${task.event.userId} ts=${task.event.eventTs}`);
+  lines.push(task.event.text);
+
+  for (const message of messages) {
+    lines.push(`---`);
+    lines.push(`[thread] user=${message.user} ts=${message.ts}`);
+    lines.push(message.text);
+  }
+
+  return lines.join('\n');
+}
+
+export async function runOwnerAutopilotWorkflow(params: {
+  task: NormalizedTask;
+  config: AppConfig;
+  slack: WebClient;
+  logStep?: WorkflowStepLogger;
+}): Promise<WorkflowResult> {
+  const { task, config, slack, logStep } = params;
+
+  logStep?.({
+    stage: 'owner_autopilot.context.fetch.start',
+    message: 'Fetching thread context for owner-autopilot execution.',
+  });
+
+  const threadMessages = await fetchThreadContext(slack, task.event.channelId, task.event.threadTs);
+  const workspaceRoot = resolveOwnerWorkspaceRoot(config);
+  const threadContext = formatThreadContext(task, threadMessages);
+
+  logStep?.({
+    stage: 'owner_autopilot.context.fetch.done',
+    message: 'Thread context resolved for owner-autopilot execution.',
+    data: {
+      messages: threadMessages.length,
+      workspaceRoot,
+    },
+  });
+
+  await slack.chat.postMessage({
+    channel: task.event.channelId,
+    thread_ts: task.event.threadTs,
+    text: "On Master's command, Overriding Watchtower guardrails...",
+  });
+
+  logStep?.({
+    stage: 'owner_autopilot.slack.ack_posted',
+    message: 'Posted owner-autopilot acknowledgement in Slack thread.',
+  });
+
+  const githubToken = await resolveGithubTokenForCodex();
+
+  logStep?.({
+    stage: 'owner_autopilot.github.auth_resolved',
+    message: 'Resolved GitHub auth mode for owner-autopilot Codex execution.',
+    data: { tokenInjected: Boolean(githubToken) },
+  });
+
+  const prompt = `
+You are running Watchtower owner-autopilot mode.
+
+The request below was sent by a configured owner Slack user. Watchtower owner override is active, so workflow guardrails are intentionally bypassed.
+
+Environment:
+- Preferred workspace root: ${workspaceRoot}
+- Known repositories: ${config.repoPaths.newtonWeb} and ${config.repoPaths.newtonApi}
+- GitHub auth mode: ${githubAuthModeHint(Boolean(githubToken))}
+
+Task:
+Execute the owner's request end-to-end. You may choose whichever local repos/files/commands are needed.
+
+Slack thread context:
+${threadContext}
+
+Output rules:
+Return strict JSON with:
+- status: "success" | "failed" | "no_action"
+- summary: short plain-language outcome
+- actions: array of concrete actions performed
+- prUrl: PR URL if one was created, else empty string
+`.trim();
+
+  const request: CodexRunRequest = {
+    cwd: workspaceRoot,
+    prompt,
+    timeoutMs: config.workflowTimeouts.bugFixMs,
+    outputSchemaPath: path.resolve(process.cwd(), 'schemas/owner-autopilot-result.schema.json'),
+    githubToken,
+    onLog: logStep,
+  };
+
+  logStep?.({
+    stage: 'owner_autopilot.codex.start',
+    message: 'Starting owner-autopilot Codex execution.',
+    data: {
+      workspaceRoot,
+      timeoutMs: config.workflowTimeouts.bugFixMs,
+    },
+  });
+
+  const result = await runCodex(request);
+
+  logStep?.({
+    stage: 'owner_autopilot.codex.finish',
+    message: 'Owner-autopilot Codex execution finished.',
+    level: result.ok ? 'INFO' : 'WARN',
+    data: {
+      ok: result.ok,
+      timedOut: result.timedOut,
+      exitCode: result.exitCode,
+      parsedJson: Boolean(result.parsedJson),
+    },
+  });
+
+  if (!result.ok || !result.parsedJson) {
+    const errorText = result.timedOut
+      ? 'Owner-autopilot workflow timed out.'
+      : `Owner-autopilot workflow failed (exit=${result.exitCode ?? 'unknown'}).`;
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: `${errorText} Check execution trace for details.`,
+    });
+
+    logStep?.({
+      stage: 'owner_autopilot.slack.failure_posted',
+      message: 'Posted owner-autopilot failure message in Slack thread.',
+      level: 'ERROR',
+      data: {
+        errorText,
+      },
+    });
+
+    notifyDesktop('Watchtower owner-autopilot failed', `${errorText} thread=${task.event.threadTs}`);
+
+    return {
+      workflow: 'OWNER_AUTOPILOT',
+      status: 'FAILED',
+      message: errorText,
+      notifyDesktop: true,
+      slackPosted: true,
+    };
+  }
+
+  const status = String(result.parsedJson.status ?? 'success');
+  const summary = String(result.parsedJson.summary ?? 'Owner request completed.');
+  const actions = Array.isArray(result.parsedJson.actions)
+    ? result.parsedJson.actions.map(item => String(item))
+    : [];
+  const prUrl = String(result.parsedJson.prUrl ?? '');
+  const statusIntro =
+    status === 'success'
+      ? 'Master your task is completed.'
+      : status === 'no_action'
+        ? 'Master no action was required.'
+        : `Owner request ${status}.`;
+
+  const actionBlock = actions.length > 0 ? `\nActions:\n- ${actions.join('\n- ')}` : '';
+  const prBlock = prUrl ? `\n${prUrl}` : '';
+
+  await slack.chat.postMessage({
+    channel: task.event.channelId,
+    thread_ts: task.event.threadTs,
+    text: `${statusIntro} ${summary}${actionBlock}${prBlock}`,
+  });
+
+  logStep?.({
+    stage: 'owner_autopilot.slack.success_posted',
+    message: 'Posted owner-autopilot completion message in Slack thread.',
+    data: {
+      status,
+      actions: actions.length,
+      hasPrUrl: Boolean(prUrl),
+    },
+  });
+
+  return {
+    workflow: 'OWNER_AUTOPILOT',
+    status: status === 'failed' ? 'FAILED' : 'SUCCESS',
+    message: summary,
+    notifyDesktop: false,
+    slackPosted: true,
+    result: result.parsedJson,
+  };
+}

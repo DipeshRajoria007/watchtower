@@ -1,4 +1,4 @@
-export type WorkflowIntent = 'PR_REVIEW' | 'BUG_FIX' | 'UNKNOWN';
+export type WorkflowIntent = 'PR_REVIEW' | 'BUG_FIX' | 'OWNER_AUTOPILOT' | 'UNKNOWN';
 export type WorkflowStatus = 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED';
 export type JobLogLevel = 'INFO' | 'WARN' | 'ERROR';
 
@@ -49,6 +49,7 @@ export interface NormalizedTask {
   event: SlackEventEnvelope;
   mentionDetected: boolean;
   mentionType: 'bot' | 'owner' | 'none';
+  isOwnerAuthor: boolean;
   intent: WorkflowIntent;
   prContext?: PrContext;
 }

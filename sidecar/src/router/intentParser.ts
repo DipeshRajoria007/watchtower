@@ -58,7 +58,16 @@ export function extractPrContext(texts: string[]): PrContext | undefined {
   return undefined;
 }
 
-function inferIntent(event: SlackEventEnvelope, config: AppConfig): WorkflowIntent {
+function inferIntent(
+  event: SlackEventEnvelope,
+  config: AppConfig,
+  mention: { detected: boolean; type: 'bot' | 'owner' | 'none' }
+): WorkflowIntent {
+  const isOwnerAuthor = config.ownerSlackUserIds.includes(event.userId);
+  if (mention.detected && mention.type === 'bot' && isOwnerAuthor) {
+    return 'OWNER_AUTOPILOT';
+  }
+
   const text = event.text ?? '';
   const isReview = PR_REVIEW_KEYWORDS.some(regex => regex.test(text));
   if (isReview) {
@@ -79,13 +88,15 @@ export function normalizeTask(
   threadTexts: string[] = []
 ): NormalizedTask {
   const mention = detectMention(event.text, config);
+  const isOwnerAuthor = config.ownerSlackUserIds.includes(event.userId);
   const prContext = extractPrContext([event.text, ...threadTexts]);
 
   return {
     event,
     mentionDetected: mention.detected,
     mentionType: mention.type,
-    intent: inferIntent(event, config),
+    isOwnerAuthor,
+    intent: inferIntent(event, config, mention),
     prContext,
   };
 }
