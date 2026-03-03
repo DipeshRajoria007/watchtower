@@ -24,7 +24,7 @@ let running = 0;
 const nonActionableSubtypes = new Set(['message_changed', 'message_deleted', 'bot_message']);
 
 function dedupeKey(event: SlackEventEnvelope, intent: string): string {
-  return `${event.channelId}:${event.threadTs}:${intent}`;
+  return `${event.channelId}:${event.threadTs}:${event.eventTs}:${intent}`;
 }
 
 async function processNext(): Promise<void> {
@@ -113,6 +113,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       text: event.text,
       mentionType: task.mentionType,
       intent: task.intent,
+      eventTs: event.eventTs,
     },
   });
 
@@ -182,7 +183,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         },
       });
       try {
-        const result = await routeTask({ task, config, slack: client, logStep });
+        const result = await routeTask({ task, config, slack: client, store, logStep });
         logStep({
           stage: 'job.attempt.result',
           message: 'Workflow attempt returned a result.',

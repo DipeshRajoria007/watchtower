@@ -1,5 +1,6 @@
 import type { WebClient } from '@slack/web-api';
 import type { AppConfig, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
+import type { JobStore } from '../state/jobStore.js';
 import { runBugFixWorkflow } from '../workflows/bugFixWorkflow.js';
 import { runOwnerAutopilotWorkflow } from '../workflows/ownerAutopilotWorkflow.js';
 import { runPrReviewWorkflow } from '../workflows/prReviewWorkflow.js';
@@ -9,12 +10,13 @@ export async function routeTask(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
+  store: JobStore;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, logStep } = params;
+  const { task, config, slack, store, logStep } = params;
 
   if (task.intent === 'PR_REVIEW') {
-    return runPrReviewWorkflow({ task, config, slack, logStep });
+    return runPrReviewWorkflow({ task, config, slack, store, logStep });
   }
 
   if (task.intent === 'BUG_FIX') {

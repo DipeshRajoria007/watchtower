@@ -63,4 +63,61 @@ describe('prReviewWorkflow', () => {
     expect(result.status).toBe('PAUSED');
     expect(slack.chat.postMessage).toHaveBeenCalledTimes(1);
   });
+
+  it('skips with no-new-changes message when PR head SHA is unchanged', async () => {
+    const slack = {
+      conversations: {
+        replies: vi.fn().mockResolvedValue({
+          messages: [{ text: 'please review this https://github.com/Newton-School/newton-web/pull/123' }],
+        }),
+      },
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true }),
+      },
+    };
+
+    const task: NormalizedTask = {
+      event: {
+        eventId: 'Ev2',
+        channelId: 'C1',
+        threadTs: '888.99',
+        eventTs: '888.99',
+        userId: 'U123',
+        text: '<@UBOT1> review again https://github.com/Newton-School/newton-web/pull/123',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'PR_REVIEW',
+      prContext: {
+        url: 'https://github.com/Newton-School/newton-web/pull/123',
+        owner: 'Newton-School',
+        repo: 'newton-web',
+        number: 123,
+      },
+    };
+
+    const result = await runPrReviewWorkflow({
+      task,
+      config,
+      slack: slack as any,
+      store: {
+        findLatestReviewedPrHeadSha: () => ({
+          jobId: 'previous-job',
+          prHeadSha: 'deadbeef',
+          updatedAt: '2026-03-03T08:00:00.000Z',
+        }),
+      } as any,
+      resolvePrHeadSha: async () => 'deadbeef',
+    });
+
+    expect(result.status).toBe('SKIPPED');
+    expect(result.message).toContain('No new changes');
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'there are no new changes to review, i think you forgot to push your changes, you need some coffee',
+      })
+    );
+  });
 });

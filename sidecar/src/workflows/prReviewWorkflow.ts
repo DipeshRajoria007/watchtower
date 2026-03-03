@@ -8,6 +8,7 @@ import type {
   WorkflowResult,
   WorkflowStepLogger,
 } from '../types/contracts.js';
+import type { JobStore } from '../state/jobStore.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
 import { extractPrContext } from '../router/intentParser.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
@@ -24,13 +25,71 @@ function mapRepoPath(config: AppConfig, pr: PrContext): string | null {
   return null;
 }
 
+async function fetchPrHeadSha(params: {
+  prContext: PrContext;
+  githubToken?: string;
+  logStep?: WorkflowStepLogger;
+}): Promise<string | undefined> {
+  const { prContext, githubToken, logStep } = params;
+  const url = `https://api.github.com/repos/${prContext.owner}/${prContext.repo}/pulls/${prContext.number}`;
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+  };
+  if (githubToken) {
+    headers.Authorization = `Bearer ${githubToken}`;
+  }
+
+  try {
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      logStep?.({
+        stage: 'pr_review.head_sha.fetch_failed',
+        message: 'Failed to fetch PR head SHA from GitHub API.',
+        level: 'WARN',
+        data: {
+          status: response.status,
+          statusText: response.statusText,
+        },
+      });
+      return undefined;
+    }
+
+    const payload = await response.json() as {
+      head?: {
+        sha?: unknown;
+      };
+    };
+
+    return typeof payload.head?.sha === 'string' ? payload.head.sha : undefined;
+  } catch (error) {
+    logStep?.({
+      stage: 'pr_review.head_sha.fetch_error',
+      message: 'Error while fetching PR head SHA from GitHub API.',
+      level: 'WARN',
+      data: {
+        error: String(error),
+      },
+    });
+    return undefined;
+  }
+}
+
+const NO_NEW_CHANGES_TEXT =
+  'there are no new changes to review, i think you forgot to push your changes, you need some coffee';
+
 export async function runPrReviewWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
+  store?: Pick<JobStore, 'findLatestReviewedPrHeadSha'>;
+  resolvePrHeadSha?: (input: {
+    prContext: PrContext;
+    githubToken?: string;
+    logStep?: WorkflowStepLogger;
+  }) => Promise<string | undefined>;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, logStep } = params;
+  const { task, config, slack, store, resolvePrHeadSha, logStep } = params;
 
   logStep?.({
     stage: 'pr_review.context.fetch.start',
@@ -118,6 +177,69 @@ export async function runPrReviewWorkflow(params: {
     };
   }
 
+  const githubToken = await resolveGithubTokenForCodex();
+
+  logStep?.({
+    stage: 'pr_review.github.auth_resolved',
+    message: 'Resolved GitHub auth mode for Codex execution.',
+    data: { tokenInjected: Boolean(githubToken) },
+  });
+
+  const headShaResolver = resolvePrHeadSha ?? fetchPrHeadSha;
+  const currentPrHeadSha = await headShaResolver({
+    prContext,
+    githubToken,
+    logStep,
+  });
+
+  if (currentPrHeadSha) {
+    logStep?.({
+      stage: 'pr_review.head_sha.fetched',
+      message: 'Fetched current PR head SHA.',
+      data: {
+        prHeadSha: currentPrHeadSha,
+      },
+    });
+
+    const previous = store?.findLatestReviewedPrHeadSha({
+      channelId: task.event.channelId,
+      threadTs: task.event.threadTs,
+      prUrl: prContext.url,
+    });
+
+    if (previous && previous.prHeadSha === currentPrHeadSha) {
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: NO_NEW_CHANGES_TEXT,
+      });
+
+      logStep?.({
+        stage: 'pr_review.no_new_changes',
+        message: 'Skipped PR review because there are no new commits since last successful review.',
+        level: 'INFO',
+        data: {
+          prHeadSha: currentPrHeadSha,
+          previousJobId: previous.jobId,
+          previousReviewedAt: previous.updatedAt,
+        },
+      });
+
+      return {
+        workflow: 'PR_REVIEW',
+        status: 'SKIPPED',
+        message: 'No new changes since last review.',
+        notifyDesktop: false,
+        slackPosted: true,
+        result: {
+          prUrl: prContext.url,
+          prHeadSha: currentPrHeadSha,
+          previousReviewedAt: previous.updatedAt,
+        },
+      };
+    }
+  }
+
   await slack.chat.postMessage({
     channel: task.event.channelId,
     thread_ts: task.event.threadTs,
@@ -128,14 +250,6 @@ export async function runPrReviewWorkflow(params: {
     stage: 'pr_review.slack.ack_posted',
     message: 'Posted PR review start acknowledgement to Slack thread.',
     data: { prUrl: prContext.url },
-  });
-
-  const githubToken = await resolveGithubTokenForCodex();
-
-  logStep?.({
-    stage: 'pr_review.github.auth_resolved',
-    message: 'Resolved GitHub auth mode for Codex execution.',
-    data: { tokenInjected: Boolean(githubToken) },
   });
 
   const prompt = `
@@ -248,6 +362,9 @@ Requirements:
     message: summary,
     notifyDesktop: false,
     slackPosted: true,
-    result: result.parsedJson,
+    result: {
+      ...result.parsedJson,
+      ...(currentPrHeadSha ? { prHeadSha: currentPrHeadSha } : {}),
+    },
   };
 }

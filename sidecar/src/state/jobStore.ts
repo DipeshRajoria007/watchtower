@@ -186,4 +186,51 @@ export class JobStore {
       createdAt: row.created_at,
     }));
   }
+
+  findLatestReviewedPrHeadSha(input: {
+    channelId: string;
+    threadTs: string;
+    prUrl: string;
+  }): { jobId: string; prHeadSha: string; updatedAt: string } | undefined {
+    const stmt = this.db.prepare(
+      `SELECT id, result_json, updated_at
+       FROM jobs
+       WHERE workflow = 'PR_REVIEW'
+         AND status = 'SUCCESS'
+         AND channel_id = ?
+         AND thread_ts = ?
+       ORDER BY updated_at DESC
+       LIMIT 50`
+    ) as unknown as {
+      all: (channelIdArg: string, threadTsArg: string) => Array<{
+        id: string;
+        result_json?: string | null;
+        updated_at: string;
+      }>;
+    };
+
+    const rows = stmt.all(input.channelId, input.threadTs);
+    for (const row of rows) {
+      if (!row.result_json) {
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(row.result_json) as Record<string, unknown>;
+        const prUrl = typeof parsed.prUrl === 'string' ? parsed.prUrl : '';
+        const prHeadSha = typeof parsed.prHeadSha === 'string' ? parsed.prHeadSha : '';
+        if (prUrl === input.prUrl && prHeadSha) {
+          return {
+            jobId: row.id,
+            prHeadSha,
+            updatedAt: row.updated_at,
+          };
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return undefined;
+  }
 }

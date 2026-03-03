@@ -29,6 +29,20 @@ describe('jobStore', () => {
     });
     expect(store.hasDedupeKey('C1:123:PR_REVIEW')).toBe(true);
 
+    store.markJob('job-1', 'SUCCESS', {
+      result: {
+        prUrl: 'https://github.com/Newton-School/newton-web/pull/9999',
+        prHeadSha: 'abc123',
+      },
+    });
+
+    const previousHead = store.findLatestReviewedPrHeadSha({
+      channelId: 'C1',
+      threadTs: '123',
+      prUrl: 'https://github.com/Newton-School/newton-web/pull/9999',
+    });
+    expect(previousHead?.prHeadSha).toBe('abc123');
+
     store.appendJobLog({
       jobId: 'job-1',
       stage: 'intake.received',
