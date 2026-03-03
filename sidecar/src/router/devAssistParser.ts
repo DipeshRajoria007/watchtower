@@ -7,7 +7,8 @@ export type DevAssistCommand =
   | { type: 'DIAGNOSE'; jobId: string }
   | { type: 'LEARN' }
   | { type: 'HEAT'; limit: number }
-  | { type: 'PERSONALITY_SET'; mode: 'dark_humor' | 'professional' | 'friendly' | 'chaos'; scope: 'user' | 'channel' };
+  | { type: 'PERSONALITY_SET'; mode: 'dark_humor' | 'professional' | 'friendly' | 'chaos'; scope: 'user' | 'channel' }
+  | { type: 'PERSONALITY_SHOW'; scope: 'user' | 'channel' };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -106,6 +107,16 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
         scope,
       };
     }
+  }
+
+  const personalityShowMatch = body.match(/^personality\s+show(?:\s+(channel|me))?\b/i);
+  if (personalityShowMatch) {
+    const scopeRaw = (personalityShowMatch[1] ?? 'me').toLowerCase();
+    const scope = scopeRaw === 'channel' ? 'channel' : 'user';
+    return {
+      type: 'PERSONALITY_SHOW',
+      scope,
+    };
   }
 
   return undefined;

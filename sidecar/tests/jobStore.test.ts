@@ -95,6 +95,12 @@ describe('jobStore', () => {
         userId: 'U1',
       })
     ).toBe('professional');
+    expect(
+      store.getPersonalityProfile({
+        scope: 'user',
+        scopeId: 'U1',
+      })
+    ).toBe('professional');
 
     store.recordLearningSignal({
       jobId: 'job-1',

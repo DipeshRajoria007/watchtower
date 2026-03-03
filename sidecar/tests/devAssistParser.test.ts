@@ -72,6 +72,17 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt personality show command', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt personality show')).toEqual({
+      type: 'PERSONALITY_SHOW',
+      scope: 'user',
+    });
+    expect(parseDevAssistCommand('<@UBOT1> wt personality show channel')).toEqual({
+      type: 'PERSONALITY_SHOW',
+      scope: 'channel',
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);

@@ -428,6 +428,21 @@ export class JobStore {
     return 'dark_humor';
   }
 
+  getPersonalityProfile(input: {
+    scope: 'channel' | 'user';
+    scopeId: string;
+  }): PersonalityMode | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT mode
+         FROM personality_profiles
+         WHERE scope = ? AND scope_id = ?
+         LIMIT 1`
+      )
+      .get(input.scope, input.scopeId) as { mode?: PersonalityMode } | undefined;
+    return row?.mode;
+  }
+
   recordLearningSignal(input: {
     jobId: string;
     eventId: string;
