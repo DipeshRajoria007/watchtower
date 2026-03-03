@@ -657,7 +657,7 @@ async fn spawn_sidecar_once(
     let sidecar_root = resolve_sidecar_root(app)?;
     let dist_entry = sidecar_root.join("dist/index.js");
     let src_entry = sidecar_root.join("src/index.ts");
-    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
+    let node_bin = resolve_node_binary(&sidecar_root)?;
     let (entry, use_tsx) = if fs::metadata(&dist_entry).is_ok() {
         (dist_entry, false)
     } else {
@@ -715,20 +715,31 @@ async fn spawn_sidecar_once(
 fn resolve_sidecar_root(app: &AppHandle) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
 
-    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(|p| p.to_path_buf())
-        .ok_or_else(|| "failed to resolve cargo manifest parent".to_string())?;
-    candidates.push(manifest_root.join("sidecar"));
-
     if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("_up_").join("sidecar"));
         candidates.push(resource_dir.join("sidecar"));
+    }
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(contents_dir) = current_exe
+            .parent()
+            .and_then(|macos_dir| macos_dir.parent())
+        {
+            candidates.push(contents_dir.join("Resources").join("_up_").join("sidecar"));
+            candidates.push(contents_dir.join("Resources").join("sidecar"));
+        }
     }
 
     if let Ok(cwd) = std::env::current_dir() {
         candidates.push(cwd.join("..").join("sidecar"));
         candidates.push(cwd.join("sidecar"));
     }
+
+    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| "failed to resolve cargo manifest parent".to_string())?;
+    candidates.push(manifest_root.join("sidecar"));
 
     for candidate in candidates {
         if fs::metadata(candidate.join("dist/index.js")).is_ok()
@@ -738,7 +749,110 @@ fn resolve_sidecar_root(app: &AppHandle) -> Result<PathBuf, String> {
         }
     }
 
-    Err("failed to resolve sidecar directory".to_string())
+    Err("failed to resolve sidecar directory (checked bundled resources and local development paths)".to_string())
+}
+
+fn resolve_node_binary(sidecar_root: &Path) -> Result<PathBuf, String> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Ok(override_node) = std::env::var("NODE_BIN") {
+        let trimmed = override_node.trim();
+        if !trimmed.is_empty() {
+            let candidate = PathBuf::from(trimmed);
+            if candidate.is_absolute() {
+                candidates.push(candidate);
+            } else if let Some(in_path) = find_in_path(trimmed) {
+                candidates.push(in_path);
+            }
+        }
+    }
+
+    if let Some(in_path) = find_in_path("node") {
+        candidates.push(in_path);
+    }
+
+    if let Ok(home) = std::env::var("HOME") {
+        let nvm_root = PathBuf::from(home).join(".nvm/versions/node");
+        candidates.extend(find_nvm_nodes_descending(&nvm_root));
+    }
+
+    let absolute_candidates = [
+        "/opt/homebrew/bin/node",
+        "/usr/local/bin/node",
+        "/opt/homebrew/opt/node/bin/node",
+        "/usr/bin/node",
+    ];
+    for candidate in absolute_candidates {
+        candidates.push(PathBuf::from(candidate));
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut existing_candidates: Vec<PathBuf> = Vec::new();
+    for candidate in candidates {
+        if !seen.insert(candidate.clone()) {
+            continue;
+        }
+        if fs::metadata(&candidate).is_ok() {
+            existing_candidates.push(candidate);
+        }
+    }
+
+    for candidate in &existing_candidates {
+        if node_compatible_with_sidecar(candidate, sidecar_root) {
+            return Ok(candidate.clone());
+        }
+    }
+
+    if let Some(fallback) = existing_candidates.into_iter().next() {
+        return Ok(fallback);
+    }
+
+    Err("node runtime not found; install node or set NODE_BIN to an absolute node binary path".to_string())
+}
+
+fn find_in_path(executable: &str) -> Option<PathBuf> {
+    let path_env = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_env) {
+        let full = dir.join(executable);
+        if fs::metadata(&full).is_ok() {
+            return Some(full);
+        }
+    }
+    None
+}
+
+fn find_nvm_nodes_descending(root: &Path) -> Vec<PathBuf> {
+    let mut versions: Vec<String> = match fs::read_dir(root) {
+        Ok(entries) => entries
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.starts_with('v'))
+            .collect(),
+        Err(_) => return Vec::new(),
+    };
+
+    versions.sort();
+    versions.reverse();
+
+    let mut nodes = Vec::new();
+    for version in versions {
+        let candidate = root.join(version).join("bin/node");
+        if fs::metadata(&candidate).is_ok() {
+            nodes.push(candidate);
+        }
+    }
+
+    nodes
+}
+
+fn node_compatible_with_sidecar(node_binary: &Path, sidecar_root: &Path) -> bool {
+    let mut cmd = std::process::Command::new(node_binary);
+    cmd.arg("-e").arg("try { const Database = require('better-sqlite3'); const db = new Database(':memory:'); db.prepare('select 1').get(); db.close(); process.exit(0); } catch (_) { process.exit(1); }");
+    cmd.current_dir(sidecar_root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    cmd.status().map(|status| status.success()).unwrap_or(false)
 }
 
 fn handle_sidecar_line(app: &AppHandle, line: &str) {

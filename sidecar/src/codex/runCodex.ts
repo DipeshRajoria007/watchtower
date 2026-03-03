@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
-import path from 'node:path';
+import path, { delimiter as pathDelimiter } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { CodexRunRequest, CodexRunResult } from '../types/contracts.js';
 
@@ -27,6 +28,8 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'watchtower-codex-'));
   const outputPath = path.join(tempDir, 'final-message.txt');
 
+  const codexExecutable = resolveCodexBinary();
+
   request.onLog?.({
     stage: 'codex.prepare',
     message: 'Preparing Codex command invocation.',
@@ -36,6 +39,7 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
       schemaEnabled: Boolean(request.outputSchemaPath),
       reasoningEffort: request.reasoningEffort ?? 'default',
       githubTokenInjected: Boolean(request.githubToken),
+      codexExecutable,
     },
   });
 
@@ -49,13 +53,14 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
   args.push('--output-last-message', outputPath, request.prompt);
 
   const env = { ...process.env };
+  env.PATH = buildCodexPath(env.PATH);
   if (request.githubToken) {
     env.GITHUB_TOKEN = request.githubToken;
     env.GH_TOKEN = request.githubToken;
   }
 
   let timedOut = false;
-  const child = spawn('codex', args, {
+  const child = spawn(codexExecutable, args, {
     cwd: request.cwd,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -197,7 +202,11 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
       exitCode: null,
       timedOut,
       stdout,
-      stderr: `${stderr}\n${String(error)}`,
+      stderr: `${stderr}\n${String(error)}${
+        String(error).includes('ENOENT')
+          ? '\nCodex executable not found. Set CODEX_BIN to an absolute path or install codex in /opt/homebrew/bin or /usr/local/bin.'
+          : ''
+      }`,
       lastMessage: '',
     };
   } finally {
@@ -210,4 +219,118 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
     });
     void fs.rm(tempDir, { recursive: true, force: true });
   }
+}
+
+function resolveCodexBinary(): string {
+  const envOverride = process.env.CODEX_BIN?.trim();
+  if (envOverride) {
+    if (path.isAbsolute(envOverride)) {
+      if (isExecutable(envOverride)) {
+        return envOverride;
+      }
+    } else {
+      const fromPath = findInPath(envOverride, buildCodexPath(process.env.PATH));
+      if (fromPath) {
+        return fromPath;
+      }
+    }
+  }
+
+  const fromPath = findInPath('codex', buildCodexPath(process.env.PATH));
+  if (fromPath) {
+    return fromPath;
+  }
+
+  const home = process.env.HOME?.trim() || os.homedir();
+  const nvmRoot = home ? path.join(home, '.nvm', 'versions', 'node') : '';
+  const absoluteCandidates = [
+    '/opt/homebrew/bin/codex',
+    '/usr/local/bin/codex',
+    '/Applications/Codex.app/Contents/Resources/codex',
+    home ? path.join(home, '.npm-global', 'bin', 'codex') : '',
+    home ? path.join(home, '.local', 'bin', 'codex') : '',
+    home ? path.join(home, '.bun', 'bin', 'codex') : '',
+    ...findNvmCodexBinaries(nvmRoot),
+  ].filter(Boolean);
+  for (const candidate of absoluteCandidates) {
+    if (isExecutable(candidate)) {
+      return candidate;
+    }
+  }
+
+  return 'codex';
+}
+
+function isExecutable(filePath: string): boolean {
+  try {
+    fsSync.accessSync(filePath, fsSync.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findInPath(binary: string, customPath?: string): string | undefined {
+  const sourcePath = customPath ?? process.env.PATH ?? '';
+  for (const dir of sourcePath.split(pathDelimiter)) {
+    const trimmed = dir.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const candidate = path.join(trimmed, binary);
+    if (isExecutable(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function buildCodexPath(existingPath?: string): string {
+  const parts = new Set<string>();
+  const add = (value?: string): void => {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      return;
+    }
+    parts.add(trimmed);
+  };
+
+  const currentNodeDir = path.dirname(process.execPath);
+  add(currentNodeDir);
+  add('/opt/homebrew/bin');
+  add('/usr/local/bin');
+  add('/usr/bin');
+  add('/bin');
+
+  const home = process.env.HOME?.trim() || os.homedir();
+  if (home) {
+    add(path.join(home, '.npm-global', 'bin'));
+    add(path.join(home, '.local', 'bin'));
+    add(path.join(home, '.bun', 'bin'));
+    add(path.join(home, '.nvm', 'versions', 'node', 'current', 'bin'));
+  }
+
+  for (const value of (existingPath ?? '').split(pathDelimiter)) {
+    add(value);
+  }
+
+  return Array.from(parts).join(pathDelimiter);
+}
+
+function findNvmCodexBinaries(nvmRoot: string): string[] {
+  if (!nvmRoot || !fsSync.existsSync(nvmRoot)) {
+    return [];
+  }
+
+  const versions = fsSync
+    .readdirSync(nvmRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && entry.name.startsWith('v'))
+    .map(entry => entry.name)
+    .sort((a, b) => b.localeCompare(a));
+
+  const candidates: string[] = [];
+  for (const version of versions) {
+    candidates.push(path.join(nvmRoot, version, 'bin', 'codex'));
+  }
+  return candidates;
 }
