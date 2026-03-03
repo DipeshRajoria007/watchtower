@@ -10,6 +10,47 @@ type UnknownReply = {
   reaction: string;
 };
 
+const FALLBACK_REACTIONS = ['skull', 'eyes', 'ghost', 'warning', 'satellite'];
+
+function hashString(input: string): number {
+  let hash = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = (hash * 31 + input.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+function summarizeUserIntent(text: string): string {
+  const cleaned = text
+    .replace(/<@[^>]+>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) {
+    return 'that';
+  }
+  return cleaned.split(' ').slice(0, 8).join(' ');
+}
+
+function buildFallbackUnknownReply(task: NormalizedTask): UnknownReply {
+  const snippet = summarizeUserIntent(task.event.text);
+  const seed = hashString(`${task.event.userId}:${task.event.text}:${task.event.eventTs}`);
+  const variant = seed % 5;
+  const reaction = FALLBACK_REACTIONS[seed % FALLBACK_REACTIONS.length];
+
+  const replies = [
+    `bold request: "${snippet}". i respect the chaos, but i need an actual bug or PR before i become evidence.`,
+    `you asked for "${snippet}" and my risk detector started laughing. send a concrete task before production writes my autobiography.`,
+    `"${snippet}" is peak villain monologue. give me a real PR or bug ticket and i will happily haunt it.`,
+    `i heard "${snippet}" and the incident channel got goosebumps. i only execute concrete tasks, not plot twists.`,
+    `that "${snippet}" request is suspicious enough to wake compliance. drop a real bug/PR and i will do the dirty work.`,
+  ];
+
+  return {
+    reply: replies[variant],
+    reaction,
+  };
+}
+
 function sanitizeReaction(reaction: string | undefined): string {
   if (!reaction) {
     return 'skull';
@@ -26,7 +67,7 @@ function sanitizeReply(reply: string | undefined, userId: string): string {
   if (trimmed.length > 0) {
     return `<@${userId}> ${trimmed}`;
   }
-  return `<@${userId}> your request is random enough to trigger chaos mode, but I need a concrete task to proceed.`;
+  return `<@${userId}> your request detonated my paranoia module. give me a concrete task so i can do useful damage.`;
 }
 
 async function generateUnknownReplyWithCodex(params: {
@@ -95,16 +136,16 @@ Return strict JSON with keys:
   });
 
   if (!result.ok || !result.parsedJson) {
-    return {
-      reply: '',
-      reaction: 'skull',
-    };
+    return buildFallbackUnknownReply(task);
   }
 
-  return {
-    reply: String(result.parsedJson.reply ?? ''),
-    reaction: sanitizeReaction(String(result.parsedJson.reaction ?? '')),
-  };
+  const reply = String(result.parsedJson.reply ?? '').trim();
+  const reaction = sanitizeReaction(String(result.parsedJson.reaction ?? ''));
+  if (!reply) {
+    return buildFallbackUnknownReply(task);
+  }
+
+  return { reply, reaction };
 }
 
 export async function runUnknownTaskWorkflow(params: {
