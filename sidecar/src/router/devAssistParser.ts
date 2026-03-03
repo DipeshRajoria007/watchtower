@@ -5,7 +5,8 @@ export type DevAssistCommand =
   | { type: 'FAILURES'; limit: number }
   | { type: 'TRACE'; jobId: string; limit: number }
   | { type: 'DIAGNOSE'; jobId: string }
-  | { type: 'LEARN' };
+  | { type: 'LEARN' }
+  | { type: 'HEAT'; limit: number };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -69,6 +70,13 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
 
   if (/^learn\b|^learning\b/.test(body.toLowerCase())) {
     return { type: 'LEARN' };
+  }
+
+  const heatMatch = body.match(/^heat(?:\s+(\d+))?\b/i);
+  if (heatMatch) {
+    const rawLimit = Number(heatMatch[1] ?? '5');
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 20) : 5;
+    return { type: 'HEAT', limit };
   }
 
   return undefined;

@@ -48,6 +48,17 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt heat command with optional limit', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt heat')).toEqual({
+      type: 'HEAT',
+      limit: 5,
+    });
+    expect(parseDevAssistCommand('<@UBOT1> wt heat 7')).toEqual({
+      type: 'HEAT',
+      limit: 7,
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);

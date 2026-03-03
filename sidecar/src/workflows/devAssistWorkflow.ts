@@ -13,6 +13,7 @@ const HELP_TEXT = [
   '- `wt trace <jobId> [lines]` -> show recent trace lines for a job',
   '- `wt diagnose <jobId>` -> run Failure Doctor diagnosis on a job',
   '- `wt learn` -> show learning engine stats',
+  '- `wt heat [n]` -> show top active channels in last 7 days',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -351,6 +352,45 @@ export async function runDevAssistWorkflow(params: {
       result: {
         command: 'LEARN',
         ...snapshot,
+      },
+    };
+  }
+
+  if (command.type === 'HEAT') {
+    const heat = store.getDevChannelHeat(command.limit);
+    const lines = heat.map((item, index) => {
+      return `${index + 1}. ${item.channelId} runs=${item.runs} failures=${item.failures}`;
+    });
+
+    const text = heat.length
+      ? ['Channel heat (last 7 days):', ...lines].join('\n')
+      : 'No channel activity found for the last 7 days.';
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+
+    logStep?.({
+      stage: 'dev_assist.heat.posted',
+      message: 'Posted channel heat snapshot in Slack thread.',
+      data: {
+        limit: command.limit,
+        returned: heat.length,
+      },
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Posted channel heat.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'HEAT',
+        limit: command.limit,
+        count: heat.length,
       },
     };
   }

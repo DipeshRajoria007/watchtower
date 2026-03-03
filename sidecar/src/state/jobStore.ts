@@ -754,4 +754,34 @@ export class JobStore {
       topErrorKind,
     };
   }
+
+  getDevChannelHeat(limit = 5): Array<{
+    channelId: string;
+    runs: number;
+    failures: number;
+  }> {
+    const safeLimit = Math.min(Math.max(limit, 1), 20);
+    const stmt = this.db.prepare(
+      `SELECT channel_id,
+              COUNT(*) as runs,
+              SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failures
+       FROM jobs
+       WHERE julianday(created_at) >= julianday('now', '-7 day')
+       GROUP BY channel_id
+       ORDER BY runs DESC, failures DESC, channel_id ASC
+       LIMIT ?`
+    ) as unknown as {
+      all: (limitArg: number) => Array<{
+        channel_id: string;
+        runs: number;
+        failures: number;
+      }>;
+    };
+
+    return stmt.all(safeLimit).map(row => ({
+      channelId: row.channel_id,
+      runs: Number(row.runs),
+      failures: Number(row.failures),
+    }));
+  }
 }

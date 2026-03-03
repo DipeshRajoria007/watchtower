@@ -112,6 +112,10 @@ describe('jobStore', () => {
     expect(learning.signals24h).toBeGreaterThanOrEqual(1);
     expect(learning.personalityProfiles).toBeGreaterThanOrEqual(1);
 
+    const heat = store.getDevChannelHeat(5);
+    expect(heat.length).toBeGreaterThanOrEqual(1);
+    expect(heat[0].channelId).toBe('C1');
+
     store.close();
   });
 });
