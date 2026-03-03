@@ -93,12 +93,6 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
   }
 
   const key = dedupeKey(event, task.intent);
-  if (store.hasDedupeKey(key)) {
-    logger.info({ dedupeKey: key }, 'duplicate dedupe key ignored');
-    store.recordEvent(event.eventId, event.channelId, event.threadTs);
-    return;
-  }
-
   store.recordEvent(event.eventId, event.channelId, event.threadTs);
 
   const jobId = uuidv4();

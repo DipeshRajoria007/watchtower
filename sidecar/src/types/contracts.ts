@@ -69,6 +69,7 @@ export interface CodexRunRequest {
   timeoutMs: number;
   outputSchemaPath?: string;
   githubToken?: string;
+  reasoningEffort?: 'low' | 'medium' | 'high';
   onLog?: WorkflowStepLogger;
 }
 

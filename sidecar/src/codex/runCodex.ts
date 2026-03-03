@@ -34,11 +34,15 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
       cwd: request.cwd,
       timeoutMs: request.timeoutMs,
       schemaEnabled: Boolean(request.outputSchemaPath),
+      reasoningEffort: request.reasoningEffort ?? 'default',
       githubTokenInjected: Boolean(request.githubToken),
     },
   });
 
   const args = ['exec', '--cd', request.cwd, '--full-auto', '--skip-git-repo-check'];
+  if (request.reasoningEffort) {
+    args.push('--reasoning-effort', request.reasoningEffort);
+  }
   if (request.outputSchemaPath) {
     args.push('--output-schema', request.outputSchemaPath);
   }

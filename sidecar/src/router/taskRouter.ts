@@ -27,5 +27,5 @@ export async function routeTask(params: {
     return runOwnerAutopilotWorkflow({ task, config, slack, logStep });
   }
 
-  return runUnknownTaskWorkflow(task, logStep);
+  return runUnknownTaskWorkflow({ task, config, slack, logStep });
 }

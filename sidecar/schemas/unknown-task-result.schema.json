@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["reply", "reaction"],
+  "additionalProperties": false,
+  "properties": {
+    "reply": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reaction": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

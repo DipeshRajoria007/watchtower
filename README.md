@@ -34,4 +34,5 @@ Watchtower is a macOS-only Tauri desktop automation app that listens to Slack me
 - Runtime workflow config is no longer loaded from `.env`; it is managed from the app Settings page.
 - Mention events are listened across all channels where the bot is present; bug-fix auto-run is restricted to configured bug-fix channel IDs.
 - Owner-authored bot mentions (`ownerSlackUserIds`) run in owner-autopilot mode, bypassing workflow guardrails.
+- Unknown/random non-owner requests get a tagged Codex-generated dark-humor thread reply (low reasoning effort) plus reaction and desktop notification.
 - `gh auth login` is recommended for GitHub auth. If unavailable, Codex GitHub MCP auth can be used.
