@@ -270,7 +270,7 @@ function App() {
       <div className="glow glow-2" />
 
       <header className="topbar">
-        <div>
+        <div data-tauri-drag-region>
           <p className="eyebrow">Developer Automation Console</p>
           <h1>Watchtower</h1>
           <p className="status-line">Sidecar: {data?.sidecarStatus ?? 'starting'}</p>
