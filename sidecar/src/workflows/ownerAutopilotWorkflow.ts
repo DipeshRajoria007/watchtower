@@ -30,6 +30,30 @@ function formatThreadContext(task: NormalizedTask, messages: Array<{ text: strin
   return lines.join('\n');
 }
 
+function sanitizeOwnerSummary(raw: string): string {
+  const normalized = raw.replace(/\r\n/g, '\n').trim();
+  if (!normalized) {
+    return 'Done.';
+  }
+
+  const cleaned = normalized
+    .replace(/^master your task is completed\.?\s*/i, '')
+    .replace(/^owner request success\.?\s*/i, '')
+    .replace(/^request success\.?\s*/i, '');
+
+  const lines = cleaned
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .filter(line => !/^actions?:/i.test(line))
+    .filter(line => !/^-\s*/.test(line))
+    .filter(line => !/(channel\s+[A-Z0-9]+|thread\s+\d+\.\d+|timestamp|slack thread|replied in slack|posted in slack|confirmed slack)/i.test(line))
+    .filter(line => !/^on master's command/i.test(line));
+
+  const finalText = lines.join(' ').replace(/\s+/g, ' ').trim();
+  return finalText || 'Done.';
+}
+
 export async function runOwnerAutopilotWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
@@ -56,15 +80,9 @@ export async function runOwnerAutopilotWorkflow(params: {
     },
   });
 
-  await slack.chat.postMessage({
-    channel: task.event.channelId,
-    thread_ts: task.event.threadTs,
-    text: "On Master's command, Overriding Watchtower guardrails...",
-  });
-
   logStep?.({
-    stage: 'owner_autopilot.slack.ack_posted',
-    message: 'Posted owner-autopilot acknowledgement in Slack thread.',
+    stage: 'owner_autopilot.slack.ack_skipped',
+    message: 'Skipped owner-autopilot acknowledgement message by configuration.',
   });
 
   const githubToken = await resolveGithubTokenForCodex();
@@ -94,7 +112,7 @@ ${threadContext}
 Output rules:
 Return strict JSON with:
 - status: "success" | "failed" | "no_action"
-- summary: short plain-language outcome
+- summary: short human-facing outcome message for Slack. Do NOT include operational telemetry like channel IDs, thread IDs, timestamps, or "Actions performed" style audit logs.
 - actions: array of concrete actions performed
 - prUrl: PR URL if one was created, else empty string
 `.trim();
@@ -163,25 +181,23 @@ Return strict JSON with:
   }
 
   const status = String(result.parsedJson.status ?? 'success');
-  const summary = String(result.parsedJson.summary ?? 'Owner request completed.');
-  const actions = Array.isArray(result.parsedJson.actions)
-    ? result.parsedJson.actions.map(item => String(item))
-    : [];
+  const summaryRaw = String(result.parsedJson.summary ?? 'Owner request completed.');
+  const summary = sanitizeOwnerSummary(summaryRaw);
   const prUrl = String(result.parsedJson.prUrl ?? '');
   const statusIntro =
     status === 'success'
-      ? 'Master your task is completed.'
+      ? ''
       : status === 'no_action'
-        ? 'Master no action was required.'
-        : `Owner request ${status}.`;
+        ? 'No action required.'
+        : `Request ${status}.`;
 
-  const actionBlock = actions.length > 0 ? `\nActions:\n- ${actions.join('\n- ')}` : '';
   const prBlock = prUrl ? `\n${prUrl}` : '';
+  const text = `${statusIntro ? `${statusIntro} ` : ''}${summary}${prBlock}`.trim();
 
   await slack.chat.postMessage({
     channel: task.event.channelId,
     thread_ts: task.event.threadTs,
-    text: `${statusIntro} ${summary}${actionBlock}${prBlock}`,
+    text,
   });
 
   logStep?.({
@@ -189,7 +205,6 @@ Return strict JSON with:
     message: 'Posted owner-autopilot completion message in Slack thread.',
     data: {
       status,
-      actions: actions.length,
       hasPrUrl: Boolean(prUrl),
     },
   });
