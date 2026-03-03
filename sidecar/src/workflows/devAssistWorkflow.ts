@@ -8,6 +8,7 @@ const HELP_TEXT = [
   '- `wt help` -> show command help',
   '- `wt status` -> show current runtime health snapshot',
   '- `wt runs [n]` -> show latest runs (default 5)',
+  '- `wt failures [n]` -> show latest failed runs (default 5)',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -138,6 +139,48 @@ export async function runDevAssistWorkflow(params: {
       slackPosted: true,
       result: {
         command: 'RUNS',
+        limit: command.limit,
+        count: runs.length,
+      },
+    };
+  }
+
+  if (command.type === 'FAILURES') {
+    const runs = store.listDevRuns(command.limit, 'FAILED');
+    const lines = runs.map((run, index) => {
+      const shortId = run.id.slice(0, 8);
+      return `${index + 1}. [${run.status}] ${run.workflow} job=${shortId} updated=${run.updatedAt}${
+        run.errorMessage ? ` error=${run.errorMessage}` : ''
+      }`;
+    });
+
+    const text = runs.length
+      ? ['Recent failures:', ...lines].join('\n')
+      : 'No failed runs found in recent history.';
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+
+    logStep?.({
+      stage: 'dev_assist.failures.posted',
+      message: 'Posted recent failed runs in Slack thread.',
+      data: {
+        limit: command.limit,
+        returned: runs.length,
+      },
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Posted recent failures.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'FAILURES',
         limit: command.limit,
         count: runs.length,
       },

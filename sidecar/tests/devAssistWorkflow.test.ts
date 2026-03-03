@@ -175,4 +175,62 @@ describe('devAssistWorkflow', () => {
       }),
     );
   });
+
+  it('posts recent failures for wt failures', async () => {
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+
+    const task: NormalizedTask = {
+      event: {
+        eventId: 'EvDevAssist4',
+        channelId: 'C1',
+        threadTs: '111.22',
+        eventTs: '111.22',
+        userId: 'U777',
+        text: '<@UBOT1> wt failures 2',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'DEV_ASSIST',
+    };
+
+    const result = await runDevAssistWorkflow({
+      task,
+      config,
+      slack: slack as any,
+      store: {
+        getDevStatusSnapshot: () => ({
+          activeJobs: 1,
+          runs24h: 12,
+          failures24h: 2,
+          successRate24h: 83.3,
+        }),
+        listDevRuns: (_limit: number, status?: string) =>
+          status === 'FAILED'
+            ? [
+                {
+                  id: 'fffffff1-bbbb-cccc-dddd-eeeeeeeeeeee',
+                  workflow: 'BUG_FIX',
+                  status: 'FAILED',
+                  updatedAt: '2026-03-04T00:01:00.000Z',
+                  errorMessage: 'timeout',
+                },
+              ]
+            : [],
+      } as any,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result?.command).toBe('FAILURES');
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Recent failures:'),
+      }),
+    );
+  });
 });
