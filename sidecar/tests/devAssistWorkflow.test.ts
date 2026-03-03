@@ -481,4 +481,65 @@ describe('devAssistWorkflow', () => {
       }),
     );
   });
+
+  it('updates personality profile for wt personality set', async () => {
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+    const setPersonalityProfile = vi.fn();
+
+    const task: NormalizedTask = {
+      event: {
+        eventId: 'EvDevAssist9',
+        channelId: 'C1',
+        threadTs: '111.22',
+        eventTs: '111.22',
+        userId: 'U777',
+        text: '<@UBOT1> wt personality set professional me',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'DEV_ASSIST',
+    };
+
+    const result = await runDevAssistWorkflow({
+      task,
+      config,
+      slack: slack as any,
+      store: {
+        getDevStatusSnapshot: () => ({
+          activeJobs: 1,
+          runs24h: 12,
+          failures24h: 2,
+          successRate24h: 83.3,
+        }),
+        getDevLearningSnapshot: () => ({
+          signals24h: 14,
+          correctionsLearned: 4,
+          correctionsApplied24h: 3,
+          personalityProfiles: 2,
+          topErrorKind: 'CODEX_BIN_NOT_FOUND',
+        }),
+        getDevChannelHeat: () => [],
+        setPersonalityProfile,
+        listDevRuns: () => [],
+        resolveJobId: () => undefined,
+        getJobSummary: () => undefined,
+        listJobLogsTail: () => [],
+      } as any,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result?.command).toBe('PERSONALITY_SET');
+    expect(setPersonalityProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: 'user',
+        mode: 'professional',
+      }),
+    );
+  });
 });

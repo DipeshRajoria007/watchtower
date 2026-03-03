@@ -59,6 +59,19 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt personality set command', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt personality set friendly me')).toEqual({
+      type: 'PERSONALITY_SET',
+      mode: 'friendly',
+      scope: 'user',
+    });
+    expect(parseDevAssistCommand('<@UBOT1> wt personality set chaos channel')).toEqual({
+      type: 'PERSONALITY_SET',
+      mode: 'chaos',
+      scope: 'channel',
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);

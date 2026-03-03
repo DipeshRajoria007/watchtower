@@ -6,7 +6,8 @@ export type DevAssistCommand =
   | { type: 'TRACE'; jobId: string; limit: number }
   | { type: 'DIAGNOSE'; jobId: string }
   | { type: 'LEARN' }
-  | { type: 'HEAT'; limit: number };
+  | { type: 'HEAT'; limit: number }
+  | { type: 'PERSONALITY_SET'; mode: 'dark_humor' | 'professional' | 'friendly' | 'chaos'; scope: 'user' | 'channel' };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -77,6 +78,34 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
     const rawLimit = Number(heatMatch[1] ?? '5');
     const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 20) : 5;
     return { type: 'HEAT', limit };
+  }
+
+  const personalitySetMatch = body.match(/^personality\s+set\s+([a-z_-]+)(?:\s+(channel|me))?\b/i);
+  if (personalitySetMatch) {
+    const modeRaw = personalitySetMatch[1].toLowerCase();
+    const scopeRaw = (personalitySetMatch[2] ?? 'me').toLowerCase();
+    const scope = scopeRaw === 'channel' ? 'channel' : 'user';
+
+    const modeMap: Record<string, 'dark_humor' | 'professional' | 'friendly' | 'chaos'> = {
+      dark: 'dark_humor',
+      dark_humor: 'dark_humor',
+      darkhumor: 'dark_humor',
+      sus: 'dark_humor',
+      professional: 'professional',
+      serious: 'professional',
+      friendly: 'friendly',
+      polite: 'friendly',
+      chaos: 'chaos',
+      chaotic: 'chaos',
+    };
+    const mode = modeMap[modeRaw];
+    if (mode) {
+      return {
+        type: 'PERSONALITY_SET',
+        mode,
+        scope,
+      };
+    }
   }
 
   return undefined;

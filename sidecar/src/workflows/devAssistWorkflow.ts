@@ -14,6 +14,7 @@ const HELP_TEXT = [
   '- `wt diagnose <jobId>` -> run Failure Doctor diagnosis on a job',
   '- `wt learn` -> show learning engine stats',
   '- `wt heat [n]` -> show top active channels in last 7 days',
+  '- `wt personality set <mode> [channel|me]` -> set reply tone profile',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -391,6 +392,49 @@ export async function runDevAssistWorkflow(params: {
         command: 'HEAT',
         limit: command.limit,
         count: heat.length,
+      },
+    };
+  }
+
+  if (command.type === 'PERSONALITY_SET') {
+    const scopeId = command.scope === 'channel' ? task.event.channelId : task.event.userId;
+    store.setPersonalityProfile({
+      scope: command.scope,
+      scopeId,
+      mode: command.mode,
+      source: 'dev_assist_command',
+    });
+
+    const target = command.scope === 'channel' ? `channel ${task.event.channelId}` : `user ${task.event.userId}`;
+    const text = `Personality updated: \`${command.mode}\` for ${target}.`;
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+
+    logStep?.({
+      stage: 'dev_assist.personality_set.posted',
+      message: 'Updated personality profile via dev-assist command.',
+      data: {
+        scope: command.scope,
+        scopeId,
+        mode: command.mode,
+      },
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Updated personality profile.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'PERSONALITY_SET',
+        scope: command.scope,
+        scopeId,
+        mode: command.mode,
       },
     };
   }
