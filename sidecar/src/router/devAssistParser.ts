@@ -1,6 +1,7 @@
 export type DevAssistCommand =
   | { type: 'HELP' }
-  | { type: 'STATUS' };
+  | { type: 'STATUS' }
+  | { type: 'RUNS'; limit: number };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -27,6 +28,13 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
 
   if (/^status\b/.test(body.toLowerCase())) {
     return { type: 'STATUS' };
+  }
+
+  const runsMatch = body.match(/^runs(?:\s+(\d+))?\b/i);
+  if (runsMatch) {
+    const rawLimit = Number(runsMatch[1] ?? '5');
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 20) : 5;
+    return { type: 'RUNS', limit };
   }
 
   return undefined;

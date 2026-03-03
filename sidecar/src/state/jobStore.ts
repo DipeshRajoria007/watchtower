@@ -558,4 +558,55 @@ export class JobStore {
       successRate24h,
     };
   }
+
+  listDevRuns(limit: number, status?: JobRecord['status']): Array<{
+    id: string;
+    workflow: WorkflowIntent;
+    status: JobRecord['status'];
+    updatedAt: string;
+    errorMessage?: string;
+  }> {
+    const safeLimit = Math.min(Math.max(limit, 1), 50);
+    const rows = status
+      ? ((this.db.prepare(
+          `SELECT id, workflow, status, updated_at, error_message
+           FROM jobs
+           WHERE status = ?
+           ORDER BY updated_at DESC
+           LIMIT ?`
+        ) as unknown as {
+          all: (
+            statusArg: JobRecord['status'],
+            limitArg: number
+          ) => Array<{
+            id: string;
+            workflow: WorkflowIntent;
+            status: JobRecord['status'];
+            updated_at: string;
+            error_message?: string | null;
+          }>;
+        }).all(status, safeLimit))
+      : ((this.db.prepare(
+          `SELECT id, workflow, status, updated_at, error_message
+           FROM jobs
+           ORDER BY updated_at DESC
+           LIMIT ?`
+        ) as unknown as {
+          all: (limitArg: number) => Array<{
+            id: string;
+            workflow: WorkflowIntent;
+            status: JobRecord['status'];
+            updated_at: string;
+            error_message?: string | null;
+          }>;
+        }).all(safeLimit));
+
+    return rows.map(row => ({
+      id: row.id,
+      workflow: row.workflow,
+      status: row.status,
+      updatedAt: row.updated_at,
+      errorMessage: row.error_message ?? undefined,
+    }));
+  }
 }

@@ -6,6 +6,8 @@ import type { JobStore } from '../state/jobStore.js';
 const HELP_TEXT = [
   'Watchtower Dev Assistant commands:',
   '- `wt help` -> show command help',
+  '- `wt status` -> show current runtime health snapshot',
+  '- `wt runs [n]` -> show latest runs (default 5)',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -98,6 +100,46 @@ export async function runDevAssistWorkflow(params: {
       result: {
         command: 'STATUS',
         ...snapshot,
+      },
+    };
+  }
+
+  if (command.type === 'RUNS') {
+    const runs = store.listDevRuns(command.limit);
+    const lines = runs.map((run, index) => {
+      const shortId = run.id.slice(0, 8);
+      return `${index + 1}. [${run.status}] ${run.workflow} job=${shortId} updated=${run.updatedAt}`;
+    });
+
+    const text = runs.length
+      ? ['Recent runs:', ...lines].join('\n')
+      : 'No runs found yet.';
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+
+    logStep?.({
+      stage: 'dev_assist.runs.posted',
+      message: 'Posted recent runs in Slack thread.',
+      data: {
+        limit: command.limit,
+        returned: runs.length,
+      },
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Posted recent runs.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'RUNS',
+        limit: command.limit,
+        count: runs.length,
       },
     };
   }
