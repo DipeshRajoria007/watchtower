@@ -13,11 +13,13 @@
     "windows": [
       {
         "title": "watchtower",
+        "theme": "Dark",
+        "titleBarStyle": "Visible",
+        "backgroundColor": "#1a1a1a",
         "width": 1120,
         "height": 760,
         "minWidth": 900,
         "minHeight": 640,
-        "decorations": false,
         "resizable": true
       }
     ],
