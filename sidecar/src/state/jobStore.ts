@@ -508,4 +508,54 @@ export class JobStore {
 
     return undefined;
   }
+
+  getDevStatusSnapshot(): {
+    activeJobs: number;
+    runs24h: number;
+    failures24h: number;
+    successRate24h: number;
+  } {
+    const activeJobs = Number(
+      (this.db
+        .prepare(`SELECT COUNT(*) as count FROM jobs WHERE status = 'RUNNING'`)
+        .get() as { count?: number } | undefined)?.count ?? 0
+    );
+
+    const runs24h = Number(
+      (this.db
+        .prepare(`SELECT COUNT(*) as count FROM jobs WHERE julianday(created_at) >= julianday('now', '-1 day')`)
+        .get() as { count?: number } | undefined)?.count ?? 0
+    );
+
+    const failures24h = Number(
+      (this.db
+        .prepare(
+          `SELECT COUNT(*) as count
+           FROM jobs
+           WHERE status = 'FAILED'
+             AND julianday(created_at) >= julianday('now', '-1 day')`
+        )
+        .get() as { count?: number } | undefined)?.count ?? 0
+    );
+
+    const success24h = Number(
+      (this.db
+        .prepare(
+          `SELECT COUNT(*) as count
+           FROM jobs
+           WHERE status = 'SUCCESS'
+             AND julianday(created_at) >= julianday('now', '-1 day')`
+        )
+        .get() as { count?: number } | undefined)?.count ?? 0
+    );
+
+    const successRate24h = runs24h > 0 ? Math.round((success24h / runs24h) * 1000) / 10 : 100;
+
+    return {
+      activeJobs,
+      runs24h,
+      failures24h,
+      successRate24h,
+    };
+  }
 }

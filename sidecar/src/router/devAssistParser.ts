@@ -1,5 +1,6 @@
 export type DevAssistCommand =
-  | { type: 'HELP' };
+  | { type: 'HELP' }
+  | { type: 'STATUS' };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -22,6 +23,10 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
 
   if (!body || /^help\b|^commands\b|^\?$/.test(body.toLowerCase())) {
     return { type: 'HELP' };
+  }
+
+  if (/^status\b/.test(body.toLowerCase())) {
+    return { type: 'STATUS' };
   }
 
   return undefined;

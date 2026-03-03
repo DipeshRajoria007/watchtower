@@ -55,10 +55,64 @@ describe('devAssistWorkflow', () => {
       task,
       config,
       slack: slack as any,
+      store: {
+        getDevStatusSnapshot: () => ({
+          activeJobs: 0,
+          runs24h: 0,
+          failures24h: 0,
+          successRate24h: 100,
+        }),
+      } as any,
     });
 
     expect(result.status).toBe('SUCCESS');
     expect(slack.chat.postMessage).toHaveBeenCalled();
     expect(result.result?.command).toBe('HELP');
+  });
+
+  it('posts status snapshot for wt status', async () => {
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+
+    const task: NormalizedTask = {
+      event: {
+        eventId: 'EvDevAssist2',
+        channelId: 'C1',
+        threadTs: '111.22',
+        eventTs: '111.22',
+        userId: 'U777',
+        text: '<@UBOT1> wt status',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'DEV_ASSIST',
+    };
+
+    const result = await runDevAssistWorkflow({
+      task,
+      config,
+      slack: slack as any,
+      store: {
+        getDevStatusSnapshot: () => ({
+          activeJobs: 1,
+          runs24h: 12,
+          failures24h: 2,
+          successRate24h: 83.3,
+        }),
+      } as any,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result?.command).toBe('STATUS');
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Watchtower status'),
+      }),
+    );
   });
 });

@@ -36,7 +36,7 @@ export async function routeTask(params: {
   }
 
   if (task.intent === 'DEV_ASSIST') {
-    return runDevAssistWorkflow({ task, config, slack, logStep });
+    return runDevAssistWorkflow({ task, config, slack, store, logStep });
   }
 
   return runUnknownTaskWorkflow({ task, config, slack, personalityMode, logStep });
