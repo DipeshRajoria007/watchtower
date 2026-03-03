@@ -299,4 +299,68 @@ describe('devAssistWorkflow', () => {
       }),
     );
   });
+
+  it('posts diagnosis for wt diagnose', async () => {
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+
+    const task: NormalizedTask = {
+      event: {
+        eventId: 'EvDevAssist6',
+        channelId: 'C1',
+        threadTs: '111.22',
+        eventTs: '111.22',
+        userId: 'U777',
+        text: '<@UBOT1> wt diagnose abc123',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'DEV_ASSIST',
+    };
+
+    const result = await runDevAssistWorkflow({
+      task,
+      config,
+      slack: slack as any,
+      store: {
+        getDevStatusSnapshot: () => ({
+          activeJobs: 1,
+          runs24h: 12,
+          failures24h: 2,
+          successRate24h: 83.3,
+        }),
+        listDevRuns: () => [],
+        resolveJobId: () => 'abc12345-1111-2222-3333-444444444444',
+        getJobSummary: () => ({
+          id: 'abc12345-1111-2222-3333-444444444444',
+          workflow: 'OWNER_AUTOPILOT',
+          status: 'FAILED',
+          errorMessage: 'Error: spawn codex ENOENT',
+        }),
+        listJobLogsTail: () => [
+          {
+            id: 11,
+            jobId: 'abc12345-1111-2222-3333-444444444444',
+            level: 'ERROR',
+            stage: 'codex.execution.error',
+            message: 'Error: spawn codex ENOENT',
+            createdAt: '2026-03-04T00:00:10.000Z',
+          },
+        ],
+      } as any,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result?.command).toBe('DIAGNOSE');
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Failure diagnosis for'),
+      }),
+    );
+  });
 });

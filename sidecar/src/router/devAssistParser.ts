@@ -3,7 +3,8 @@ export type DevAssistCommand =
   | { type: 'STATUS' }
   | { type: 'RUNS'; limit: number }
   | { type: 'FAILURES'; limit: number }
-  | { type: 'TRACE'; jobId: string; limit: number };
+  | { type: 'TRACE'; jobId: string; limit: number }
+  | { type: 'DIAGNOSE'; jobId: string };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -54,6 +55,14 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
       type: 'TRACE',
       jobId: traceMatch[1],
       limit,
+    };
+  }
+
+  const diagnoseMatch = body.match(/^diagnose\s+([a-z0-9-]{6,})\b/i);
+  if (diagnoseMatch) {
+    return {
+      type: 'DIAGNOSE',
+      jobId: diagnoseMatch[1],
     };
   }
 

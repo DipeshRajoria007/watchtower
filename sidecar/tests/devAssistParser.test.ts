@@ -35,6 +35,13 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt diagnose command', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt diagnose abc123')).toEqual({
+      type: 'DIAGNOSE',
+      jobId: 'abc123',
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);

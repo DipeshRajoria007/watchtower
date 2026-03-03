@@ -62,6 +62,10 @@ describe('jobStore', () => {
     expect(tail).toHaveLength(1);
     expect(tail[0].stage).toBe('intake.received');
 
+    const jobSummary = store.getJobSummary('job-1');
+    expect(jobSummary?.workflow).toBe('PR_REVIEW');
+    expect(jobSummary?.status).toBe('SUCCESS');
+
     const latest = store.latestJobForThread('C1', '123');
     expect(latest?.workflow).toBe('PR_REVIEW');
 

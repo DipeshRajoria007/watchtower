@@ -666,4 +666,33 @@ export class JobStore {
       createdAt: row.created_at,
     }));
   }
+
+  getJobSummary(jobId: string): {
+    id: string;
+    workflow: WorkflowIntent;
+    status: JobRecord['status'];
+    errorMessage?: string;
+  } | undefined {
+    const row = this.db
+      .prepare(`SELECT id, workflow, status, error_message FROM jobs WHERE id = ? LIMIT 1`)
+      .get(jobId) as
+      | {
+          id?: string;
+          workflow?: WorkflowIntent;
+          status?: JobRecord['status'];
+          error_message?: string | null;
+        }
+      | undefined;
+
+    if (!row?.id || !row.workflow || !row.status) {
+      return undefined;
+    }
+
+    return {
+      id: row.id,
+      workflow: row.workflow,
+      status: row.status,
+      errorMessage: row.error_message ?? undefined,
+    };
+  }
 }

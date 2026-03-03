@@ -1,5 +1,6 @@
 import type { WebClient } from '@slack/web-api';
 import type { AppConfig, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
+import { diagnoseFailure } from '../learning/failureDoctor.js';
 import { parseDevAssistCommand } from '../router/devAssistParser.js';
 import type { JobStore } from '../state/jobStore.js';
 
@@ -10,6 +11,7 @@ const HELP_TEXT = [
   '- `wt runs [n]` -> show latest runs (default 5)',
   '- `wt failures [n]` -> show latest failed runs (default 5)',
   '- `wt trace <jobId> [lines]` -> show recent trace lines for a job',
+  '- `wt diagnose <jobId>` -> run Failure Doctor diagnosis on a job',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -241,6 +243,77 @@ export async function runDevAssistWorkflow(params: {
         command: 'TRACE',
         jobId: resolvedJobId,
         count: logs.length,
+      },
+    };
+  }
+
+  if (command.type === 'DIAGNOSE') {
+    const resolvedJobId = store.resolveJobId(command.jobId);
+    if (!resolvedJobId) {
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: `Could not find job \`${command.jobId}\` for diagnosis.`,
+      });
+
+      return {
+        workflow: 'DEV_ASSIST',
+        status: 'SKIPPED',
+        message: 'Diagnosis lookup failed: unknown job id.',
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+
+    const job = store.getJobSummary(resolvedJobId);
+    const logs = store.listJobLogsTail(resolvedJobId, 200).map(log => ({
+      level: log.level,
+      stage: log.stage,
+      message: log.message,
+      data: undefined,
+    }));
+
+    const diagnosis = diagnoseFailure({
+      workflow: job?.workflow ?? 'UNKNOWN',
+      message: job?.errorMessage ?? `${job?.status ?? 'UNKNOWN'}`,
+      logs,
+    });
+
+    const text = diagnosis
+      ? [
+          `Failure diagnosis for ${resolvedJobId}:`,
+          `- Kind: ${diagnosis.errorKind}`,
+          `- Summary: ${diagnosis.summary}`,
+          ...diagnosis.actions.slice(0, 3).map(action => `- Fix: ${action}`),
+        ].join('\n')
+      : `No strong diagnosis found for ${resolvedJobId}. Try \`wt trace ${resolvedJobId} 40\` for deeper context.`;
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+
+    logStep?.({
+      stage: 'dev_assist.diagnose.posted',
+      message: 'Posted Failure Doctor diagnosis in Slack thread.',
+      data: {
+        jobId: resolvedJobId,
+        diagnosed: Boolean(diagnosis),
+      },
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Posted failure diagnosis.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'DIAGNOSE',
+        jobId: resolvedJobId,
+        diagnosed: Boolean(diagnosis),
+        errorKind: diagnosis?.errorKind,
       },
     };
   }
