@@ -239,6 +239,18 @@ h2 {
   border-radius: 10px;
   background: linear-gradient(180deg, #242424, #1a1a1a);
   padding: 10px;
+  cursor: pointer;
+  transition: border-color 0.16s ease, transform 0.16s ease, background 0.16s ease;
+}
+
+.run-list li:hover {
+  border-color: #5d6a82;
+  transform: translateY(-1px);
+}
+
+.run-list li.selected {
+  border-color: #67c9ff;
+  background: linear-gradient(180deg, #293442, #1b222b);
 }
 
 .run-top {
@@ -289,6 +301,96 @@ h2 {
   background: rgba(255, 114, 114, 0.15);
   border-color: rgba(255, 114, 114, 0.6);
   color: #ff9e9e;
+}
+
+.badge.info {
+  background: rgba(72, 192, 255, 0.14);
+  border-color: rgba(72, 192, 255, 0.55);
+  color: #9ddfff;
+}
+
+.badge.warn {
+  background: rgba(255, 198, 109, 0.18);
+  border-color: rgba(255, 198, 109, 0.6);
+  color: #ffdda7;
+}
+
+.badge.error {
+  background: rgba(255, 114, 114, 0.15);
+  border-color: rgba(255, 114, 114, 0.6);
+  color: #ff9e9e;
+}
+
+.trace-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.trace-list li {
+  border: 1px solid #3e3e3e;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #212121, #171717);
+  padding: 10px;
+}
+
+.trace-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.trace-stage {
+  font-family: 'IBM Plex Mono', 'SF Mono', 'Menlo', monospace;
+  font-size: 12px;
+  color: #b9dfff;
+}
+
+.trace-time {
+  color: #8c95a9;
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', 'SF Mono', 'Menlo', monospace;
+}
+
+.trace-message {
+  margin-top: 6px;
+  color: #f1f4fb;
+  font-size: 13px;
+}
+
+.trace-data {
+  margin: 8px 0 0;
+  border: 1px solid #3f3f3f;
+  border-radius: 8px;
+  background: #111;
+  color: #bdd6ff;
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  font-family: 'IBM Plex Mono', 'SF Mono', 'Menlo', monospace;
+  overflow: auto;
+}
+
+.live-log-console {
+  margin: 0;
+  border: 1px solid #3f3f3f;
+  border-radius: 10px;
+  background: #101010;
+  color: #dce4f5;
+  padding: 10px;
+  min-height: 220px;
+  max-height: 420px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.5;
+  font-family: 'IBM Plex Mono', 'SF Mono', 'Menlo', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .empty-state {

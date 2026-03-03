@@ -29,6 +29,16 @@ export class SocketSlackClient {
         event as unknown as Record<string, unknown>,
         body as unknown as Record<string, unknown>
       );
+      logger.info(
+        {
+          component: 'slack',
+          eventType: 'app_mention',
+          eventId: normalized.eventId,
+          channelId: normalized.channelId,
+          threadTs: normalized.threadTs,
+        },
+        'received app_mention event'
+      );
       await this.onEvent(normalized, client);
     });
 
@@ -36,6 +46,17 @@ export class SocketSlackClient {
       const normalized = this.normalizeEnvelope(
         event as unknown as Record<string, unknown>,
         body as unknown as Record<string, unknown>
+      );
+      logger.info(
+        {
+          component: 'slack',
+          eventType: 'message',
+          eventId: normalized.eventId,
+          channelId: normalized.channelId,
+          threadTs: normalized.threadTs,
+          subtype: normalized.messageSubtype ?? null,
+        },
+        'received message event'
       );
       await this.onEvent(normalized, client);
     });

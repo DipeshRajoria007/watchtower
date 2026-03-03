@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 type RunSummary = {
   id: string;
@@ -18,6 +19,16 @@ type DashboardData = {
   activeJobs: RunSummary[];
   recentRuns: RunSummary[];
   failures: RunSummary[];
+};
+
+type JobLogEntry = {
+  id: number;
+  jobId: string;
+  level: 'INFO' | 'WARN' | 'ERROR' | string;
+  stage: string;
+  message: string;
+  dataJson: string | null;
+  createdAt: string;
 };
 
 type AppSettings = {
@@ -43,6 +54,9 @@ const POLL_MS = 5000;
 function App() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedRunLogs, setSelectedRunLogs] = useState<JobLogEntry[]>([]);
+  const [liveSidecarLogs, setLiveSidecarLogs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -59,6 +73,25 @@ function App() {
       failures: data?.failures.length ?? 0,
     };
   }, [data]);
+
+  const allRuns = useMemo(() => {
+    if (!data) {
+      return [] as RunSummary[];
+    }
+
+    const map = new Map<string, RunSummary>();
+    for (const run of [...data.activeJobs, ...data.recentRuns, ...data.failures]) {
+      map.set(run.id, run);
+    }
+    return Array.from(map.values());
+  }, [data]);
+
+  const selectedRun = useMemo(() => {
+    if (!selectedRunId) {
+      return null;
+    }
+    return allRuns.find(run => run.id === selectedRunId) ?? null;
+  }, [allRuns, selectedRunId]);
 
   const loadDashboard = async () => {
     const result = await invoke<DashboardData>('get_dashboard_data');
@@ -116,6 +149,81 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+    const runExists = selectedRunId ? allRuns.some(run => run.id === selectedRunId) : false;
+    if (runExists) {
+      return;
+    }
+    const preferred = data.activeJobs[0]?.id ?? data.recentRuns[0]?.id ?? data.failures[0]?.id ?? null;
+    setSelectedRunId(preferred);
+  }, [allRuns, data, selectedRunId]);
+
+  useEffect(() => {
+    let active = true;
+
+    const refreshLogs = async () => {
+      if (!selectedRunId) {
+        if (active) {
+          setSelectedRunLogs([]);
+        }
+        return;
+      }
+
+      try {
+        const logs = await invoke<JobLogEntry[]>('get_job_logs', { jobId: selectedRunId, limit: 1000 });
+        if (active) {
+          setSelectedRunLogs(logs);
+        }
+      } catch (err) {
+        if (active) {
+          setError(String(err));
+        }
+      }
+    };
+
+    void refreshLogs();
+    const interval = window.setInterval(() => {
+      void refreshLogs();
+    }, 2000);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [selectedRunId]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+
+    void listen<string>('sidecar-log', event => {
+      const line = formatSidecarLine(event.payload);
+      setLiveSidecarLogs(previous => {
+        const next = [...previous, line];
+        if (next.length > 400) {
+          return next.slice(next.length - 400);
+        }
+        return next;
+      });
+    }).then(handler => {
+      if (disposed) {
+        handler();
+      } else {
+        unlisten = handler;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
     };
   }, []);
 
@@ -197,20 +305,55 @@ function App() {
         <StatCard label="Failures" value={summary.failures} tone="failures" />
       </section>
 
-      <section className="panel">
-        <PanelHeader title="Active Jobs" subtitle="In-flight workflow executions" count={summary.active} />
-        <RunList runs={data?.activeJobs ?? []} empty="No active jobs. Idle and watching Slack." />
+        <section className="panel">
+          <PanelHeader title="Active Jobs" subtitle="In-flight workflow executions" count={summary.active} />
+          <RunList
+            runs={data?.activeJobs ?? []}
+            empty="No active jobs. Idle and watching Slack."
+            selectedRunId={selectedRunId}
+            onSelect={runId => setSelectedRunId(runId)}
+          />
       </section>
 
       <section className="panel-grid">
         <section className="panel">
           <PanelHeader title="Last 50 Runs" subtitle="Most recent execution history" count={summary.recent} />
-          <RunList runs={data?.recentRuns ?? []} empty="No run history yet." />
+          <RunList
+            runs={data?.recentRuns ?? []}
+            empty="No run history yet."
+            selectedRunId={selectedRunId}
+            onSelect={runId => setSelectedRunId(runId)}
+          />
         </section>
 
         <section className="panel">
           <PanelHeader title="Failures" subtitle="Items requiring manual attention" count={summary.failures} />
-          <RunList runs={data?.failures ?? []} empty="No failures. System stable." />
+          <RunList
+            runs={data?.failures ?? []}
+            empty="No failures. System stable."
+            selectedRunId={selectedRunId}
+            onSelect={runId => setSelectedRunId(runId)}
+          />
+        </section>
+      </section>
+
+      <section className="panel-grid">
+        <section className="panel">
+          <PanelHeader
+            title="Execution Trace"
+            subtitle={selectedRun ? `job=${selectedRun.id}` : 'Select a run to inspect every step'}
+            count={selectedRunLogs.length}
+          />
+          <TraceList logs={selectedRunLogs} selectedRun={selectedRun} />
+        </section>
+
+        <section className="panel">
+          <PanelHeader
+            title="Live Sidecar Stream"
+            subtitle="Raw sidecar output (stdout + stderr), newest at bottom"
+            count={liveSidecarLogs.length}
+          />
+          <LiveLogConsole lines={liveSidecarLogs} />
         </section>
       </section>
 
@@ -415,7 +558,17 @@ function StatCard({ label, value, tone }: { label: string; value: number; tone: 
   );
 }
 
-function RunList({ runs, empty }: { runs: RunSummary[]; empty: string }) {
+function RunList({
+  runs,
+  empty,
+  selectedRunId,
+  onSelect,
+}: {
+  runs: RunSummary[];
+  empty: string;
+  selectedRunId?: string | null;
+  onSelect?: (runId: string) => void;
+}) {
   if (runs.length === 0) {
     return <p className="empty-state">{empty}</p>;
   }
@@ -423,7 +576,19 @@ function RunList({ runs, empty }: { runs: RunSummary[]; empty: string }) {
   return (
     <ul className="run-list">
       {runs.map(run => (
-        <li key={run.id}>
+        <li
+          key={run.id}
+          className={run.id === selectedRunId ? 'selected' : ''}
+          role="button"
+          tabIndex={0}
+          onClick={() => onSelect?.(run.id)}
+          onKeyDown={event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              onSelect?.(run.id);
+            }
+          }}
+        >
           <div className="run-top">
             <span className="run-workflow">{run.workflow}</span>
             <span className={`badge ${run.status.toLowerCase()}`}>{run.status}</span>
@@ -436,6 +601,85 @@ function RunList({ runs, empty }: { runs: RunSummary[]; empty: string }) {
       ))}
     </ul>
   );
+}
+
+function TraceList({ logs, selectedRun }: { logs: JobLogEntry[]; selectedRun: RunSummary | null }) {
+  if (!selectedRun) {
+    return <p className="empty-state">Pick any run above to inspect detailed step logs.</p>;
+  }
+
+  if (logs.length === 0) {
+    return <p className="empty-state">No trace entries persisted yet for this run.</p>;
+  }
+
+  return (
+    <ul className="trace-list">
+      {logs.map(log => (
+        <li key={log.id}>
+          <div className="trace-top">
+            <span className={`badge ${log.level.toLowerCase()}`}>{log.level}</span>
+            <span className="trace-stage">{log.stage}</span>
+            <span className="trace-time">{log.createdAt}</span>
+          </div>
+          <div className="trace-message">{log.message}</div>
+          {log.dataJson ? <pre className="trace-data">{prettyJson(log.dataJson)}</pre> : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function LiveLogConsole({ lines }: { lines: string[] }) {
+  if (lines.length === 0) {
+    return <p className="empty-state">Waiting for sidecar log output...</p>;
+  }
+
+  return (
+    <pre className="live-log-console">
+      {lines.map((line, index) => (
+        <div key={`${index}-${line.slice(0, 30)}`}>{line}</div>
+      ))}
+    </pre>
+  );
+}
+
+function prettyJson(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+}
+
+function formatSidecarLine(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const level = mapPinoLevel(parsed.level);
+    const message = typeof parsed.msg === 'string' ? parsed.msg : raw;
+    const time = typeof parsed.time === 'string' ? parsed.time : new Date().toISOString();
+    const stage = typeof parsed.stage === 'string' ? parsed.stage : '';
+    const jobId = typeof parsed.jobId === 'string' ? parsed.jobId : '';
+    const workflow = typeof parsed.workflow === 'string' ? parsed.workflow : '';
+
+    const parts = [`[${time}]`, `[${level}]`];
+    if (workflow) parts.push(`[${workflow}]`);
+    if (stage) parts.push(`[${stage}]`);
+    if (jobId) parts.push(`[job=${jobId}]`);
+    parts.push(message);
+    return parts.join(' ');
+  } catch {
+    return raw;
+  }
+}
+
+function mapPinoLevel(level: unknown): string {
+  if (typeof level === 'number') {
+    if (level >= 50) return 'ERROR';
+    if (level >= 40) return 'WARN';
+    if (level >= 30) return 'INFO';
+    return 'DEBUG';
+  }
+  return 'INFO';
 }
 
 function GearIcon() {

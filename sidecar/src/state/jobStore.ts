@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { JobRecord, WorkflowIntent } from '../types/contracts.js';
+import type { JobLogLevel, JobLogRecord, JobRecord, WorkflowIntent } from '../types/contracts.js';
 
 export class JobStore {
   private db: Database.Database;
@@ -29,6 +29,18 @@ export class JobStore {
       );
       CREATE INDEX IF NOT EXISTS idx_jobs_event_id ON jobs(event_id);
       CREATE INDEX IF NOT EXISTS idx_jobs_dedupe_key ON jobs(dedupe_key);
+
+      CREATE TABLE IF NOT EXISTS job_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL,
+        level TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        message TEXT NOT NULL,
+        data_json TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_job_logs_job_id ON job_logs(job_id);
+
       CREATE TABLE IF NOT EXISTS events (
         event_id TEXT PRIMARY KEY,
         channel_id TEXT,
@@ -119,5 +131,59 @@ export class JobStore {
         new Date().toISOString(),
         jobId,
       );
+  }
+
+  appendJobLog(input: {
+    jobId: string;
+    stage: string;
+    message: string;
+    level?: JobLogLevel;
+    data?: Record<string, unknown>;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO job_logs(job_id, level, stage, message, data_json, created_at)
+         VALUES(?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        input.jobId,
+        input.level ?? 'INFO',
+        input.stage,
+        input.message,
+        input.data ? JSON.stringify(input.data) : null,
+        new Date().toISOString(),
+      );
+  }
+
+  listJobLogs(jobId: string, limit = 500): JobLogRecord[] {
+    const stmt = this.db.prepare(
+      `SELECT id, job_id, level, stage, message, data_json, created_at
+       FROM job_logs
+       WHERE job_id = ?
+       ORDER BY id ASC
+       LIMIT ?`
+    ) as unknown as {
+      all: (jobIdArg: string, limitArg: number) => Array<{
+        id: number;
+        job_id: string;
+        level: JobLogLevel;
+        stage: string;
+        message: string;
+        data_json?: string | null;
+        created_at: string;
+      }>;
+    };
+
+    const rows = stmt.all(jobId, limit);
+
+    return rows.map(row => ({
+      id: row.id,
+      jobId: row.job_id,
+      level: row.level,
+      stage: row.stage,
+      message: row.message,
+      dataJson: row.data_json ?? undefined,
+      createdAt: row.created_at,
+    }));
   }
 }

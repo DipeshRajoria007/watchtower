@@ -6,6 +6,7 @@ import type {
   NormalizedTask,
   PrContext,
   WorkflowResult,
+  WorkflowStepLogger,
 } from '../types/contracts.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
 import { extractPrContext } from '../router/intentParser.js';
@@ -27,13 +28,32 @@ export async function runPrReviewWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
+  logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack } = params;
+  const { task, config, slack, logStep } = params;
+
+  logStep?.({
+    stage: 'pr_review.context.fetch.start',
+    message: 'Fetching Slack thread context for PR review.',
+  });
+
   const threadMessages = await fetchThreadContext(slack, task.event.channelId, task.event.threadTs);
   const threadTexts = threadMessages.map(message => message.text);
   const prContext = task.prContext ?? extractPrContext(threadTexts);
 
+  logStep?.({
+    stage: 'pr_review.context.fetch.done',
+    message: 'Fetched Slack thread context.',
+    data: { messages: threadMessages.length },
+  });
+
   if (!prContext) {
+    logStep?.({
+      stage: 'pr_review.context.missing',
+      message: 'PR context missing; asking for URL in thread and pausing.',
+      level: 'WARN',
+    });
+
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
@@ -50,6 +70,16 @@ export async function runPrReviewWorkflow(params: {
   }
 
   if (prContext.owner !== config.allowedPrOrg) {
+    logStep?.({
+      stage: 'pr_review.guard.org_rejected',
+      message: 'PR org is not allowed by policy.',
+      level: 'WARN',
+      data: {
+        owner: prContext.owner,
+        allowedOrg: config.allowedPrOrg,
+      },
+    });
+
     notifyDesktop(
       'Watchtower PR review skipped',
       `PR org ${prContext.owner} is not allowed. Only ${config.allowedPrOrg} is supported.`
@@ -65,6 +95,16 @@ export async function runPrReviewWorkflow(params: {
 
   const repoPath = mapRepoPath(config, prContext);
   if (!repoPath) {
+    logStep?.({
+      stage: 'pr_review.guard.repo_unmapped',
+      message: 'PR repository is not mapped to a configured local path.',
+      level: 'WARN',
+      data: {
+        owner: prContext.owner,
+        repo: prContext.repo,
+      },
+    });
+
     notifyDesktop(
       'Watchtower unmapped PR repo',
       `No local repo mapping for ${prContext.owner}/${prContext.repo}; skipping auto execution.`
@@ -84,7 +124,19 @@ export async function runPrReviewWorkflow(params: {
     text: 'Running PR review...',
   });
 
+  logStep?.({
+    stage: 'pr_review.slack.ack_posted',
+    message: 'Posted PR review start acknowledgement to Slack thread.',
+    data: { prUrl: prContext.url },
+  });
+
   const githubToken = await resolveGithubTokenForCodex();
+
+  logStep?.({
+    stage: 'pr_review.github.auth_resolved',
+    message: 'Resolved GitHub auth mode for Codex execution.',
+    data: { tokenInjected: Boolean(githubToken) },
+  });
 
   const prompt = `
 You are executing Watchtower PR review automation.
@@ -107,9 +159,31 @@ Requirements:
     timeoutMs: config.workflowTimeouts.prReviewMs,
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/pr-review-result.schema.json'),
     githubToken,
+    onLog: logStep,
   };
 
+  logStep?.({
+    stage: 'pr_review.codex.start',
+    message: 'Starting Codex PR review execution.',
+    data: {
+      repoPath,
+      timeoutMs: config.workflowTimeouts.prReviewMs,
+    },
+  });
+
   const result = await runCodex(request);
+
+  logStep?.({
+    stage: 'pr_review.codex.finish',
+    message: 'Codex PR review execution finished.',
+    level: result.ok ? 'INFO' : 'WARN',
+    data: {
+      ok: result.ok,
+      timedOut: result.timedOut,
+      exitCode: result.exitCode,
+      parsedJson: Boolean(result.parsedJson),
+    },
+  });
 
   if (!result.ok || !result.parsedJson) {
     const errorText = result.timedOut
@@ -121,6 +195,16 @@ Requirements:
       thread_ts: task.event.threadTs,
       text: `${errorText} Check desktop notifications for details.`,
     });
+
+    logStep?.({
+      stage: 'pr_review.slack.failure_posted',
+      message: 'Posted PR review failure status to Slack thread.',
+      level: 'ERROR',
+      data: {
+        errorText,
+      },
+    });
+
     notifyDesktop('Watchtower PR review failed', `${errorText} thread=${task.event.threadTs}`);
 
     return {
@@ -135,10 +219,27 @@ Requirements:
   const summary = String(result.parsedJson.summary ?? 'Review completed.');
   const prUrl = String(result.parsedJson.prUrl ?? prContext.url);
 
+  logStep?.({
+    stage: 'pr_review.result.parsed',
+    message: 'Parsed PR review result payload.',
+    data: {
+      summary,
+      prUrl,
+    },
+  });
+
   await slack.chat.postMessage({
     channel: task.event.channelId,
     thread_ts: task.event.threadTs,
     text: `PR review completed. ${summary}\n${prUrl}`,
+  });
+
+  logStep?.({
+    stage: 'pr_review.slack.success_posted',
+    message: 'Posted PR review completion status to Slack thread.',
+    data: {
+      prUrl,
+    },
   });
 
   return {

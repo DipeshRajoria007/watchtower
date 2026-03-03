@@ -10,7 +10,7 @@ import { routeTask } from './router/taskRouter.js';
 import { SocketSlackClient } from './slack/socketClient.js';
 import { fetchThreadContext } from './slack/threadContext.js';
 import { JobStore } from './state/jobStore.js';
-import type { SlackEventEnvelope } from './types/contracts.js';
+import type { SlackEventEnvelope, WorkflowStepLog } from './types/contracts.js';
 
 assertMacOS();
 
@@ -46,6 +46,16 @@ async function processNext(): Promise<void> {
 }
 
 async function processEvent(event: SlackEventEnvelope, client: WebClient): Promise<void> {
+  logger.info(
+    {
+      eventId: event.eventId,
+      channelId: event.channelId,
+      threadTs: event.threadTs,
+      subtype: event.messageSubtype ?? null,
+    },
+    'slack event received'
+  );
+
   if (event.messageSubtype && nonActionableSubtypes.has(event.messageSubtype)) {
     logger.info({ eventId: event.eventId, subtype: event.messageSubtype }, 'skip message subtype');
     return;
@@ -61,11 +71,24 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
     return;
   }
 
+  logger.info({ eventId: event.eventId }, 'fetching thread context for intake');
   const threadMessages = await fetchThreadContext(client, event.channelId, event.threadTs).catch(() => []);
   const threadTexts = threadMessages.map(message => message.text);
+  logger.info({ eventId: event.eventId, messages: threadMessages.length }, 'thread context fetched for intake');
   const task = normalizeTask(event, config, threadTexts);
 
+  logger.info(
+    {
+      eventId: event.eventId,
+      mentionDetected: task.mentionDetected,
+      mentionType: task.mentionType,
+      intent: task.intent,
+    },
+    'task normalized from slack event'
+  );
+
   if (!task.mentionDetected) {
+    logger.info({ eventId: event.eventId }, 'skip non-mention message');
     return;
   }
 
@@ -93,6 +116,56 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
     },
   });
 
+  const logStep = (step: WorkflowStepLog): void => {
+    const level = step.level ?? 'INFO';
+    const payload = {
+      jobId,
+      eventId: event.eventId,
+      workflow: task.intent,
+      stage: step.stage,
+      ...(step.data ? { data: step.data } : {}),
+    };
+
+    if (level === 'ERROR') {
+      logger.error(payload, step.message);
+    } else if (level === 'WARN') {
+      logger.warn(payload, step.message);
+    } else {
+      logger.info(payload, step.message);
+    }
+
+    try {
+      store.appendJobLog({
+        jobId,
+        stage: step.stage,
+        message: step.message,
+        level,
+        data: step.data,
+      });
+    } catch (error) {
+      logger.error(
+        {
+          jobId,
+          eventId: event.eventId,
+          stage: step.stage,
+          error: String(error),
+        },
+        'failed to persist workflow step log'
+      );
+    }
+  };
+
+  logStep({
+    stage: 'job.created',
+    message: 'Created job record for tagged message.',
+    data: {
+      dedupeKey: key,
+      mentionType: task.mentionType,
+      intent: task.intent,
+      threadMessages: threadMessages.length,
+    },
+  });
+
   try {
     let attempt = 0;
     let lastError: unknown;
@@ -100,8 +173,27 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
     while (attempt < 3) {
       attempt += 1;
       store.bumpAttempt(jobId);
+      logStep({
+        stage: 'job.attempt.start',
+        message: 'Starting workflow attempt.',
+        data: {
+          attempt,
+          maxAttempts: 3,
+        },
+      });
       try {
-        const result = await routeTask({ task, config, slack: client });
+        const result = await routeTask({ task, config, slack: client, logStep });
+        logStep({
+          stage: 'job.attempt.result',
+          message: 'Workflow attempt returned a result.',
+          level: result.status === 'FAILED' ? 'ERROR' : 'INFO',
+          data: {
+            status: result.status,
+            message: result.message,
+            slackPosted: result.slackPosted,
+            notifyDesktop: result.notifyDesktop,
+          },
+        });
         if (result.status === 'SUCCESS') {
           store.markJob(jobId, 'SUCCESS', { result: result.result });
         } else if (result.status === 'PAUSED') {
@@ -117,22 +209,58 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         const msg = String(error);
         const transient = /ETIMEDOUT|ECONNRESET|429|SlackApiError|timeout/i.test(msg);
         logger.error({ error: msg, attempt, jobId }, 'job attempt failed');
+        logStep({
+          stage: 'job.attempt.exception',
+          message: 'Workflow attempt threw an exception.',
+          level: 'ERROR',
+          data: {
+            attempt,
+            transient,
+            error: msg,
+          },
+        });
         if (!transient || attempt >= 3) {
           break;
         }
+        logStep({
+          stage: 'job.attempt.retry_scheduled',
+          message: 'Transient failure detected; retrying workflow.',
+          level: 'WARN',
+          data: {
+            attempt,
+            nextAttempt: attempt + 1,
+          },
+        });
       }
     }
 
     const errorMessage = `Workflow failed after retries: ${String(lastError)}`;
+    logStep({
+      stage: 'job.failed.after_retries',
+      message: 'Workflow exhausted retry budget and will be marked failed.',
+      level: 'ERROR',
+      data: {
+        errorMessage,
+      },
+    });
+
     await client.chat.postMessage({
       channel: event.channelId,
       thread_ts: event.threadTs,
       text: `${errorMessage}`,
     }).catch(() => {});
+
+    logStep({
+      stage: 'job.failed.slack_posted',
+      message: 'Posted hard-failure message to Slack thread.',
+      level: 'ERROR',
+    });
+
     notifyDesktop('Watchtower workflow failed', errorMessage);
     store.markJob(jobId, 'FAILED', { errorMessage });
   } catch (error) {
     const errorMessage = String(error);
+    logger.error({ jobId, eventId: event.eventId, error: errorMessage }, 'unexpected processEvent failure');
     notifyDesktop('Watchtower job failure', errorMessage);
     store.markJob(jobId, 'FAILED', { errorMessage });
   }
@@ -143,6 +271,7 @@ async function main(): Promise<void> {
 
   const client = new SocketSlackClient(config, async (event, webClient) => {
     queue.push({ event, client: webClient as WebClient });
+    logger.info({ queueDepth: queue.length, eventId: event.eventId }, 'event queued for processing');
     await processNext();
   });
 

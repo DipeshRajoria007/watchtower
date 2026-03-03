@@ -60,6 +60,18 @@ struct RunSummary {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct JobLogEntry {
+    id: i64,
+    job_id: String,
+    level: String,
+    stage: String,
+    message: String,
+    data_json: Option<String>,
+    created_at: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct DashboardData {
     sidecar_status: String,
     settings_configured: bool,
@@ -156,6 +168,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_dashboard_data,
+            get_job_logs,
             get_app_settings,
             save_app_settings
         ])
@@ -195,6 +208,46 @@ async fn get_dashboard_data(state: State<'_, AppState>) -> Result<DashboardData,
 async fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
     let connection = Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
     read_app_settings(&connection)
+}
+
+#[tauri::command]
+async fn get_job_logs(
+    job_id: String,
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<Vec<JobLogEntry>, String> {
+    let max_limit = i64::from(limit.unwrap_or(500)).clamp(1, 1000);
+    let connection = Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+
+    let mut stmt = connection
+        .prepare(
+            "SELECT id, job_id, level, stage, message, data_json, created_at
+             FROM job_logs
+             WHERE job_id = ?
+             ORDER BY id ASC
+             LIMIT ?",
+        )
+        .map_err(|err| format!("db prepare job_logs failed: {err}"))?;
+
+    let rows = stmt
+        .query_map(params![job_id, max_limit], |row| {
+            Ok(JobLogEntry {
+                id: row.get(0)?,
+                job_id: row.get(1)?,
+                level: row.get(2)?,
+                stage: row.get(3)?,
+                message: row.get(4)?,
+                data_json: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })
+        .map_err(|err| format!("db query job_logs failed: {err}"))?;
+
+    let mut output = Vec::new();
+    for row in rows {
+        output.push(row.map_err(|err| format!("db row job_logs failed: {err}"))?);
+    }
+    Ok(output)
 }
 
 #[tauri::command]
@@ -261,6 +314,17 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
             );
             CREATE INDEX IF NOT EXISTS idx_jobs_event_id ON jobs(event_id);
             CREATE INDEX IF NOT EXISTS idx_jobs_dedupe_key ON jobs(dedupe_key);
+
+            CREATE TABLE IF NOT EXISTS job_logs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              job_id TEXT NOT NULL,
+              level TEXT NOT NULL,
+              stage TEXT NOT NULL,
+              message TEXT NOT NULL,
+              data_json TEXT,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_job_logs_job_id ON job_logs(job_id);
 
             CREATE TABLE IF NOT EXISTS events (
               event_id TEXT PRIMARY KEY,

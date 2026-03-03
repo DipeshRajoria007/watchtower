@@ -9,6 +9,7 @@ Watchtower is a macOS-only Tauri desktop automation app that listens to Slack me
 - Slack mention routing for PR review and bug-fix workflows
 - Guardrails for repo selection, timeout handling, dedupe, and retries
 - SQLite-backed settings and run history
+- Per-job execution trace with step-by-step logs + live sidecar stream in UI
 
 ## Quick Start
 

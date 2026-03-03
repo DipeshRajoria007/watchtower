@@ -29,6 +29,18 @@ describe('jobStore', () => {
     });
     expect(store.hasDedupeKey('C1:123:PR_REVIEW')).toBe(true);
 
+    store.appendJobLog({
+      jobId: 'job-1',
+      stage: 'intake.received',
+      message: 'Slack event accepted for processing.',
+      data: { eventId: 'event-1' },
+    });
+
+    const logs = store.listJobLogs('job-1');
+    expect(logs).toHaveLength(1);
+    expect(logs[0].stage).toBe('intake.received');
+    expect(logs[0].level).toBe('INFO');
+
     store.close();
   });
 });

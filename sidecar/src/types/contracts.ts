@@ -1,5 +1,6 @@
 export type WorkflowIntent = 'PR_REVIEW' | 'BUG_FIX' | 'UNKNOWN';
 export type WorkflowStatus = 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED';
+export type JobLogLevel = 'INFO' | 'WARN' | 'ERROR';
 
 export interface AppConfig {
   platformPolicy: 'macos_only';
@@ -67,6 +68,7 @@ export interface CodexRunRequest {
   timeoutMs: number;
   outputSchemaPath?: string;
   githubToken?: string;
+  onLog?: WorkflowStepLogger;
 }
 
 export interface CodexRunResult {
@@ -102,4 +104,23 @@ export interface JobRecord {
   errorMessage?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface WorkflowStepLog {
+  level?: JobLogLevel;
+  stage: string;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
+export type WorkflowStepLogger = (step: WorkflowStepLog) => void;
+
+export interface JobLogRecord {
+  id: number;
+  jobId: string;
+  level: JobLogLevel;
+  stage: string;
+  message: string;
+  dataJson?: string;
+  createdAt: string;
 }
