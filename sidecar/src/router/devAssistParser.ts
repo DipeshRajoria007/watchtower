@@ -18,7 +18,9 @@ export type DevAssistCommand =
   | { type: 'SKILL_INSTALL'; name: string }
   | { type: 'SKILL_USE'; name: string }
   | { type: 'FEED_SET'; enabled: boolean }
-  | { type: 'DIGEST_SET'; enabled: boolean; time?: string };
+  | { type: 'DIGEST_SET'; enabled: boolean; time?: string }
+  | { type: 'POLICY_IMPORT'; pack: 'frontend' | 'backend' | 'release' }
+  | { type: 'POLICY_SHOW' };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -212,6 +214,18 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
       enabled: true,
       time: digestOnMatch[1],
     };
+  }
+
+  const policyImportMatch = body.match(/^policy\s+import\s+(frontend|backend|release)\b/i);
+  if (policyImportMatch) {
+    return {
+      type: 'POLICY_IMPORT',
+      pack: policyImportMatch[1].toLowerCase() as 'frontend' | 'backend' | 'release',
+    };
+  }
+
+  if (/^policy\s+show\b/i.test(body)) {
+    return { type: 'POLICY_SHOW' };
   }
 
   return undefined;

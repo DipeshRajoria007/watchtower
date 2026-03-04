@@ -81,7 +81,7 @@ export async function runPrReviewWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
-  store?: Pick<JobStore, 'findLatestReviewedPrHeadSha'>;
+  store?: Pick<JobStore, 'findLatestReviewedPrHeadSha' | 'getChannelPolicyPack'>;
   resolvePrHeadSha?: (input: {
     prContext: PrContext;
     githubToken?: string;
@@ -252,6 +252,14 @@ export async function runPrReviewWorkflow(params: {
     data: { prUrl: prContext.url },
   });
 
+  const policyPack = store?.getChannelPolicyPack(task.event.channelId);
+  const policyBlock = policyPack
+    ? [
+        `Active policy pack: ${policyPack.packName}`,
+        ...policyPack.rules.map(rule => `- ${rule}`),
+      ].join('\n')
+    : 'No explicit policy pack assigned for this channel.';
+
   const prompt = `
 You are executing Watchtower PR review automation.
 
@@ -259,6 +267,8 @@ Context:
 - PR URL: ${prContext.url}
 - Repository path: ${repoPath}
 - GitHub auth mode: ${githubAuthModeHint(Boolean(githubToken))}
+- Policy pack:
+${policyBlock}
 
 Requirements:
 1. Use the frontend-pr-review skill for analysis.

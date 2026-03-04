@@ -154,6 +154,16 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt policy commands', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt policy import frontend')).toEqual({
+      type: 'POLICY_IMPORT',
+      pack: 'frontend',
+    });
+    expect(parseDevAssistCommand('<@UBOT1> wt policy show')).toEqual({
+      type: 'POLICY_SHOW',
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);

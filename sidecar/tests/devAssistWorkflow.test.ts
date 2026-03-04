@@ -1089,4 +1089,97 @@ describe('devAssistWorkflow', () => {
       }),
     );
   });
+
+  it('imports policy pack via wt policy import', async () => {
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+    const importPolicyPack = vi.fn().mockReturnValue({
+      packName: 'frontend',
+      description: 'Frontend safety rails',
+      rules: ['Rule A', 'Rule B'],
+    });
+
+    const task: NormalizedTask = {
+      event: {
+        eventId: 'EvDevAssist20',
+        channelId: 'C1',
+        threadTs: '111.22',
+        eventTs: '111.22',
+        userId: 'U777',
+        text: '<@UBOT1> wt policy import frontend',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'DEV_ASSIST',
+    };
+
+    const result = await runDevAssistWorkflow({
+      task,
+      config,
+      slack: slack as any,
+      store: {
+        importPolicyPack,
+      } as any,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result?.command).toBe('POLICY_IMPORT');
+    expect(importPolicyPack).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: 'C1',
+        packName: 'frontend',
+      }),
+    );
+  });
+
+  it('shows policy pack via wt policy show', async () => {
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+
+    const task: NormalizedTask = {
+      event: {
+        eventId: 'EvDevAssist21',
+        channelId: 'C1',
+        threadTs: '111.22',
+        eventTs: '111.22',
+        userId: 'U777',
+        text: '<@UBOT1> wt policy show',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'DEV_ASSIST',
+    };
+
+    const result = await runDevAssistWorkflow({
+      task,
+      config,
+      slack: slack as any,
+      store: {
+        getChannelPolicyPack: () => ({
+          packName: 'release',
+          description: 'Release guardrails',
+          rules: ['Rule A'],
+          updatedAt: '2026-03-04T00:00:00.000Z',
+        }),
+      } as any,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result?.command).toBe('POLICY_SHOW');
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Active policy pack'),
+      }),
+    );
+  });
 });

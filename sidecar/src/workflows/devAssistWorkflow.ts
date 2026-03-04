@@ -28,6 +28,8 @@ const HELP_TEXT = [
   '- `wt skill use <name>` -> set active skill for this channel',
   '- `wt feed on|off` -> enable/disable proactive ops feed in this channel',
   '- `wt digest HH:MM` / `wt digest off` -> configure daily autopilot digest',
+  '- `wt policy import <frontend|backend|release>` -> attach policy pack to this channel',
+  '- `wt policy show` -> show current policy pack and active rules',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -858,6 +860,65 @@ export async function runDevAssistWorkflow(params: {
         command: 'DIGEST_SET',
         enabled: command.enabled,
         time: command.time ?? null,
+      },
+    };
+  }
+
+  if (command.type === 'POLICY_IMPORT') {
+    const imported = store.importPolicyPack({
+      channelId: task.event.channelId,
+      packName: command.pack,
+      updatedBy: task.event.userId,
+    });
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: [
+        `Policy pack \`${imported.packName}\` is active for this channel.`,
+        imported.description,
+        ...imported.rules.map(rule => `- ${rule}`),
+      ].join('\n'),
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Policy pack imported for channel.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'POLICY_IMPORT',
+        packName: imported.packName,
+      },
+    };
+  }
+
+  if (command.type === 'POLICY_SHOW') {
+    const policy = store.getChannelPolicyPack(task.event.channelId);
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: policy
+        ? [
+            `Active policy pack: \`${policy.packName}\``,
+            policy.description,
+            ...policy.rules.map(rule => `- ${rule}`),
+            `Updated: ${policy.updatedAt}`,
+          ].join('\n')
+        : 'No policy pack configured for this channel. Use `wt policy import <frontend|backend|release>`.',
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Policy pack snapshot posted.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'POLICY_SHOW',
+        found: Boolean(policy),
+        packName: policy?.packName ?? null,
       },
     };
   }

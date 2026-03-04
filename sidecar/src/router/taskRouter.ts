@@ -28,7 +28,7 @@ export async function routeTask(params: {
   }
 
   if (task.intent === 'BUG_FIX') {
-    return runBugFixWorkflow({ task, config, slack, logStep });
+    return runBugFixWorkflow({ task, config, slack, store, logStep });
   }
 
   if (task.intent === 'OWNER_AUTOPILOT') {

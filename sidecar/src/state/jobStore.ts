@@ -191,6 +191,20 @@ export class JobStore {
         updated_by TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS policy_packs (
+        pack_name TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        rules_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS channel_policy_packs (
+        channel_id TEXT PRIMARY KEY,
+        pack_name TEXT NOT NULL,
+        updated_by TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -1051,6 +1065,120 @@ export class JobStore {
 
   markDigestSentToday(channelId: string, dateKey: string): void {
     this.setState(`digest:last_sent:${channelId}`, dateKey);
+  }
+
+  importPolicyPack(input: {
+    channelId: string;
+    packName: 'frontend' | 'backend' | 'release';
+    updatedBy: string;
+  }): {
+    packName: 'frontend' | 'backend' | 'release';
+    description: string;
+    rules: string[];
+  } {
+    const defaults: Record<'frontend' | 'backend' | 'release', { description: string; rules: string[] }> = {
+      frontend: {
+        description: 'Frontend safety rails for UI quality and release confidence.',
+        rules: [
+          'Require visual-impact summary and affected routes/components.',
+          'No merge if accessibility regressions are found.',
+          'Prefer squash merge after at least one passing CI run.',
+        ],
+      },
+      backend: {
+        description: 'Backend reliability and API contract guardrails.',
+        rules: [
+          'Require backward-compatible API change notes.',
+          'Block merge on failing integration tests or migration mismatch.',
+          'Require rollback note for risky DB/cache changes.',
+        ],
+      },
+      release: {
+        description: 'Release governance pack for risky deploy windows.',
+        rules: [
+          'No merge without release checklist sign-off.',
+          'Require staged rollout plan and monitoring guard metrics.',
+          'Escalate hotfixes touching auth/payments/checkout.',
+        ],
+      },
+    };
+
+    const selected = defaults[input.packName];
+    const now = new Date().toISOString();
+    const rulesJson = JSON.stringify(selected.rules);
+
+    this.db
+      .prepare(
+        `INSERT INTO policy_packs(pack_name, description, rules_json, updated_at)
+         VALUES(?, ?, ?, ?)
+         ON CONFLICT(pack_name) DO UPDATE SET
+           description = excluded.description,
+           rules_json = excluded.rules_json,
+           updated_at = excluded.updated_at`
+      )
+      .run(input.packName, selected.description, rulesJson, now);
+
+    this.db
+      .prepare(
+        `INSERT INTO channel_policy_packs(channel_id, pack_name, updated_by, updated_at)
+         VALUES(?, ?, ?, ?)
+         ON CONFLICT(channel_id) DO UPDATE SET
+           pack_name = excluded.pack_name,
+           updated_by = excluded.updated_by,
+           updated_at = excluded.updated_at`
+      )
+      .run(input.channelId, input.packName, input.updatedBy, now);
+
+    return {
+      packName: input.packName,
+      description: selected.description,
+      rules: selected.rules,
+    };
+  }
+
+  getChannelPolicyPack(channelId: string): {
+    packName: 'frontend' | 'backend' | 'release';
+    description: string;
+    rules: string[];
+    updatedAt: string;
+  } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT c.pack_name, c.updated_at, p.description, p.rules_json
+         FROM channel_policy_packs c
+         JOIN policy_packs p ON p.pack_name = c.pack_name
+         WHERE c.channel_id = ?
+         LIMIT 1`
+      )
+      .get(channelId) as
+      | {
+          pack_name?: 'frontend' | 'backend' | 'release';
+          updated_at?: string;
+          description?: string;
+          rules_json?: string;
+        }
+      | undefined;
+
+    if (!row?.pack_name || !row.updated_at || !row.description || !row.rules_json) {
+      return undefined;
+    }
+
+    let rules: string[] = [];
+    try {
+      const parsed = JSON.parse(row.rules_json) as unknown;
+      if (Array.isArray(parsed)) {
+        rules = parsed.map(item => String(item)).filter(Boolean);
+      }
+    } catch {
+      rules = [];
+    }
+
+    return {
+      packName: row.pack_name,
+      description: row.description,
+      rules,
+      updatedAt: row.updated_at,
+    };
   }
 
   recordLearningSignal(input: {

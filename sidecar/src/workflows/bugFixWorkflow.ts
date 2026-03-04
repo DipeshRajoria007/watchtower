@@ -6,14 +6,16 @@ import { classifyRepo } from '../router/repoClassifier.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { runCodex } from '../codex/runCodex.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
+import type { JobStore } from '../state/jobStore.js';
 
 export async function runBugFixWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
+  store?: Pick<JobStore, 'getChannelPolicyPack'>;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, logStep } = params;
+  const { task, config, slack, store, logStep } = params;
 
   if (!config.allowedChannelsForBugFix.includes(task.event.channelId)) {
     logStep?.({
@@ -116,6 +118,14 @@ export async function runBugFixWorkflow(params: {
     data: { tokenInjected: Boolean(githubToken) },
   });
 
+  const policyPack = store?.getChannelPolicyPack(task.event.channelId);
+  const policyBlock = policyPack
+    ? [
+        `Active policy pack: ${policyPack.packName}`,
+        ...policyPack.rules.map(rule => `- ${rule}`),
+      ].join('\n')
+    : 'No explicit policy pack assigned for this channel.';
+
   const prompt = `
 You are running Watchtower bug-fix automation.
 
@@ -124,6 +134,9 @@ ${texts.join('\n---\n')}
 
 GitHub auth mode:
 ${githubAuthModeHint(Boolean(githubToken))}
+
+Policy pack:
+${policyBlock}
 
 Requirements:
 1. Work only in repo path ${repoPath}
