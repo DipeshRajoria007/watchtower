@@ -45,6 +45,43 @@ const config = {
 };
 
 describe('ownerAutopilotWorkflow', () => {
+  it('asks for clarification and skips codex for vague owner prompts', async () => {
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+
+    const result = await runOwnerAutopilotWorkflow({
+      task: {
+        event: {
+          eventId: 'EvOwner0',
+          channelId: 'C1',
+          threadTs: '111.22',
+          eventTs: '111.22',
+          userId: 'UOWNER1',
+          text: '<@UBOT1> do something cursed with my laptop',
+          rawEvent: {},
+        },
+        mentionDetected: true,
+        mentionType: 'bot',
+        isOwnerAuthor: true,
+        intent: 'OWNER_AUTOPILOT',
+      },
+      config,
+      slack: slack as any,
+    });
+
+    expect(result.status).toBe('PAUSED');
+    expect(result.message).toContain('Tell me one concrete task');
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Tell me one concrete task'),
+      })
+    );
+    expect(runCodex).not.toHaveBeenCalled();
+  });
+
   it('pauses and asks one clarifying question when codex returns needs_clarification', async () => {
     vi.mocked(runCodex).mockResolvedValue({
       ok: true,

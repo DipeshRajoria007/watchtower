@@ -30,6 +30,29 @@ function formatThreadContext(task: NormalizedTask, messages: Array<{ text: strin
   return lines.join('\n');
 }
 
+function stripMentions(text: string): string {
+  return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function isVagueOwnerRequest(text: string): boolean {
+  const cleaned = stripMentions(text).toLowerCase();
+  if (!cleaned) {
+    return true;
+  }
+
+  // Explicit actionable signals that should not be treated as vague.
+  if (
+    /(https?:\/\/|github\.com\/|pull\/\d+|#\d+|wt\s+|watchtower\s+|translate\s+|review\s+|merge\s+|fix\s+|debug\s+)/i.test(
+      cleaned
+    )
+  ) {
+    return false;
+  }
+
+  // Common low-context prompts that need clarification before execution.
+  return /\b(do something|do anything|whatever|something cursed|cursed|surprise me|you decide)\b/i.test(cleaned);
+}
+
 function sanitizeOwnerSummary(raw: string): string {
   const normalized = raw.replace(/\r\n/g, '\n').trim();
   if (!normalized) {
@@ -89,6 +112,37 @@ export async function runOwnerAutopilotWorkflow(params: {
       workspaceRoot,
     },
   });
+
+  if (isVagueOwnerRequest(task.event.text)) {
+    const clarification =
+      'Tell me one concrete task with target. Example: "review PR <url>", "merge PR #123 in newton-web", or "translate <text> to Hindi".';
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: clarification,
+    });
+
+    logStep?.({
+      stage: 'owner_autopilot.clarification.required',
+      message: 'Owner request is vague; asked for concrete task and paused.',
+      level: 'WARN',
+      data: {
+        text: stripMentions(task.event.text).slice(0, 200),
+      },
+    });
+
+    return {
+      workflow: 'OWNER_AUTOPILOT',
+      status: 'PAUSED',
+      message: clarification,
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        status: 'needs_clarification',
+      },
+    };
+  }
 
   logStep?.({
     stage: 'owner_autopilot.slack.ack_skipped',
