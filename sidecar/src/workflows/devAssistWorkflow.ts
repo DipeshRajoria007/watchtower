@@ -19,6 +19,7 @@ const HELP_TEXT = [
   '- `wt mission start <goal>` -> start/update mission state for this thread',
   '- `wt mission show` -> show mission state for this thread',
   '- `wt mission run --swarm` -> launch planner/coder/reviewer/shipper run',
+  '- `wt trust <channel|user> <observe|suggest|execute|merge>` -> set approval gate',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -608,6 +609,37 @@ export async function runDevAssistWorkflow(params: {
         command: 'MISSION_RUN_SWARM',
         started: Boolean(run),
         runId: run?.runId,
+      },
+    };
+  }
+
+  if (command.type === 'TRUST_SET') {
+    const targetId = command.target === 'channel' ? task.event.channelId : task.event.userId;
+    store.setTrustPolicy({
+      targetType: command.target,
+      targetId,
+      trustLevel: command.level,
+      updatedBy: task.event.userId,
+    });
+
+    const text = `Trust policy updated: ${command.target} ${targetId} -> ${command.level}`;
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Trust policy updated.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'TRUST_SET',
+        target: command.target,
+        targetId,
+        level: command.level,
       },
     };
   }

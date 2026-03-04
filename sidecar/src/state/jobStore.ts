@@ -128,6 +128,16 @@ export class JobStore {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_mission_swarm_runs_mission ON mission_swarm_runs(mission_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS trust_policies (
+        target_type TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        trust_level TEXT NOT NULL,
+        updated_by TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(target_type, target_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_trust_policies_level ON trust_policies(trust_level, updated_at);
     `);
   }
 
@@ -659,6 +669,64 @@ export class JobStore {
       runId,
       missionId: mission.id,
       roles,
+    };
+  }
+
+  setTrustPolicy(input: {
+    targetType: 'channel' | 'user';
+    targetId: string;
+    trustLevel: 'observe' | 'suggest' | 'execute' | 'merge';
+    updatedBy: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO trust_policies(target_type, target_id, trust_level, updated_by, updated_at)
+         VALUES(?, ?, ?, ?, ?)
+         ON CONFLICT(target_type, target_id) DO UPDATE SET
+           trust_level = excluded.trust_level,
+           updated_by = excluded.updated_by,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        input.targetType,
+        input.targetId,
+        input.trustLevel,
+        input.updatedBy,
+        new Date().toISOString()
+      );
+  }
+
+  getTrustPolicy(input: {
+    targetType: 'channel' | 'user';
+    targetId: string;
+  }): {
+    trustLevel: 'observe' | 'suggest' | 'execute' | 'merge';
+    updatedBy: string;
+    updatedAt: string;
+  } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT trust_level, updated_by, updated_at
+         FROM trust_policies
+         WHERE target_type = ? AND target_id = ?
+         LIMIT 1`
+      )
+      .get(input.targetType, input.targetId) as
+      | {
+          trust_level?: 'observe' | 'suggest' | 'execute' | 'merge';
+          updated_by?: string;
+          updated_at?: string;
+        }
+      | undefined;
+
+    if (!row?.trust_level || !row.updated_by || !row.updated_at) {
+      return undefined;
+    }
+
+    return {
+      trustLevel: row.trust_level,
+      updatedBy: row.updated_by,
+      updatedAt: row.updated_at,
     };
   }
 

@@ -151,6 +151,19 @@ describe('jobStore', () => {
     expect(missionAfterSwarm?.status).toBe('RUNNING');
     expect(missionAfterSwarm?.progress).toContain('Swarm');
 
+    store.setTrustPolicy({
+      targetType: 'channel',
+      targetId: 'C1',
+      trustLevel: 'execute',
+      updatedBy: 'U1',
+    });
+    const trust = store.getTrustPolicy({
+      targetType: 'channel',
+      targetId: 'C1',
+    });
+    expect(trust?.trustLevel).toBe('execute');
+    expect(trust?.updatedBy).toBe('U1');
+
     store.close();
   });
 });

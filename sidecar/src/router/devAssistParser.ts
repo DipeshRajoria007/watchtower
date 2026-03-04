@@ -11,7 +11,8 @@ export type DevAssistCommand =
   | { type: 'PERSONALITY_SHOW'; scope: 'user' | 'channel' }
   | { type: 'MISSION_START'; goal: string }
   | { type: 'MISSION_SHOW' }
-  | { type: 'MISSION_RUN_SWARM' };
+  | { type: 'MISSION_RUN_SWARM' }
+  | { type: 'TRUST_SET'; target: 'channel' | 'user'; level: 'observe' | 'suggest' | 'execute' | 'merge' };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -139,6 +140,15 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
 
   if (/^mission\s+run\s+--swarm\b/i.test(body)) {
     return { type: 'MISSION_RUN_SWARM' };
+  }
+
+  const trustMatch = body.match(/^trust\s+(channel|user)\s+(observe|suggest|execute|merge)\b/i);
+  if (trustMatch) {
+    return {
+      type: 'TRUST_SET',
+      target: trustMatch[1].toLowerCase() as 'channel' | 'user',
+      level: trustMatch[2].toLowerCase() as 'observe' | 'suggest' | 'execute' | 'merge',
+    };
   }
 
   return undefined;

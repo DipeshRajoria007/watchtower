@@ -96,6 +96,19 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt trust command', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt trust channel execute')).toEqual({
+      type: 'TRUST_SET',
+      target: 'channel',
+      level: 'execute',
+    });
+    expect(parseDevAssistCommand('<@UBOT1> wt trust user suggest')).toEqual({
+      type: 'TRUST_SET',
+      target: 'user',
+      level: 'suggest',
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);
