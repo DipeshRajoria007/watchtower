@@ -164,6 +164,16 @@ describe('jobStore', () => {
     expect(trust?.trustLevel).toBe('execute');
     expect(trust?.updatedBy).toBe('U1');
 
+    const replay = store.createReplayRequest({
+      sourceJobId: 'job-1',
+      mode: 'replay',
+      requestedBy: 'U1',
+      channelId: 'C1',
+      threadTs: '123',
+    });
+    expect(replay.status).toBe('QUEUED');
+    expect(replay.requestId.startsWith('replay:')).toBe(true);
+
     store.close();
   });
 });

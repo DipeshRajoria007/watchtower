@@ -12,7 +12,9 @@ export type DevAssistCommand =
   | { type: 'MISSION_START'; goal: string }
   | { type: 'MISSION_SHOW' }
   | { type: 'MISSION_RUN_SWARM' }
-  | { type: 'TRUST_SET'; target: 'channel' | 'user'; level: 'observe' | 'suggest' | 'execute' | 'merge' };
+  | { type: 'TRUST_SET'; target: 'channel' | 'user'; level: 'observe' | 'suggest' | 'execute' | 'merge' }
+  | { type: 'REPLAY'; jobId: string }
+  | { type: 'FORK'; jobId: string };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -148,6 +150,22 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
       type: 'TRUST_SET',
       target: trustMatch[1].toLowerCase() as 'channel' | 'user',
       level: trustMatch[2].toLowerCase() as 'observe' | 'suggest' | 'execute' | 'merge',
+    };
+  }
+
+  const replayMatch = body.match(/^replay\s+([a-z0-9-]{6,})\b/i);
+  if (replayMatch) {
+    return {
+      type: 'REPLAY',
+      jobId: replayMatch[1],
+    };
+  }
+
+  const forkMatch = body.match(/^fork\s+([a-z0-9-]{6,})\b/i);
+  if (forkMatch) {
+    return {
+      type: 'FORK',
+      jobId: forkMatch[1],
     };
   }
 

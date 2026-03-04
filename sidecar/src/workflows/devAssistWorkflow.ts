@@ -20,6 +20,8 @@ const HELP_TEXT = [
   '- `wt mission show` -> show mission state for this thread',
   '- `wt mission run --swarm` -> launch planner/coder/reviewer/shipper run',
   '- `wt trust <channel|user> <observe|suggest|execute|merge>` -> set approval gate',
+  '- `wt replay <jobId>` -> queue replay of a previous job',
+  '- `wt fork <jobId>` -> queue forked rerun from a previous job',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -640,6 +642,55 @@ export async function runDevAssistWorkflow(params: {
         target: command.target,
         targetId,
         level: command.level,
+      },
+    };
+  }
+
+  if (command.type === 'REPLAY' || command.type === 'FORK') {
+    const resolvedJobId = store.resolveJobId(command.jobId);
+    if (!resolvedJobId) {
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: `Could not find source job \`${command.jobId}\`.`,
+      });
+
+      return {
+        workflow: 'DEV_ASSIST',
+        status: 'SKIPPED',
+        message: 'Replay/Fork source job not found.',
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+
+    const req = store.createReplayRequest({
+      sourceJobId: resolvedJobId,
+      mode: command.type === 'REPLAY' ? 'replay' : 'fork',
+      requestedBy: task.event.userId,
+      channelId: task.event.channelId,
+      threadTs: task.event.threadTs,
+    });
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text:
+        command.type === 'REPLAY'
+          ? `Replay queued for job ${resolvedJobId}. requestId=${req.requestId}`
+          : `Fork queued from job ${resolvedJobId}. requestId=${req.requestId}`,
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: `${command.type} request queued.`,
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: command.type,
+        sourceJobId: resolvedJobId,
+        requestId: req.requestId,
       },
     };
   }

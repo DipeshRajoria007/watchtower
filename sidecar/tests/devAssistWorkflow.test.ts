@@ -777,6 +777,7 @@ describe('devAssistWorkflow', () => {
         getMissionThread: () => undefined,
         startMissionSwarmRun: () => undefined,
         setTrustPolicy,
+        createReplayRequest: () => ({ requestId: 'replay:1', status: 'QUEUED' }),
       } as any,
     });
 
@@ -788,5 +789,85 @@ describe('devAssistWorkflow', () => {
         trustLevel: 'execute',
       }),
     );
+  });
+
+  it('queues replay/fork via wt replay and wt fork', async () => {
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+    const createReplayRequest = vi.fn().mockReturnValue({ requestId: 'replay:1', status: 'QUEUED' });
+
+    const baseTask: NormalizedTask = {
+      event: {
+        eventId: 'EvDevAssist15',
+        channelId: 'C1',
+        threadTs: '111.22',
+        eventTs: '111.22',
+        userId: 'U777',
+        text: '<@UBOT1> wt replay job-1234',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'DEV_ASSIST',
+    };
+
+    const store = {
+      getDevStatusSnapshot: () => ({
+        activeJobs: 1,
+        runs24h: 12,
+        failures24h: 2,
+        successRate24h: 83.3,
+      }),
+      getDevLearningSnapshot: () => ({
+        signals24h: 14,
+        correctionsLearned: 4,
+        correctionsApplied24h: 3,
+        personalityProfiles: 2,
+        topErrorKind: 'CODEX_BIN_NOT_FOUND',
+      }),
+      getDevChannelHeat: () => [],
+      setPersonalityProfile: () => {},
+      getPersonalityProfile: () => 'friendly',
+      getPersonalityMode: () => 'friendly',
+      listDevRuns: () => [],
+      resolveJobId: () => 'job-1-uuid',
+      getJobSummary: () => undefined,
+      listJobLogsTail: () => [],
+      upsertMissionStart: () => ({ id: 'mission:C1:111.22', status: 'ACTIVE' }),
+      getMissionThread: () => undefined,
+      startMissionSwarmRun: () => undefined,
+      setTrustPolicy: () => {},
+      createReplayRequest,
+    } as any;
+
+    const replayResult = await runDevAssistWorkflow({
+      task: baseTask,
+      config,
+      slack: slack as any,
+      store,
+    });
+    expect(replayResult.status).toBe('SUCCESS');
+    expect(replayResult.result?.command).toBe('REPLAY');
+
+    const forkResult = await runDevAssistWorkflow({
+      task: {
+        ...baseTask,
+        event: {
+          ...baseTask.event,
+          eventId: 'EvDevAssist16',
+          text: '<@UBOT1> wt fork job-1234',
+        },
+      },
+      config,
+      slack: slack as any,
+      store,
+    });
+    expect(forkResult.status).toBe('SUCCESS');
+    expect(forkResult.result?.command).toBe('FORK');
+    expect(createReplayRequest).toHaveBeenCalled();
   });
 });

@@ -109,6 +109,17 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt replay and wt fork commands', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt replay abc123')).toEqual({
+      type: 'REPLAY',
+      jobId: 'abc123',
+    });
+    expect(parseDevAssistCommand('<@UBOT1> wt fork abc123')).toEqual({
+      type: 'FORK',
+      jobId: 'abc123',
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);

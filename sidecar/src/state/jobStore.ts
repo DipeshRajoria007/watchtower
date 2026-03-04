@@ -138,6 +138,18 @@ export class JobStore {
         PRIMARY KEY(target_type, target_id)
       );
       CREATE INDEX IF NOT EXISTS idx_trust_policies_level ON trust_policies(trust_level, updated_at);
+
+      CREATE TABLE IF NOT EXISTS replay_requests (
+        request_id TEXT PRIMARY KEY,
+        source_job_id TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        thread_ts TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_replay_requests_source ON replay_requests(source_job_id, created_at);
     `);
   }
 
@@ -727,6 +739,40 @@ export class JobStore {
       trustLevel: row.trust_level,
       updatedBy: row.updated_by,
       updatedAt: row.updated_at,
+    };
+  }
+
+  createReplayRequest(input: {
+    sourceJobId: string;
+    mode: 'replay' | 'fork';
+    requestedBy: string;
+    channelId: string;
+    threadTs: string;
+  }): {
+    requestId: string;
+    status: string;
+  } {
+    const requestId = `${input.mode}:${Date.now()}:${Math.floor(Math.random() * 100000)}`;
+    this.db
+      .prepare(
+        `INSERT INTO replay_requests(
+           request_id, source_job_id, mode, requested_by, channel_id, thread_ts, status, created_at
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        requestId,
+        input.sourceJobId,
+        input.mode,
+        input.requestedBy,
+        input.channelId,
+        input.threadTs,
+        'QUEUED',
+        new Date().toISOString()
+      );
+
+    return {
+      requestId,
+      status: 'QUEUED',
     };
   }
 
