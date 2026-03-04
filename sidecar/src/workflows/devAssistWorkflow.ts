@@ -31,6 +31,7 @@ const HELP_TEXT = [
   '- `wt policy import <frontend|backend|release>` -> attach policy pack to this channel',
   '- `wt policy show` -> show current policy pack and active rules',
   '- `wt incident on|off` -> enable/disable incident commander cadence in this channel',
+  '- `wt my queue [n]` -> show your prioritized pending work queue',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -948,6 +949,44 @@ export async function runDevAssistWorkflow(params: {
       result: {
         command: 'INCIDENT_SET',
         enabled: command.enabled,
+      },
+    };
+  }
+
+  if (command.type === 'MY_QUEUE') {
+    const queue = store.getPersonalQueue({
+      channelId: task.event.channelId,
+      userId: task.event.userId,
+      limit: command.limit,
+    });
+
+    const lines = queue.map((item, index) => {
+      const shortId = item.id.slice(0, 8);
+      const summary = item.summary ? ` :: ${item.summary}` : '';
+      const thread = item.threadTs ? ` thread=${item.threadTs}` : '';
+      return `${index + 1}. [${item.status}] ${item.workflow} job=${shortId}${thread}${summary}`;
+    });
+
+    const text = queue.length
+      ? ['Your prioritized queue:', ...lines].join('\n')
+      : 'Your queue is clear right now.';
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Personal queue posted.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'MY_QUEUE',
+        count: queue.length,
+        limit: command.limit,
       },
     };
   }

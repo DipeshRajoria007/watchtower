@@ -1464,6 +1464,87 @@ export class JobStore {
     }));
   }
 
+  getPersonalQueue(input: {
+    channelId: string;
+    userId: string;
+    limit: number;
+  }): Array<{
+    id: string;
+    workflow: WorkflowIntent;
+    status: JobRecord['status'];
+    threadTs: string;
+    summary: string;
+    updatedAt: string;
+  }> {
+    const safeLimit = Math.min(Math.max(input.limit, 1), 20);
+    const rows = (
+      this.db.prepare(
+        `SELECT id, workflow, status, thread_ts, payload_json, updated_at
+         FROM jobs
+         WHERE channel_id = ?
+           AND (
+             json_extract(payload_json, '$.requestUserId') = ?
+             OR payload_json LIKE ?
+           )
+         ORDER BY
+           CASE status
+             WHEN 'FAILED' THEN 0
+             WHEN 'PAUSED' THEN 1
+             WHEN 'RUNNING' THEN 2
+             ELSE 3
+           END ASC,
+           updated_at DESC
+         LIMIT ?`
+      ) as unknown as {
+        all: (
+          channelIdArg: string,
+          userIdArg: string,
+          mentionPatternArg: string,
+          limitArg: number
+        ) => Array<{
+          id: string;
+          workflow: WorkflowIntent;
+          status: JobRecord['status'];
+          thread_ts: string;
+          payload_json?: string | null;
+          updated_at: string;
+        }>;
+      }
+    ).all(input.channelId, input.userId, `%<@${input.userId}>%`, safeLimit);
+
+    const mapped = rows.map(row => {
+      let summary = '';
+      try {
+        const payload = row.payload_json ? (JSON.parse(row.payload_json) as Record<string, unknown>) : {};
+        summary = String(payload.text ?? '').replace(/\s+/g, ' ').trim();
+      } catch {
+        summary = '';
+      }
+      return {
+        id: row.id,
+        workflow: row.workflow,
+        status: row.status,
+        threadTs: row.thread_ts,
+        summary: summary.slice(0, 140),
+        updatedAt: row.updated_at,
+      };
+    });
+
+    if (mapped.length > 0) {
+      return mapped;
+    }
+
+    // Fallback to channel queue when user-specific queue is empty.
+    return this.listDevRuns(safeLimit).map(item => ({
+      id: item.id,
+      workflow: item.workflow,
+      status: item.status,
+      threadTs: '',
+      summary: item.errorMessage ?? '',
+      updatedAt: item.updatedAt,
+    }));
+  }
+
   resolveJobId(prefixOrId: string): string | undefined {
     const value = prefixOrId.trim();
     if (!value) {

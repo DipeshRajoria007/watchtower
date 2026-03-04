@@ -21,7 +21,8 @@ export type DevAssistCommand =
   | { type: 'DIGEST_SET'; enabled: boolean; time?: string }
   | { type: 'POLICY_IMPORT'; pack: 'frontend' | 'backend' | 'release' }
   | { type: 'POLICY_SHOW' }
-  | { type: 'INCIDENT_SET'; enabled: boolean };
+  | { type: 'INCIDENT_SET'; enabled: boolean }
+  | { type: 'MY_QUEUE'; limit: number };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -234,6 +235,16 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
     return {
       type: 'INCIDENT_SET',
       enabled: incidentMatch[1].toLowerCase() === 'on',
+    };
+  }
+
+  const myQueueMatch = body.match(/^my\s+queue(?:\s+(\d+))?\b/i);
+  if (myQueueMatch) {
+    const rawLimit = Number(myQueueMatch[1] ?? '5');
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 20) : 5;
+    return {
+      type: 'MY_QUEUE',
+      limit,
     };
   }
 

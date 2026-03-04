@@ -1225,4 +1225,54 @@ describe('devAssistWorkflow', () => {
       }),
     );
   });
+
+  it('posts prioritized queue via wt my queue', async () => {
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+
+    const task: NormalizedTask = {
+      event: {
+        eventId: 'EvDevAssist23',
+        channelId: 'C1',
+        threadTs: '111.22',
+        eventTs: '111.22',
+        userId: 'U777',
+        text: '<@UBOT1> wt my queue 2',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'DEV_ASSIST',
+    };
+
+    const result = await runDevAssistWorkflow({
+      task,
+      config,
+      slack: slack as any,
+      store: {
+        getPersonalQueue: () => [
+          {
+            id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+            workflow: 'PR_REVIEW',
+            status: 'FAILED',
+            threadTs: '222.33',
+            summary: 'review this PR urgently',
+            updatedAt: '2026-03-04T01:00:00.000Z',
+          },
+        ],
+      } as any,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result?.command).toBe('MY_QUEUE');
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Your prioritized queue'),
+      }),
+    );
+  });
 });

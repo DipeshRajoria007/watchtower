@@ -175,6 +175,17 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt my queue command', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt my queue')).toEqual({
+      type: 'MY_QUEUE',
+      limit: 5,
+    });
+    expect(parseDevAssistCommand('<@UBOT1> wt my queue 9')).toEqual({
+      type: 'MY_QUEUE',
+      limit: 9,
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);

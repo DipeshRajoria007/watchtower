@@ -444,6 +444,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
     threadTs: event.threadTs,
     payload: {
       text: event.text,
+      requestUserId: event.userId,
       mentionType: task.mentionType,
       intent: routedTask.intent,
       originalIntent: task.intent,
