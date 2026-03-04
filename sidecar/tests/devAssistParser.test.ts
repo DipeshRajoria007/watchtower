@@ -142,6 +142,18 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt digest commands', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt digest 9:30')).toEqual({
+      type: 'DIGEST_SET',
+      enabled: true,
+      time: '9:30',
+    });
+    expect(parseDevAssistCommand('<@UBOT1> wt digest off')).toEqual({
+      type: 'DIGEST_SET',
+      enabled: false,
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);

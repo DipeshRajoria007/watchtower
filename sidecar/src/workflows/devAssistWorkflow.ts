@@ -27,6 +27,7 @@ const HELP_TEXT = [
   '- `wt skill install <name>` -> register local skill metadata',
   '- `wt skill use <name>` -> set active skill for this channel',
   '- `wt feed on|off` -> enable/disable proactive ops feed in this channel',
+  '- `wt digest HH:MM` / `wt digest off` -> configure daily autopilot digest',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -827,6 +828,36 @@ export async function runDevAssistWorkflow(params: {
       result: {
         command: 'FEED_SET',
         enabled: command.enabled,
+      },
+    };
+  }
+
+  if (command.type === 'DIGEST_SET') {
+    store.setDailyDigestSchedule({
+      channelId: task.event.channelId,
+      enabled: command.enabled,
+      digestTime: command.time,
+      updatedBy: task.event.userId,
+    });
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: command.enabled
+        ? `Daily digest enabled at ${command.time}.`
+        : 'Daily digest disabled for this channel.',
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Digest schedule updated.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'DIGEST_SET',
+        enabled: command.enabled,
+        time: command.time ?? null,
       },
     };
   }

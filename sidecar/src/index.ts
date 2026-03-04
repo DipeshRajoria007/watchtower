@@ -24,6 +24,7 @@ const store = new JobStore(dbPath);
 const queue: Array<{ event: SlackEventEnvelope; client: WebClient }> = [];
 let running = 0;
 const OPS_FEED_INTERVAL_MS = 30 * 60 * 1000;
+const DAILY_DIGEST_TICK_MS = 60 * 1000;
 
 const nonActionableSubtypes = new Set(['message_changed', 'message_deleted', 'bot_message']);
 
@@ -206,6 +207,74 @@ function startProactiveOpsFeed(client: WebClient): void {
   setInterval(() => {
     void tick();
   }, OPS_FEED_INTERVAL_MS);
+}
+
+function localHHMM(date = new Date()): string {
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+function localDateKey(date = new Date()): string {
+  const yyyy = String(date.getFullYear());
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function buildDailyDigestMessage(): string {
+  const snapshot = store.getDevStatusSnapshot();
+  const failures = store.listDevRuns(3, 'FAILED');
+  const failureLine = failures[0]
+    ? `- Latest failure: ${failures[0].workflow} (${failures[0].errorMessage ?? 'no error text'})`
+    : '- Latest failure: none';
+
+  return [
+    'Daily Autopilot Digest:',
+    `- Active jobs: ${snapshot.activeJobs}/${config.maxConcurrentJobs}`,
+    `- Runs (24h): ${snapshot.runs24h}`,
+    `- Failures (24h): ${snapshot.failures24h}`,
+    `- Success rate (24h): ${snapshot.successRate24h}%`,
+    failureLine,
+  ].join('\n');
+}
+
+function startDailyDigestTicker(client: WebClient): void {
+  const tick = async (): Promise<void> => {
+    try {
+      const schedules = store.listDailyDigestSchedules();
+      if (schedules.length === 0) {
+        return;
+      }
+
+      const now = new Date();
+      const hhmm = localHHMM(now);
+      const dateKey = localDateKey(now);
+      const digest = buildDailyDigestMessage();
+
+      for (const schedule of schedules) {
+        if (schedule.digestTime !== hhmm) {
+          continue;
+        }
+        if (store.wasDigestSentToday(schedule.channelId, dateKey)) {
+          continue;
+        }
+
+        await client.chat.postMessage({
+          channel: schedule.channelId,
+          text: digest,
+        });
+        store.markDigestSentToday(schedule.channelId, dateKey);
+      }
+    } catch (error) {
+      logger.warn({ error: String(error) }, 'daily digest tick failed');
+    }
+  };
+
+  void tick();
+  setInterval(() => {
+    void tick();
+  }, DAILY_DIGEST_TICK_MS);
 }
 
 async function enqueueSlackEvent(event: SlackEventEnvelope, client: WebClient, source: 'socket' | 'catchup'): Promise<void> {
@@ -653,6 +722,7 @@ async function main(): Promise<void> {
   await client.start();
 
   startProactiveOpsFeed(client.webClient as WebClient);
+  startDailyDigestTicker(client.webClient as WebClient);
 
   startMentionCatchup({
     webClient: client.webClient,

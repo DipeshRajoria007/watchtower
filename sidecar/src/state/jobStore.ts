@@ -183,6 +183,14 @@ export class JobStore {
         updated_by TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS daily_digest_settings (
+        channel_id TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL,
+        digest_time TEXT NOT NULL,
+        updated_by TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -981,6 +989,68 @@ export class JobStore {
       }
     ).all();
     return rows.map(row => row.channel_id);
+  }
+
+  setDailyDigestSchedule(input: {
+    channelId: string;
+    enabled: boolean;
+    digestTime?: string;
+    updatedBy: string;
+  }): void {
+    const existing = this.db
+      .prepare(
+        `SELECT digest_time
+         FROM daily_digest_settings
+         WHERE channel_id = ?
+         LIMIT 1`
+      )
+      .get(input.channelId) as { digest_time?: string } | undefined;
+    const digestTime = (input.digestTime ?? existing?.digest_time ?? '09:30').trim();
+
+    this.db
+      .prepare(
+        `INSERT INTO daily_digest_settings(channel_id, enabled, digest_time, updated_by, updated_at)
+         VALUES(?, ?, ?, ?, ?)
+         ON CONFLICT(channel_id) DO UPDATE SET
+           enabled = excluded.enabled,
+           digest_time = excluded.digest_time,
+           updated_by = excluded.updated_by,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        input.channelId,
+        input.enabled ? 1 : 0,
+        digestTime,
+        input.updatedBy,
+        new Date().toISOString()
+      );
+  }
+
+  listDailyDigestSchedules(): Array<{
+    channelId: string;
+    digestTime: string;
+  }> {
+    const rows = (
+      this.db.prepare(
+        `SELECT channel_id, digest_time
+         FROM daily_digest_settings
+         WHERE enabled = 1`
+      ) as unknown as {
+        all: () => Array<{ channel_id: string; digest_time: string }>;
+      }
+    ).all();
+    return rows.map(row => ({
+      channelId: row.channel_id,
+      digestTime: row.digest_time,
+    }));
+  }
+
+  wasDigestSentToday(channelId: string, dateKey: string): boolean {
+    return this.getState(`digest:last_sent:${channelId}`) === dateKey;
+  }
+
+  markDigestSentToday(channelId: string, dateKey: string): void {
+    this.setState(`digest:last_sent:${channelId}`, dateKey);
   }
 
   recordLearningSignal(input: {

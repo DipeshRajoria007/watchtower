@@ -17,7 +17,8 @@ export type DevAssistCommand =
   | { type: 'FORK'; jobId: string }
   | { type: 'SKILL_INSTALL'; name: string }
   | { type: 'SKILL_USE'; name: string }
-  | { type: 'FEED_SET'; enabled: boolean };
+  | { type: 'FEED_SET'; enabled: boolean }
+  | { type: 'DIGEST_SET'; enabled: boolean; time?: string };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -193,6 +194,23 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
     return {
       type: 'FEED_SET',
       enabled: feedMatch[1].toLowerCase() === 'on',
+    };
+  }
+
+  const digestOffMatch = body.match(/^digest\s+off\b/i);
+  if (digestOffMatch) {
+    return {
+      type: 'DIGEST_SET',
+      enabled: false,
+    };
+  }
+
+  const digestOnMatch = body.match(/^digest\s+([0-2]?\d:[0-5]\d)\b/i);
+  if (digestOnMatch) {
+    return {
+      type: 'DIGEST_SET',
+      enabled: true,
+      time: digestOnMatch[1],
     };
   }
 
