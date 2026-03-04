@@ -603,4 +603,98 @@ describe('devAssistWorkflow', () => {
       }),
     );
   });
+
+  it('starts and shows mission thread state', async () => {
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+
+    const startTask: NormalizedTask = {
+      event: {
+        eventId: 'EvDevAssist11',
+        channelId: 'C1',
+        threadTs: '111.22',
+        eventTs: '111.22',
+        userId: 'U777',
+        text: '<@UBOT1> wt mission start reduce flaky ci retries',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'DEV_ASSIST',
+    };
+
+    const store = {
+      getDevStatusSnapshot: () => ({
+        activeJobs: 1,
+        runs24h: 12,
+        failures24h: 2,
+        successRate24h: 83.3,
+      }),
+      getDevLearningSnapshot: () => ({
+        signals24h: 14,
+        correctionsLearned: 4,
+        correctionsApplied24h: 3,
+        personalityProfiles: 2,
+        topErrorKind: 'CODEX_BIN_NOT_FOUND',
+      }),
+      getDevChannelHeat: () => [],
+      setPersonalityProfile: () => {},
+      getPersonalityProfile: () => undefined,
+      getPersonalityMode: () => 'dark_humor',
+      listDevRuns: () => [],
+      resolveJobId: () => undefined,
+      getJobSummary: () => undefined,
+      listJobLogsTail: () => [],
+      upsertMissionStart: () => ({ id: 'mission:C1:111.22', status: 'ACTIVE' }),
+      getMissionThread: () => ({
+        id: 'mission:C1:111.22',
+        goal: 'reduce flaky ci retries',
+        status: 'ACTIVE',
+        progress: 'Not started',
+        blockers: 'None',
+        eta: 'TBD',
+        ownerUserId: 'U777',
+        updatedAt: '2026-03-04T00:00:00.000Z',
+        plan: 'Plan pending',
+      }),
+    } as any;
+
+    const startResult = await runDevAssistWorkflow({
+      task: startTask,
+      config,
+      slack: slack as any,
+      store,
+    });
+
+    expect(startResult.status).toBe('SUCCESS');
+    expect(startResult.result?.command).toBe('MISSION_START');
+
+    const showTask: NormalizedTask = {
+      ...startTask,
+      event: {
+        ...startTask.event,
+        eventId: 'EvDevAssist12',
+        text: '<@UBOT1> wt mission show',
+      },
+    };
+
+    const showResult = await runDevAssistWorkflow({
+      task: showTask,
+      config,
+      slack: slack as any,
+      store,
+    });
+
+    expect(showResult.status).toBe('SUCCESS');
+    expect(showResult.result?.command).toBe('MISSION_SHOW');
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Mission state for this thread'),
+      }),
+    );
+  });
 });

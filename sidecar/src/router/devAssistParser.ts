@@ -8,7 +8,9 @@ export type DevAssistCommand =
   | { type: 'LEARN' }
   | { type: 'HEAT'; limit: number }
   | { type: 'PERSONALITY_SET'; mode: 'dark_humor' | 'professional' | 'friendly' | 'chaos'; scope: 'user' | 'channel' }
-  | { type: 'PERSONALITY_SHOW'; scope: 'user' | 'channel' };
+  | { type: 'PERSONALITY_SHOW'; scope: 'user' | 'channel' }
+  | { type: 'MISSION_START'; goal: string }
+  | { type: 'MISSION_SHOW' };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -117,6 +119,21 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
       type: 'PERSONALITY_SHOW',
       scope,
     };
+  }
+
+  const missionStartMatch = body.match(/^mission\s+start\s+(.+)$/i);
+  if (missionStartMatch) {
+    const goal = missionStartMatch[1]?.trim() ?? '';
+    if (goal.length > 0) {
+      return {
+        type: 'MISSION_START',
+        goal,
+      };
+    }
+  }
+
+  if (/^mission\s+show\b/i.test(body)) {
+    return { type: 'MISSION_SHOW' };
   }
 
   return undefined;

@@ -83,6 +83,16 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt mission commands', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt mission start stabilize checkout latency')).toEqual({
+      type: 'MISSION_START',
+      goal: 'stabilize checkout latency',
+    });
+    expect(parseDevAssistCommand('<@UBOT1> wt mission show')).toEqual({
+      type: 'MISSION_SHOW',
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);

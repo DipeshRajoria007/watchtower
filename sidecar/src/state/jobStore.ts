@@ -99,6 +99,23 @@ export class JobStore {
         PRIMARY KEY(scope, scope_id)
       );
       CREATE INDEX IF NOT EXISTS idx_personality_profiles_scope ON personality_profiles(scope, scope_id);
+
+      CREATE TABLE IF NOT EXISTS mission_threads (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL,
+        thread_ts TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        plan TEXT NOT NULL,
+        progress TEXT NOT NULL,
+        blockers TEXT NOT NULL,
+        owner_user_id TEXT NOT NULL,
+        eta TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(channel_id, thread_ts)
+      );
+      CREATE INDEX IF NOT EXISTS idx_mission_threads_channel_thread ON mission_threads(channel_id, thread_ts);
     `);
   }
 
@@ -441,6 +458,101 @@ export class JobStore {
       )
       .get(input.scope, input.scopeId) as { mode?: PersonalityMode } | undefined;
     return row?.mode;
+  }
+
+  upsertMissionStart(input: {
+    channelId: string;
+    threadTs: string;
+    goal: string;
+    ownerUserId: string;
+  }): {
+    id: string;
+    status: string;
+  } {
+    const now = new Date().toISOString();
+    const id = `mission:${input.channelId}:${input.threadTs}`;
+    this.db
+      .prepare(
+        `INSERT INTO mission_threads(
+           id, channel_id, thread_ts, goal, plan, progress, blockers, owner_user_id, eta, status, created_at, updated_at
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(channel_id, thread_ts) DO UPDATE SET
+           goal = excluded.goal,
+           owner_user_id = excluded.owner_user_id,
+           status = excluded.status,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        id,
+        input.channelId,
+        input.threadTs,
+        input.goal,
+        'Plan pending',
+        'Not started',
+        'None',
+        input.ownerUserId,
+        'TBD',
+        'ACTIVE',
+        now,
+        now
+      );
+
+    return {
+      id,
+      status: 'ACTIVE',
+    };
+  }
+
+  getMissionThread(input: {
+    channelId: string;
+    threadTs: string;
+  }): {
+    id: string;
+    goal: string;
+    plan: string;
+    progress: string;
+    blockers: string;
+    ownerUserId: string;
+    eta: string;
+    status: string;
+    updatedAt: string;
+  } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, goal, plan, progress, blockers, owner_user_id, eta, status, updated_at
+         FROM mission_threads
+         WHERE channel_id = ? AND thread_ts = ?
+         LIMIT 1`
+      )
+      .get(input.channelId, input.threadTs) as
+      | {
+          id?: string;
+          goal?: string;
+          plan?: string;
+          progress?: string;
+          blockers?: string;
+          owner_user_id?: string;
+          eta?: string;
+          status?: string;
+          updated_at?: string;
+        }
+      | undefined;
+
+    if (!row?.id || !row.goal || !row.plan || !row.progress || !row.blockers || !row.owner_user_id || !row.eta || !row.status || !row.updated_at) {
+      return undefined;
+    }
+
+    return {
+      id: row.id,
+      goal: row.goal,
+      plan: row.plan,
+      progress: row.progress,
+      blockers: row.blockers,
+      ownerUserId: row.owner_user_id,
+      eta: row.eta,
+      status: row.status,
+      updatedAt: row.updated_at,
+    };
   }
 
   recordLearningSignal(input: {

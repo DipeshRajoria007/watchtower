@@ -122,6 +122,21 @@ describe('jobStore', () => {
     expect(heat.length).toBeGreaterThanOrEqual(1);
     expect(heat[0].channelId).toBe('C1');
 
+    const mission = store.upsertMissionStart({
+      channelId: 'C1',
+      threadTs: '123',
+      goal: 'stabilize checkout flow',
+      ownerUserId: 'U1',
+    });
+    expect(mission.status).toBe('ACTIVE');
+
+    const missionState = store.getMissionThread({
+      channelId: 'C1',
+      threadTs: '123',
+    });
+    expect(missionState?.goal).toBe('stabilize checkout flow');
+    expect(missionState?.status).toBe('ACTIVE');
+
     store.close();
   });
 });

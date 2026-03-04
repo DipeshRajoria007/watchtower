@@ -16,6 +16,8 @@ const HELP_TEXT = [
   '- `wt heat [n]` -> show top active channels in last 7 days',
   '- `wt personality set <mode> [channel|me]` -> set reply tone profile',
   '- `wt personality show [channel|me]` -> show current tone profile',
+  '- `wt mission start <goal>` -> start/update mission state for this thread',
+  '- `wt mission show` -> show mission state for this thread',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -485,6 +487,90 @@ export async function runDevAssistWorkflow(params: {
         scopeId,
         mode: effective,
         explicit: Boolean(direct),
+      },
+    };
+  }
+
+  if (command.type === 'MISSION_START') {
+    const mission = store.upsertMissionStart({
+      channelId: task.event.channelId,
+      threadTs: task.event.threadTs,
+      goal: command.goal,
+      ownerUserId: task.event.userId,
+    });
+
+    const text = [
+      `Mission initialized for this thread.`,
+      `- id: ${mission.id}`,
+      `- goal: ${command.goal}`,
+      '- status: ACTIVE',
+      '- progress: Not started',
+      '- blockers: None',
+      '- eta: TBD',
+    ].join('\n');
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+
+    logStep?.({
+      stage: 'dev_assist.mission.start',
+      message: 'Started mission thread state.',
+      data: {
+        missionId: mission.id,
+      },
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Mission started.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'MISSION_START',
+        missionId: mission.id,
+      },
+    };
+  }
+
+  if (command.type === 'MISSION_SHOW') {
+    const mission = store.getMissionThread({
+      channelId: task.event.channelId,
+      threadTs: task.event.threadTs,
+    });
+
+    const text = mission
+      ? [
+          `Mission state for this thread:`,
+          `- id: ${mission.id}`,
+          `- goal: ${mission.goal}`,
+          `- status: ${mission.status}`,
+          `- progress: ${mission.progress}`,
+          `- blockers: ${mission.blockers}`,
+          `- eta: ${mission.eta}`,
+          `- owner: <@${mission.ownerUserId}>`,
+          `- updated: ${mission.updatedAt}`,
+        ].join('\n')
+      : 'No mission is active for this thread. Use `wt mission start <goal>`.';
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Mission state posted.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'MISSION_SHOW',
+        found: Boolean(mission),
       },
     };
   }
