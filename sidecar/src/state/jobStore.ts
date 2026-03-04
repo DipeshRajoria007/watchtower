@@ -116,6 +116,18 @@ export class JobStore {
         UNIQUE(channel_id, thread_ts)
       );
       CREATE INDEX IF NOT EXISTS idx_mission_threads_channel_thread ON mission_threads(channel_id, thread_ts);
+
+      CREATE TABLE IF NOT EXISTS mission_swarm_runs (
+        run_id TEXT PRIMARY KEY,
+        mission_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        thread_ts TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        roles_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_mission_swarm_runs_mission ON mission_swarm_runs(mission_id, created_at);
     `);
   }
 
@@ -552,6 +564,101 @@ export class JobStore {
       eta: row.eta,
       status: row.status,
       updatedAt: row.updated_at,
+    };
+  }
+
+  updateMissionThread(input: {
+    channelId: string;
+    threadTs: string;
+    plan?: string;
+    progress?: string;
+    blockers?: string;
+    eta?: string;
+    status?: string;
+  }): boolean {
+    const mission = this.getMissionThread({
+      channelId: input.channelId,
+      threadTs: input.threadTs,
+    });
+    if (!mission) {
+      return false;
+    }
+
+    this.db
+      .prepare(
+        `UPDATE mission_threads
+         SET plan = ?, progress = ?, blockers = ?, eta = ?, status = ?, updated_at = ?
+         WHERE channel_id = ? AND thread_ts = ?`
+      )
+      .run(
+        input.plan ?? mission.plan,
+        input.progress ?? mission.progress,
+        input.blockers ?? mission.blockers,
+        input.eta ?? mission.eta,
+        input.status ?? mission.status,
+        new Date().toISOString(),
+        input.channelId,
+        input.threadTs
+      );
+
+    return true;
+  }
+
+  startMissionSwarmRun(input: {
+    channelId: string;
+    threadTs: string;
+    requestedBy: string;
+  }): {
+    runId: string;
+    missionId: string;
+    roles: string[];
+  } | undefined {
+    const mission = this.getMissionThread({
+      channelId: input.channelId,
+      threadTs: input.threadTs,
+    });
+    if (!mission) {
+      return undefined;
+    }
+
+    const runId = `swarm:${Date.now()}:${Math.floor(Math.random() * 100000)}`;
+    const roles = ['planner', 'coder', 'reviewer', 'shipper'];
+    const rolesJson = JSON.stringify(
+      roles.map(role => ({
+        role,
+        status: 'queued',
+      }))
+    );
+
+    this.db
+      .prepare(
+        `INSERT INTO mission_swarm_runs(
+           run_id, mission_id, channel_id, thread_ts, requested_by, roles_json, status, created_at
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        runId,
+        mission.id,
+        input.channelId,
+        input.threadTs,
+        input.requestedBy,
+        rolesJson,
+        'STARTED',
+        new Date().toISOString()
+      );
+
+    this.updateMissionThread({
+      channelId: input.channelId,
+      threadTs: input.threadTs,
+      plan: 'Swarm mode: planner -> coder -> reviewer -> shipper',
+      progress: 'Swarm execution started',
+      status: 'RUNNING',
+    });
+
+    return {
+      runId,
+      missionId: mission.id,
+      roles,
     };
   }
 

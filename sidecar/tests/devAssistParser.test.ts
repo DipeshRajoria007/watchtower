@@ -91,6 +91,9 @@ describe('devAssistParser', () => {
     expect(parseDevAssistCommand('<@UBOT1> wt mission show')).toEqual({
       type: 'MISSION_SHOW',
     });
+    expect(parseDevAssistCommand('<@UBOT1> wt mission run --swarm')).toEqual({
+      type: 'MISSION_RUN_SWARM',
+    });
   });
 
   it('detects dev-assist prefix only when present', () => {

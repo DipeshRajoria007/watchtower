@@ -10,7 +10,8 @@ export type DevAssistCommand =
   | { type: 'PERSONALITY_SET'; mode: 'dark_humor' | 'professional' | 'friendly' | 'chaos'; scope: 'user' | 'channel' }
   | { type: 'PERSONALITY_SHOW'; scope: 'user' | 'channel' }
   | { type: 'MISSION_START'; goal: string }
-  | { type: 'MISSION_SHOW' };
+  | { type: 'MISSION_SHOW' }
+  | { type: 'MISSION_RUN_SWARM' };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -134,6 +135,10 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
 
   if (/^mission\s+show\b/i.test(body)) {
     return { type: 'MISSION_SHOW' };
+  }
+
+  if (/^mission\s+run\s+--swarm\b/i.test(body)) {
+    return { type: 'MISSION_RUN_SWARM' };
   }
 
   return undefined;

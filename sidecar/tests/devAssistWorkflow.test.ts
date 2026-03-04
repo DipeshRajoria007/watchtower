@@ -661,6 +661,11 @@ describe('devAssistWorkflow', () => {
         updatedAt: '2026-03-04T00:00:00.000Z',
         plan: 'Plan pending',
       }),
+      startMissionSwarmRun: () => ({
+        runId: 'swarm:1',
+        missionId: 'mission:C1:111.22',
+        roles: ['planner', 'coder', 'reviewer', 'shipper'],
+      }),
     } as any;
 
     const startResult = await runDevAssistWorkflow({
@@ -696,5 +701,24 @@ describe('devAssistWorkflow', () => {
         text: expect.stringContaining('Mission state for this thread'),
       }),
     );
+
+    const swarmTask: NormalizedTask = {
+      ...startTask,
+      event: {
+        ...startTask.event,
+        eventId: 'EvDevAssist13',
+        text: '<@UBOT1> wt mission run --swarm',
+      },
+    };
+
+    const swarmResult = await runDevAssistWorkflow({
+      task: swarmTask,
+      config,
+      slack: slack as any,
+      store,
+    });
+
+    expect(swarmResult.status).toBe('SUCCESS');
+    expect(swarmResult.result?.command).toBe('MISSION_RUN_SWARM');
   });
 });

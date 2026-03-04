@@ -18,6 +18,7 @@ const HELP_TEXT = [
   '- `wt personality show [channel|me]` -> show current tone profile',
   '- `wt mission start <goal>` -> start/update mission state for this thread',
   '- `wt mission show` -> show mission state for this thread',
+  '- `wt mission run --swarm` -> launch planner/coder/reviewer/shipper run',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -571,6 +572,42 @@ export async function runDevAssistWorkflow(params: {
       result: {
         command: 'MISSION_SHOW',
         found: Boolean(mission),
+      },
+    };
+  }
+
+  if (command.type === 'MISSION_RUN_SWARM') {
+    const run = store.startMissionSwarmRun({
+      channelId: task.event.channelId,
+      threadTs: task.event.threadTs,
+      requestedBy: task.event.userId,
+    });
+
+    const text = run
+      ? [
+          'Mission swarm execution started.',
+          `- runId: ${run.runId}`,
+          `- missionId: ${run.missionId}`,
+          `- roles: ${run.roles.join(', ')}`,
+        ].join('\n')
+      : 'No mission found for this thread. Start one with `wt mission start <goal>` first.';
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: run ? 'SUCCESS' : 'PAUSED',
+      message: run ? 'Mission swarm started.' : 'Mission not found for swarm run.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'MISSION_RUN_SWARM',
+        started: Boolean(run),
+        runId: run?.runId,
       },
     };
   }

@@ -137,6 +137,20 @@ describe('jobStore', () => {
     expect(missionState?.goal).toBe('stabilize checkout flow');
     expect(missionState?.status).toBe('ACTIVE');
 
+    const swarm = store.startMissionSwarmRun({
+      channelId: 'C1',
+      threadTs: '123',
+      requestedBy: 'U1',
+    });
+    expect(swarm?.roles).toContain('planner');
+
+    const missionAfterSwarm = store.getMissionThread({
+      channelId: 'C1',
+      threadTs: '123',
+    });
+    expect(missionAfterSwarm?.status).toBe('RUNNING');
+    expect(missionAfterSwarm?.progress).toContain('Swarm');
+
     store.close();
   });
 });
