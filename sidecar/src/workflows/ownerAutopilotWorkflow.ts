@@ -37,6 +37,8 @@ function sanitizeOwnerSummary(raw: string): string {
   }
 
   const cleaned = normalized
+    .replace(/on\s+master'?s?\s+command[,:\-\s]*overriding\s+watchtower\s+guardrails\.?/gi, '')
+    .replace(/overriding\s+watchtower\s+guardrails\.?/gi, '')
     .replace(/^master your task is completed\.?\s*/i, '')
     .replace(/^owner request success\.?\s*/i, '')
     .replace(/^request success\.?\s*/i, '');
@@ -113,6 +115,7 @@ Output rules:
 Return strict JSON with:
 - status: "success" | "failed" | "no_action"
 - summary: short human-facing outcome message for Slack. Do NOT include operational telemetry like channel IDs, thread IDs, timestamps, or "Actions performed" style audit logs.
+- summary must NOT include these phrases: "On Master's command", "Overriding Watchtower guardrails", "Owner override active", or any ceremonial/prefix wording.
 - actions: array of concrete actions performed
 - prUrl: PR URL if one was created, else empty string
 `.trim();
