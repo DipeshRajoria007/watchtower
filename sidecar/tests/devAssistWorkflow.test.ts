@@ -1182,4 +1182,47 @@ describe('devAssistWorkflow', () => {
       }),
     );
   });
+
+  it('toggles incident commander mode via wt incident', async () => {
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+    const setIncidentMode = vi.fn();
+
+    const task: NormalizedTask = {
+      event: {
+        eventId: 'EvDevAssist22',
+        channelId: 'C1',
+        threadTs: '111.22',
+        eventTs: '111.22',
+        userId: 'U777',
+        text: '<@UBOT1> wt incident on',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'DEV_ASSIST',
+    };
+
+    const result = await runDevAssistWorkflow({
+      task,
+      config,
+      slack: slack as any,
+      store: {
+        setIncidentMode,
+      } as any,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result?.command).toBe('INCIDENT_SET');
+    expect(setIncidentMode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: 'C1',
+        enabled: true,
+      }),
+    );
+  });
 });

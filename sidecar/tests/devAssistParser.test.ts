@@ -164,6 +164,17 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt incident commands', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt incident on')).toEqual({
+      type: 'INCIDENT_SET',
+      enabled: true,
+    });
+    expect(parseDevAssistCommand('<@UBOT1> wt incident off')).toEqual({
+      type: 'INCIDENT_SET',
+      enabled: false,
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);

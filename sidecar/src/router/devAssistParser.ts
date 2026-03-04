@@ -20,7 +20,8 @@ export type DevAssistCommand =
   | { type: 'FEED_SET'; enabled: boolean }
   | { type: 'DIGEST_SET'; enabled: boolean; time?: string }
   | { type: 'POLICY_IMPORT'; pack: 'frontend' | 'backend' | 'release' }
-  | { type: 'POLICY_SHOW' };
+  | { type: 'POLICY_SHOW' }
+  | { type: 'INCIDENT_SET'; enabled: boolean };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -226,6 +227,14 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
 
   if (/^policy\s+show\b/i.test(body)) {
     return { type: 'POLICY_SHOW' };
+  }
+
+  const incidentMatch = body.match(/^incident\s+(on|off)\b/i);
+  if (incidentMatch) {
+    return {
+      type: 'INCIDENT_SET',
+      enabled: incidentMatch[1].toLowerCase() === 'on',
+    };
   }
 
   return undefined;

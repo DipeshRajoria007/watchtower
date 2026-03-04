@@ -30,6 +30,7 @@ const HELP_TEXT = [
   '- `wt digest HH:MM` / `wt digest off` -> configure daily autopilot digest',
   '- `wt policy import <frontend|backend|release>` -> attach policy pack to this channel',
   '- `wt policy show` -> show current policy pack and active rules',
+  '- `wt incident on|off` -> enable/disable incident commander cadence in this channel',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -919,6 +920,34 @@ export async function runDevAssistWorkflow(params: {
         command: 'POLICY_SHOW',
         found: Boolean(policy),
         packName: policy?.packName ?? null,
+      },
+    };
+  }
+
+  if (command.type === 'INCIDENT_SET') {
+    store.setIncidentMode({
+      channelId: task.event.channelId,
+      enabled: command.enabled,
+      updatedBy: task.event.userId,
+    });
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: command.enabled
+        ? 'Incident commander mode is ON for this channel. I will post status cadence updates.'
+        : 'Incident commander mode is OFF for this channel.',
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Incident mode updated.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'INCIDENT_SET',
+        enabled: command.enabled,
       },
     };
   }

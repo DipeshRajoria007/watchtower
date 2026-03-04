@@ -25,6 +25,8 @@ const queue: Array<{ event: SlackEventEnvelope; client: WebClient }> = [];
 let running = 0;
 const OPS_FEED_INTERVAL_MS = 30 * 60 * 1000;
 const DAILY_DIGEST_TICK_MS = 60 * 1000;
+const INCIDENT_TICK_MS = 5 * 60 * 1000;
+const INCIDENT_CADENCE_MINUTES = 30;
 
 const nonActionableSubtypes = new Set(['message_changed', 'message_deleted', 'bot_message']);
 
@@ -275,6 +277,66 @@ function startDailyDigestTicker(client: WebClient): void {
   setInterval(() => {
     void tick();
   }, DAILY_DIGEST_TICK_MS);
+}
+
+function buildIncidentCadenceMessage(channelId: string): string | undefined {
+  const snapshot = store.getIncidentSnapshot(channelId);
+  if (snapshot.running === 0 && snapshot.failed60m === 0 && snapshot.paused60m === 0) {
+    return undefined;
+  }
+
+  return [
+    'Incident Commander Update:',
+    `- Running jobs: ${snapshot.running}`,
+    `- Failed jobs (last 60m): ${snapshot.failed60m}`,
+    `- Paused jobs (last 60m): ${snapshot.paused60m}`,
+    `- Dominant workflow impact: ${snapshot.topWorkflow}`,
+    '- Use `wt failures 10` and `wt diagnose <jobId>` for next action.',
+  ].join('\n');
+}
+
+function shouldPostIncidentCadence(channelId: string, nowMs: number): boolean {
+  const key = `incident:last_post:${channelId}`;
+  const previous = Number(store.getState(key) ?? '0');
+  const minGapMs = INCIDENT_CADENCE_MINUTES * 60 * 1000;
+  if (Number.isFinite(previous) && previous > 0 && nowMs - previous < minGapMs) {
+    return false;
+  }
+  store.setState(key, String(nowMs));
+  return true;
+}
+
+function startIncidentCommanderFeed(client: WebClient): void {
+  const tick = async (): Promise<void> => {
+    try {
+      const channels = store.listIncidentChannels();
+      if (channels.length === 0) {
+        return;
+      }
+
+      const nowMs = Date.now();
+      for (const channelId of channels) {
+        if (!shouldPostIncidentCadence(channelId, nowMs)) {
+          continue;
+        }
+        const text = buildIncidentCadenceMessage(channelId);
+        if (!text) {
+          continue;
+        }
+        await client.chat.postMessage({
+          channel: channelId,
+          text,
+        });
+      }
+    } catch (error) {
+      logger.warn({ error: String(error) }, 'incident commander tick failed');
+    }
+  };
+
+  void tick();
+  setInterval(() => {
+    void tick();
+  }, INCIDENT_TICK_MS);
 }
 
 async function enqueueSlackEvent(event: SlackEventEnvelope, client: WebClient, source: 'socket' | 'catchup'): Promise<void> {
@@ -723,6 +785,7 @@ async function main(): Promise<void> {
 
   startProactiveOpsFeed(client.webClient as WebClient);
   startDailyDigestTicker(client.webClient as WebClient);
+  startIncidentCommanderFeed(client.webClient as WebClient);
 
   startMentionCatchup({
     webClient: client.webClient,

@@ -205,6 +205,13 @@ export class JobStore {
         updated_by TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS incident_modes (
+        channel_id TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL,
+        updated_by TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -1178,6 +1185,100 @@ export class JobStore {
       description: row.description,
       rules,
       updatedAt: row.updated_at,
+    };
+  }
+
+  setIncidentMode(input: {
+    channelId: string;
+    enabled: boolean;
+    updatedBy: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO incident_modes(channel_id, enabled, updated_by, updated_at)
+         VALUES(?, ?, ?, ?)
+         ON CONFLICT(channel_id) DO UPDATE SET
+           enabled = excluded.enabled,
+           updated_by = excluded.updated_by,
+           updated_at = excluded.updated_at`
+      )
+      .run(input.channelId, input.enabled ? 1 : 0, input.updatedBy, new Date().toISOString());
+  }
+
+  listIncidentChannels(): string[] {
+    const rows = (
+      this.db.prepare(
+        `SELECT channel_id
+         FROM incident_modes
+         WHERE enabled = 1`
+      ) as unknown as {
+        all: () => Array<{ channel_id: string }>;
+      }
+    ).all();
+    return rows.map(row => row.channel_id);
+  }
+
+  getIncidentSnapshot(channelId: string): {
+    running: number;
+    failed60m: number;
+    paused60m: number;
+    topWorkflow: string;
+  } {
+    const running = Number(
+      (this.db
+        .prepare(
+          `SELECT COUNT(*) as count
+           FROM jobs
+           WHERE channel_id = ? AND status = 'RUNNING'`
+        )
+        .get(channelId) as { count?: number } | undefined)?.count ?? 0
+    );
+
+    const failed60m = Number(
+      (this.db
+        .prepare(
+          `SELECT COUNT(*) as count
+           FROM jobs
+           WHERE channel_id = ?
+             AND status = 'FAILED'
+             AND julianday(created_at) >= julianday('now', '-60 minute')`
+        )
+        .get(channelId) as { count?: number } | undefined)?.count ?? 0
+    );
+
+    const paused60m = Number(
+      (this.db
+        .prepare(
+          `SELECT COUNT(*) as count
+           FROM jobs
+           WHERE channel_id = ?
+             AND status = 'PAUSED'
+             AND julianday(created_at) >= julianday('now', '-60 minute')`
+        )
+        .get(channelId) as { count?: number } | undefined)?.count ?? 0
+    );
+
+    const topWorkflow =
+      (
+        this.db
+          .prepare(
+            `SELECT workflow
+             FROM jobs
+             WHERE channel_id = ?
+               AND status IN ('FAILED', 'PAUSED')
+               AND julianday(created_at) >= julianday('now', '-60 minute')
+             GROUP BY workflow
+             ORDER BY COUNT(*) DESC, workflow ASC
+             LIMIT 1`
+          )
+          .get(channelId) as { workflow?: string } | undefined
+      )?.workflow ?? 'none';
+
+    return {
+      running,
+      failed60m,
+      paused60m,
+      topWorkflow,
     };
   }
 
