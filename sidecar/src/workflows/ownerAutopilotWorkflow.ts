@@ -115,17 +115,20 @@ Environment:
 
 Task:
 Execute the owner's request end-to-end. You may choose whichever local repos/files/commands are needed.
+If the request is ambiguous or missing key details, do not guess dangerously: ask one concise clarifying question instead.
 
 Slack thread context:
 ${threadContext}
 
 Output rules:
 Return strict JSON with:
-- status: "success" | "failed" | "no_action"
+- status: "success" | "failed" | "no_action" | "needs_clarification"
 - summary: short human-facing outcome message for Slack. Do NOT include operational telemetry like channel IDs, thread IDs, timestamps, or "Actions performed" style audit logs.
 - summary must NOT include these phrases: "On Master's command", "Overriding Watchtower guardrails", "Owner override active", or any ceremonial/prefix wording.
+- for status="needs_clarification", summary must be one direct question asking only the minimum missing info.
 - actions: array of concrete actions performed
 - prUrl: PR URL if one was created, else empty string
+- confidence: number between 0 and 1
 `.trim();
 
   const request: CodexRunRequest = {
@@ -192,6 +195,7 @@ Return strict JSON with:
   }
 
   const status = String(result.parsedJson.status ?? 'success');
+  const confidence = Number(result.parsedJson.confidence ?? Number.NaN);
   const summaryRaw = String(result.parsedJson.summary ?? 'Owner request completed.');
   const summary = sanitizeOwnerSummary(summaryRaw);
   const prUrl = String(result.parsedJson.prUrl ?? '');
@@ -201,6 +205,36 @@ Return strict JSON with:
       : status === 'no_action'
         ? 'No action required.'
         : `Request ${status}.`;
+
+  if (status === 'needs_clarification') {
+    const clarifyingQuestion =
+      summary ||
+      'Could you clarify the exact task and expected output so I can execute it correctly?';
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: clarifyingQuestion,
+    });
+
+    logStep?.({
+      stage: 'owner_autopilot.clarification.posted',
+      message: 'Posted clarifying question and paused owner-autopilot execution.',
+      level: 'WARN',
+      data: {
+        confidence: Number.isFinite(confidence) ? confidence : null,
+      },
+    });
+
+    return {
+      workflow: 'OWNER_AUTOPILOT',
+      status: 'PAUSED',
+      message: clarifyingQuestion,
+      notifyDesktop: false,
+      slackPosted: true,
+      result: result.parsedJson,
+    };
+  }
 
   const shouldSuppressMetaReply =
     !prUrl &&
@@ -229,6 +263,7 @@ Return strict JSON with:
       status,
       hasPrUrl: Boolean(prUrl),
       suppressed: shouldSuppressMetaReply,
+      confidence: Number.isFinite(confidence) ? confidence : null,
     },
   });
 

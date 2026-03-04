@@ -6,7 +6,7 @@
   "properties": {
     "status": {
       "type": "string",
-      "enum": ["success", "failed", "no_action"]
+      "enum": ["success", "failed", "no_action", "needs_clarification"]
     },
     "summary": {
       "type": "string",
@@ -20,6 +20,11 @@
     },
     "prUrl": {
       "type": "string"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
     }
   }
 }
