@@ -870,4 +870,78 @@ describe('devAssistWorkflow', () => {
     expect(forkResult.result?.command).toBe('FORK');
     expect(createReplayRequest).toHaveBeenCalled();
   });
+
+  it('activates installed skill via wt skill use', async () => {
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+    const setChannelSkill = vi.fn();
+
+    const task: NormalizedTask = {
+      event: {
+        eventId: 'EvDevAssist17',
+        channelId: 'C1',
+        threadTs: '111.22',
+        eventTs: '111.22',
+        userId: 'U777',
+        text: '<@UBOT1> wt skill use frontend-pr-review',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'DEV_ASSIST',
+    };
+
+    const result = await runDevAssistWorkflow({
+      task,
+      config,
+      slack: slack as any,
+      store: {
+        getDevStatusSnapshot: () => ({
+          activeJobs: 1,
+          runs24h: 12,
+          failures24h: 2,
+          successRate24h: 83.3,
+        }),
+        getDevLearningSnapshot: () => ({
+          signals24h: 14,
+          correctionsLearned: 4,
+          correctionsApplied24h: 3,
+          personalityProfiles: 2,
+          topErrorKind: 'CODEX_BIN_NOT_FOUND',
+        }),
+        getDevChannelHeat: () => [],
+        setPersonalityProfile: () => {},
+        getPersonalityProfile: () => 'friendly',
+        getPersonalityMode: () => 'friendly',
+        listDevRuns: () => [],
+        resolveJobId: () => undefined,
+        getJobSummary: () => undefined,
+        listJobLogsTail: () => [],
+        upsertMissionStart: () => ({ id: 'mission:C1:111.22', status: 'ACTIVE' }),
+        getMissionThread: () => undefined,
+        startMissionSwarmRun: () => undefined,
+        setTrustPolicy: () => {},
+        createReplayRequest: () => ({ requestId: 'replay:1', status: 'QUEUED' }),
+        getSkill: () => ({
+          name: 'frontend-pr-review',
+          path: '/tmp/fake',
+          version: 'v1',
+        }),
+        setChannelSkill,
+      } as any,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result?.command).toBe('SKILL_USE');
+    expect(setChannelSkill).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: 'C1',
+        skillName: 'frontend-pr-review',
+      }),
+    );
+  });
 });

@@ -194,6 +194,20 @@ describe('jobStore', () => {
     expect(feedback.positive).toBeGreaterThanOrEqual(1);
     expect(feedback.negative).toBeGreaterThanOrEqual(1);
 
+    store.registerSkill({
+      name: 'frontend-pr-review',
+      path: '/tmp/skills/frontend-pr-review/SKILL.md',
+      version: '2026-03-04T00:00:00.000Z',
+    });
+    const skill = store.getSkill('frontend-pr-review');
+    expect(skill?.name).toBe('frontend-pr-review');
+
+    store.setChannelSkill({
+      channelId: 'C1',
+      skillName: 'frontend-pr-review',
+    });
+    expect(store.getChannelSkill('C1')).toBe('frontend-pr-review');
+
     store.close();
   });
 });

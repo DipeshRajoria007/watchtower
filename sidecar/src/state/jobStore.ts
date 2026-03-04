@@ -162,6 +162,20 @@ export class JobStore {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_reaction_feedback_channel ON reaction_feedback(channel_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS skill_registry (
+        skill_name TEXT PRIMARY KEY,
+        skill_path TEXT NOT NULL,
+        version TEXT NOT NULL,
+        installed_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS skill_channel_preferences (
+        channel_id TEXT PRIMARY KEY,
+        active_skill TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -843,6 +857,76 @@ export class JobStore {
     }
 
     return { positive, negative, neutral };
+  }
+
+  registerSkill(input: {
+    name: string;
+    path: string;
+    version: string;
+  }): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO skill_registry(skill_name, skill_path, version, installed_at, updated_at)
+         VALUES(?, ?, ?, ?, ?)
+         ON CONFLICT(skill_name) DO UPDATE SET
+           skill_path = excluded.skill_path,
+           version = excluded.version,
+           updated_at = excluded.updated_at`
+      )
+      .run(input.name, input.path, input.version, now, now);
+  }
+
+  getSkill(name: string): {
+    name: string;
+    path: string;
+    version: string;
+  } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT skill_name, skill_path, version
+         FROM skill_registry
+         WHERE skill_name = ?
+         LIMIT 1`
+      )
+      .get(name) as { skill_name?: string; skill_path?: string; version?: string } | undefined;
+
+    if (!row?.skill_name || !row.skill_path || !row.version) {
+      return undefined;
+    }
+
+    return {
+      name: row.skill_name,
+      path: row.skill_path,
+      version: row.version,
+    };
+  }
+
+  setChannelSkill(input: {
+    channelId: string;
+    skillName: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO skill_channel_preferences(channel_id, active_skill, updated_at)
+         VALUES(?, ?, ?)
+         ON CONFLICT(channel_id) DO UPDATE SET
+           active_skill = excluded.active_skill,
+           updated_at = excluded.updated_at`
+      )
+      .run(input.channelId, input.skillName, new Date().toISOString());
+  }
+
+  getChannelSkill(channelId: string): string | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT active_skill
+         FROM skill_channel_preferences
+         WHERE channel_id = ?
+         LIMIT 1`
+      )
+      .get(channelId) as { active_skill?: string } | undefined;
+    return row?.active_skill;
   }
 
   recordLearningSignal(input: {

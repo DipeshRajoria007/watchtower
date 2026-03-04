@@ -14,7 +14,9 @@ export type DevAssistCommand =
   | { type: 'MISSION_RUN_SWARM' }
   | { type: 'TRUST_SET'; target: 'channel' | 'user'; level: 'observe' | 'suggest' | 'execute' | 'merge' }
   | { type: 'REPLAY'; jobId: string }
-  | { type: 'FORK'; jobId: string };
+  | { type: 'FORK'; jobId: string }
+  | { type: 'SKILL_INSTALL'; name: string }
+  | { type: 'SKILL_USE'; name: string };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -166,6 +168,22 @@ export function parseDevAssistCommand(text: string): DevAssistCommand | undefine
     return {
       type: 'FORK',
       jobId: forkMatch[1],
+    };
+  }
+
+  const skillInstallMatch = body.match(/^skill\s+install\s+([a-z0-9_.-]+)\b/i);
+  if (skillInstallMatch) {
+    return {
+      type: 'SKILL_INSTALL',
+      name: skillInstallMatch[1],
+    };
+  }
+
+  const skillUseMatch = body.match(/^skill\s+use\s+([a-z0-9_.-]+)\b/i);
+  if (skillUseMatch) {
+    return {
+      type: 'SKILL_USE',
+      name: skillUseMatch[1],
     };
   }
 

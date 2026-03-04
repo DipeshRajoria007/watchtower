@@ -120,6 +120,17 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt skill commands', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt skill install frontend-pr-review')).toEqual({
+      type: 'SKILL_INSTALL',
+      name: 'frontend-pr-review',
+    });
+    expect(parseDevAssistCommand('<@UBOT1> wt skill use frontend-pr-review')).toEqual({
+      type: 'SKILL_USE',
+      name: 'frontend-pr-review',
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);

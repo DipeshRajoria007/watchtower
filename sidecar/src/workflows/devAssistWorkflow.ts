@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type { WebClient } from '@slack/web-api';
 import type { AppConfig, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
 import { diagnoseFailure } from '../learning/failureDoctor.js';
@@ -22,9 +24,29 @@ const HELP_TEXT = [
   '- `wt trust <channel|user> <observe|suggest|execute|merge>` -> set approval gate',
   '- `wt replay <jobId>` -> queue replay of a previous job',
   '- `wt fork <jobId>` -> queue forked rerun from a previous job',
+  '- `wt skill install <name>` -> register local skill metadata',
+  '- `wt skill use <name>` -> set active skill for this channel',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
+
+function resolveSkillPath(name: string): string | undefined {
+  const home = process.env.HOME ?? '';
+  if (!home) {
+    return undefined;
+  }
+
+  const candidates = [
+    path.join(home, '.codex', 'skills', name, 'SKILL.md'),
+    path.join(home, '.codex', 'skills', '.system', name, 'SKILL.md'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
 
 export async function runDevAssistWorkflow(params: {
   task: NormalizedTask;
@@ -691,6 +713,91 @@ export async function runDevAssistWorkflow(params: {
         command: command.type,
         sourceJobId: resolvedJobId,
         requestId: req.requestId,
+      },
+    };
+  }
+
+  if (command.type === 'SKILL_INSTALL') {
+    const skillPath = resolveSkillPath(command.name);
+    if (!skillPath) {
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: `Skill \`${command.name}\` not found in local Codex skills directory.`,
+      });
+      return {
+        workflow: 'DEV_ASSIST',
+        status: 'SKIPPED',
+        message: 'Skill not found for install.',
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+
+    const stat = fs.statSync(skillPath);
+    store.registerSkill({
+      name: command.name,
+      path: skillPath,
+      version: stat.mtime.toISOString(),
+    });
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: `Skill installed: ${command.name}\n- path: ${skillPath}\n- version: ${stat.mtime.toISOString()}`,
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Skill installed.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'SKILL_INSTALL',
+        name: command.name,
+        path: skillPath,
+      },
+    };
+  }
+
+  if (command.type === 'SKILL_USE') {
+    const skill = store.getSkill(command.name);
+    if (!skill) {
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: `Skill \`${command.name}\` is not installed. Run \`wt skill install ${command.name}\` first.`,
+      });
+      return {
+        workflow: 'DEV_ASSIST',
+        status: 'PAUSED',
+        message: 'Skill not installed for channel use.',
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+
+    store.setChannelSkill({
+      channelId: task.event.channelId,
+      skillName: command.name,
+    });
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: `Active channel skill set to \`${command.name}\`.`,
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Active channel skill updated.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'SKILL_USE',
+        name: command.name,
       },
     };
   }
