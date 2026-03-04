@@ -165,4 +165,20 @@ describe('intentParser', () => {
     expect(task.isOwnerAuthor).toBe(true);
     expect(task.intent).toBe('DEV_ASSIST');
   });
+
+  it('routes numbered wt command from owner to dev-assist', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        userId: 'UOWNER1',
+        text: '1. <@UBOT1> wt policy import frontend',
+      },
+      config,
+      [],
+    );
+
+    expect(task.mentionDetected).toBe(true);
+    expect(task.isOwnerAuthor).toBe(true);
+    expect(task.intent).toBe('DEV_ASSIST');
+  });
 });

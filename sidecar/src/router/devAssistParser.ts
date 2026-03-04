@@ -30,7 +30,11 @@ function stripMentions(text: string): string {
 
 function stripPrefix(text: string): string | undefined {
   const cleaned = stripMentions(text);
-  const match = cleaned.match(/^(wt|watchtower)\b\s*(.*)$/i);
+  const normalized = cleaned
+    .replace(/^([0-9]+[.)]\s+)+/i, '')
+    .replace(/^([-*]\s+)+/i, '')
+    .trim();
+  const match = normalized.match(/^(wt|watchtower)\b\s*(.*)$/i);
   if (!match) {
     return undefined;
   }

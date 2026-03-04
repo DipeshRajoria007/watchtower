@@ -188,6 +188,8 @@ describe('devAssistParser', () => {
 
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
+    expect(hasDevAssistCommand('1. <@UBOT1> wt help')).toBe(true);
+    expect(hasDevAssistCommand('- <@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);
   });
 });
