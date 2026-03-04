@@ -37,6 +37,10 @@ function stripPrefix(text: string): string | undefined {
   return match[2]?.trim() ?? '';
 }
 
+export function hasDevAssistPrefix(text: string): boolean {
+  return stripPrefix(text) !== undefined;
+}
+
 export function parseDevAssistCommand(text: string): DevAssistCommand | undefined {
   const body = stripPrefix(text);
   if (body === undefined) {

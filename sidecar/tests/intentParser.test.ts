@@ -149,4 +149,20 @@ describe('intentParser', () => {
     expect(task.mentionDetected).toBe(true);
     expect(task.intent).toBe('DEV_ASSIST');
   });
+
+  it('routes prefixed unknown wt command to dev-assist instead of owner-autopilot', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        userId: 'UOWNER1',
+        text: '<@UBOT1> wt policy import frontend',
+      },
+      config,
+      [],
+    );
+
+    expect(task.mentionDetected).toBe(true);
+    expect(task.isOwnerAuthor).toBe(true);
+    expect(task.intent).toBe('DEV_ASSIST');
+  });
 });

@@ -1,5 +1,5 @@
 import type { AppConfig, NormalizedTask, PrContext, SlackEventEnvelope, WorkflowIntent } from '../types/contracts.js';
-import { hasDevAssistCommand } from './devAssistParser.js';
+import { hasDevAssistPrefix } from './devAssistParser.js';
 
 const PR_REVIEW_KEYWORDS = [
   /review/i,
@@ -64,7 +64,8 @@ function inferIntent(
   config: AppConfig,
   mention: { detected: boolean; type: 'bot' | 'owner' | 'none' }
 ): WorkflowIntent {
-  if (mention.detected && hasDevAssistCommand(event.text ?? '')) {
+  // Any explicit wt/watchtower prefix is always routed to dev-assist, even for owners.
+  if (mention.detected && hasDevAssistPrefix(event.text ?? '')) {
     return 'DEV_ASSIST';
   }
 
