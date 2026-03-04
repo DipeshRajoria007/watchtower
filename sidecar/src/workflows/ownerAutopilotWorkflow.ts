@@ -33,7 +33,7 @@ function formatThreadContext(task: NormalizedTask, messages: Array<{ text: strin
 function sanitizeOwnerSummary(raw: string): string {
   const normalized = raw.replace(/\r\n/g, '\n').trim();
   if (!normalized) {
-    return 'Done.';
+    return '';
   }
 
   let cleaned = normalized
@@ -61,7 +61,7 @@ function sanitizeOwnerSummary(raw: string): string {
     .filter(line => !/^on master's command/i.test(line));
 
   const finalText = lines.join(' ').replace(/\s+/g, ' ').trim();
-  return finalText || 'Done.';
+  return finalText;
 }
 
 export async function runOwnerAutopilotWorkflow(params: {
@@ -202,30 +202,42 @@ Return strict JSON with:
         ? 'No action required.'
         : `Request ${status}.`;
 
-  const prBlock = prUrl ? `\n${prUrl}` : '';
-  const text = `${statusIntro ? `${statusIntro} ` : ''}${summary}${prBlock}`.trim();
+  const shouldSuppressMetaReply =
+    !prUrl &&
+    (!summary ||
+      /\b(posted|replied|verified|confirmed)\b[^.\n]*(slack|thread|channel|timestamp)/i.test(summaryRaw) ||
+      /\bactions?:/i.test(summaryRaw));
 
-  await slack.chat.postMessage({
-    channel: task.event.channelId,
-    thread_ts: task.event.threadTs,
-    text,
-  });
+  if (!shouldSuppressMetaReply) {
+    const prBlock = prUrl ? `\n${prUrl}` : '';
+    const text = `${statusIntro ? `${statusIntro} ` : ''}${summary}${prBlock}`.trim();
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+  }
 
   logStep?.({
-    stage: 'owner_autopilot.slack.success_posted',
-    message: 'Posted owner-autopilot completion message in Slack thread.',
+    stage: shouldSuppressMetaReply
+      ? 'owner_autopilot.slack.success_suppressed'
+      : 'owner_autopilot.slack.success_posted',
+    message: shouldSuppressMetaReply
+      ? 'Suppressed owner-autopilot meta completion message.'
+      : 'Posted owner-autopilot completion message in Slack thread.',
     data: {
       status,
       hasPrUrl: Boolean(prUrl),
+      suppressed: shouldSuppressMetaReply,
     },
   });
 
   return {
     workflow: 'OWNER_AUTOPILOT',
     status: status === 'failed' ? 'FAILED' : 'SUCCESS',
-    message: summary,
+    message: summary || 'Owner request completed.',
     notifyDesktop: false,
-    slackPosted: true,
+    slackPosted: !shouldSuppressMetaReply,
     result: result.parsedJson,
   };
 }
