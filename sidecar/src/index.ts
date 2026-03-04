@@ -23,6 +23,7 @@ const store = new JobStore(dbPath);
 
 const queue: Array<{ event: SlackEventEnvelope; client: WebClient }> = [];
 let running = 0;
+const OPS_FEED_INTERVAL_MS = 30 * 60 * 1000;
 
 const nonActionableSubtypes = new Set(['message_changed', 'message_deleted', 'bot_message']);
 
@@ -139,6 +140,72 @@ async function processReactionFeedback(event: SlackReactionEvent): Promise<void>
     },
     'reaction feedback ingested'
   );
+}
+
+function buildOpsFeedAlert(): string | undefined {
+  const snapshot = store.getDevStatusSnapshot();
+  const failures = store.listDevRuns(5, 'FAILED');
+  const recentRuns = store.listDevRuns(50);
+  const staleReviews = recentRuns.filter(run => run.workflow === 'PR_REVIEW' && run.status === 'PAUSED').length;
+
+  const alerts: string[] = [];
+  if (snapshot.failures24h >= 3) {
+    alerts.push(`repeat failures detected (${snapshot.failures24h} failed runs in 24h)`);
+  }
+  if (snapshot.successRate24h < 85) {
+    alerts.push(`risky deploy window: success rate is ${snapshot.successRate24h}%`);
+  }
+  if (staleReviews >= 2) {
+    alerts.push(`stale review backlog detected (${staleReviews} paused PR review jobs)`);
+  }
+
+  if (alerts.length === 0) {
+    return undefined;
+  }
+
+  const topFailure = failures[0];
+  const topFailureLine = topFailure
+    ? `Latest failure: ${topFailure.workflow} (${topFailure.errorMessage ?? 'no error text'})`
+    : undefined;
+
+  return [
+    'Proactive Ops Feed:',
+    ...alerts.map(item => `- ${item}`),
+    topFailureLine ? `- ${topFailureLine}` : '',
+    '- Use `wt failures 10` and `wt diagnose <jobId>` for quick triage.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function startProactiveOpsFeed(client: WebClient): void {
+  const tick = async (): Promise<void> => {
+    try {
+      const channels = store.listOpsFeedChannels();
+      if (channels.length === 0) {
+        return;
+      }
+
+      const alertText = buildOpsFeedAlert();
+      if (!alertText) {
+        return;
+      }
+
+      for (const channelId of channels) {
+        await client.chat.postMessage({
+          channel: channelId,
+          text: alertText,
+        });
+      }
+    } catch (error) {
+      logger.warn({ error: String(error) }, 'proactive ops feed tick failed');
+    }
+  };
+
+  void tick();
+  setInterval(() => {
+    void tick();
+  }, OPS_FEED_INTERVAL_MS);
 }
 
 async function enqueueSlackEvent(event: SlackEventEnvelope, client: WebClient, source: 'socket' | 'catchup'): Promise<void> {
@@ -584,6 +651,8 @@ async function main(): Promise<void> {
   });
 
   await client.start();
+
+  startProactiveOpsFeed(client.webClient as WebClient);
 
   startMentionCatchup({
     webClient: client.webClient,

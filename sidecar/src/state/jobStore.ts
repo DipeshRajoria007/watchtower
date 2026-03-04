@@ -176,6 +176,13 @@ export class JobStore {
         active_skill TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS ops_feed_subscriptions (
+        channel_id TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL,
+        updated_by TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -927,6 +934,53 @@ export class JobStore {
       )
       .get(channelId) as { active_skill?: string } | undefined;
     return row?.active_skill;
+  }
+
+  setOpsFeedSubscription(input: {
+    channelId: string;
+    enabled: boolean;
+    updatedBy: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO ops_feed_subscriptions(channel_id, enabled, updated_by, updated_at)
+         VALUES(?, ?, ?, ?)
+         ON CONFLICT(channel_id) DO UPDATE SET
+           enabled = excluded.enabled,
+           updated_by = excluded.updated_by,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        input.channelId,
+        input.enabled ? 1 : 0,
+        input.updatedBy,
+        new Date().toISOString()
+      );
+  }
+
+  isOpsFeedEnabled(channelId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT enabled
+         FROM ops_feed_subscriptions
+         WHERE channel_id = ?
+         LIMIT 1`
+      )
+      .get(channelId) as { enabled?: number } | undefined;
+    return Boolean(row?.enabled);
+  }
+
+  listOpsFeedChannels(): string[] {
+    const rows = (
+      this.db.prepare(
+        `SELECT channel_id
+         FROM ops_feed_subscriptions
+         WHERE enabled = 1`
+      ) as unknown as {
+        all: () => Array<{ channel_id: string }>;
+      }
+    ).all();
+    return rows.map(row => row.channel_id);
   }
 
   recordLearningSignal(input: {

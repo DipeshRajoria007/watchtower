@@ -208,6 +208,14 @@ describe('jobStore', () => {
     });
     expect(store.getChannelSkill('C1')).toBe('frontend-pr-review');
 
+    store.setOpsFeedSubscription({
+      channelId: 'C1',
+      enabled: true,
+      updatedBy: 'U1',
+    });
+    expect(store.isOpsFeedEnabled('C1')).toBe(true);
+    expect(store.listOpsFeedChannels()).toContain('C1');
+
     store.close();
   });
 });

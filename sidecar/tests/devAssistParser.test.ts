@@ -131,6 +131,17 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses wt feed commands', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt feed on')).toEqual({
+      type: 'FEED_SET',
+      enabled: true,
+    });
+    expect(parseDevAssistCommand('<@UBOT1> wt feed off')).toEqual({
+      type: 'FEED_SET',
+      enabled: false,
+    });
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('<@UBOT1> please review this PR')).toBe(false);

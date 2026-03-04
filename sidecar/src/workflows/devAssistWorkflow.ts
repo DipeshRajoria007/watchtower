@@ -26,6 +26,7 @@ const HELP_TEXT = [
   '- `wt fork <jobId>` -> queue forked rerun from a previous job',
   '- `wt skill install <name>` -> register local skill metadata',
   '- `wt skill use <name>` -> set active skill for this channel',
+  '- `wt feed on|off` -> enable/disable proactive ops feed in this channel',
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
@@ -798,6 +799,34 @@ export async function runDevAssistWorkflow(params: {
       result: {
         command: 'SKILL_USE',
         name: command.name,
+      },
+    };
+  }
+
+  if (command.type === 'FEED_SET') {
+    store.setOpsFeedSubscription({
+      channelId: task.event.channelId,
+      enabled: command.enabled,
+      updatedBy: task.event.userId,
+    });
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: command.enabled
+        ? 'Proactive ops feed is now ON for this channel.'
+        : 'Proactive ops feed is now OFF for this channel.',
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Ops feed subscription updated.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'FEED_SET',
+        enabled: command.enabled,
       },
     };
   }
