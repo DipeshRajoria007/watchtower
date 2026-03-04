@@ -13,7 +13,7 @@ import { startMentionCatchup } from './slack/mentionCatchup.js';
 import { SocketSlackClient } from './slack/socketClient.js';
 import { fetchThreadContext } from './slack/threadContext.js';
 import { JobStore } from './state/jobStore.js';
-import type { SlackEventEnvelope, WorkflowStepLog } from './types/contracts.js';
+import type { SlackEventEnvelope, SlackReactionEvent, WorkflowStepLog } from './types/contracts.js';
 
 assertMacOS();
 
@@ -74,6 +74,71 @@ async function postFailureDoctorHint(params: {
       },
     });
   }
+}
+
+function reactionToSentiment(reaction: string): -1 | 0 | 1 {
+  const value = reaction.toLowerCase();
+  if (value === 'thumbsup' || value === '+1') {
+    return 1;
+  }
+  if (value === 'thumbsdown' || value === '-1') {
+    return -1;
+  }
+  if (value === 'brain') {
+    return 1;
+  }
+  return 0;
+}
+
+async function processReactionFeedback(event: SlackReactionEvent): Promise<void> {
+  if (!event.channelId || !event.threadTs || !event.userId) {
+    return;
+  }
+  if (store.hasEvent(event.eventId)) {
+    return;
+  }
+
+  const sentiment = reactionToSentiment(event.reaction);
+  store.recordEvent(event.eventId, event.channelId, event.threadTs);
+  store.recordReactionFeedback({
+    eventId: event.eventId,
+    channelId: event.channelId,
+    threadTs: event.threadTs,
+    userId: event.userId,
+    reaction: event.reaction,
+    sentiment,
+  });
+
+  // Reactions on bot outputs become lightweight preference signals.
+  if (event.itemUserId === config.botUserId) {
+    if (sentiment < 0) {
+      store.setPersonalityProfile({
+        scope: 'channel',
+        scopeId: event.channelId,
+        mode: 'professional',
+        source: `reaction:${event.reaction}`,
+      });
+    } else if (event.reaction.toLowerCase() === 'thumbsup' || event.reaction.toLowerCase() === '+1') {
+      store.setPersonalityProfile({
+        scope: 'channel',
+        scopeId: event.channelId,
+        mode: 'friendly',
+        source: `reaction:${event.reaction}`,
+      });
+    }
+  }
+
+  logger.info(
+    {
+      eventId: event.eventId,
+      channelId: event.channelId,
+      threadTs: event.threadTs,
+      reaction: event.reaction,
+      sentiment,
+      itemUserId: event.itemUserId ?? null,
+    },
+    'reaction feedback ingested'
+  );
 }
 
 async function enqueueSlackEvent(event: SlackEventEnvelope, client: WebClient, source: 'socket' | 'catchup'): Promise<void> {
@@ -496,9 +561,15 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
 async function main(): Promise<void> {
   logger.info({ dbPath, maxConcurrentJobs: config.maxConcurrentJobs }, 'watchtower sidecar starting');
 
-  const client = new SocketSlackClient(config, async (event, webClient) => {
-    await enqueueSlackEvent(event, webClient as WebClient, 'socket');
-  });
+  const client = new SocketSlackClient(
+    config,
+    async (event, webClient) => {
+      await enqueueSlackEvent(event, webClient as WebClient, 'socket');
+    },
+    async event => {
+      await processReactionFeedback(event);
+    }
+  );
 
   process.on('SIGINT', () => {
     logger.info('received SIGINT');

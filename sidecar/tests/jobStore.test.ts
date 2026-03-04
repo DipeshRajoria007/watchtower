@@ -174,6 +174,26 @@ describe('jobStore', () => {
     expect(replay.status).toBe('QUEUED');
     expect(replay.requestId.startsWith('replay:')).toBe(true);
 
+    store.recordReactionFeedback({
+      eventId: 'reaction-1',
+      channelId: 'C1',
+      threadTs: '123',
+      userId: 'U2',
+      reaction: 'thumbsup',
+      sentiment: 1,
+    });
+    store.recordReactionFeedback({
+      eventId: 'reaction-2',
+      channelId: 'C1',
+      threadTs: '123',
+      userId: 'U3',
+      reaction: 'thumbsdown',
+      sentiment: -1,
+    });
+    const feedback = store.getReactionFeedbackSnapshot('C1');
+    expect(feedback.positive).toBeGreaterThanOrEqual(1);
+    expect(feedback.negative).toBeGreaterThanOrEqual(1);
+
     store.close();
   });
 });

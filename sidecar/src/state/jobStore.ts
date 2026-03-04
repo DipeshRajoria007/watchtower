@@ -150,6 +150,18 @@ export class JobStore {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_replay_requests_source ON replay_requests(source_job_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS reaction_feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        thread_ts TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        reaction TEXT NOT NULL,
+        sentiment INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_reaction_feedback_channel ON reaction_feedback(channel_id, created_at);
     `);
   }
 
@@ -774,6 +786,63 @@ export class JobStore {
       requestId,
       status: 'QUEUED',
     };
+  }
+
+  recordReactionFeedback(input: {
+    eventId: string;
+    channelId: string;
+    threadTs: string;
+    userId: string;
+    reaction: string;
+    sentiment: -1 | 0 | 1;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO reaction_feedback(
+           event_id, channel_id, thread_ts, user_id, reaction, sentiment, created_at
+         ) VALUES(?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        input.eventId,
+        input.channelId,
+        input.threadTs,
+        input.userId,
+        input.reaction,
+        input.sentiment,
+        new Date().toISOString()
+      );
+  }
+
+  getReactionFeedbackSnapshot(channelId: string): {
+    positive: number;
+    negative: number;
+    neutral: number;
+  } {
+    const rows = (
+      this.db.prepare(
+        `SELECT sentiment, COUNT(*) as count
+         FROM reaction_feedback
+         WHERE channel_id = ?
+         GROUP BY sentiment`
+      ) as unknown as {
+        all: (channelIdArg: string) => Array<{ sentiment: number; count: number }>;
+      }
+    ).all(channelId);
+
+    let positive = 0;
+    let negative = 0;
+    let neutral = 0;
+    for (const row of rows) {
+      if (row.sentiment > 0) {
+        positive = Number(row.count);
+      } else if (row.sentiment < 0) {
+        negative = Number(row.count);
+      } else {
+        neutral = Number(row.count);
+      }
+    }
+
+    return { positive, negative, neutral };
   }
 
   recordLearningSignal(input: {

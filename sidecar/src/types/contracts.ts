@@ -39,6 +39,17 @@ export interface SlackEventEnvelope {
   rawEvent: Record<string, unknown>;
 }
 
+export interface SlackReactionEvent {
+  eventId: string;
+  channelId: string;
+  threadTs: string;
+  eventTs: string;
+  userId: string;
+  reaction: string;
+  itemUserId?: string;
+  rawEvent: Record<string, unknown>;
+}
+
 export interface PrContext {
   url: string;
   owner: string;

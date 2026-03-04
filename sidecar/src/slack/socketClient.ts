@@ -1,18 +1,21 @@
 import { App, LogLevel } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
-import type { AppConfig, SlackEventEnvelope } from '../types/contracts.js';
+import type { AppConfig, SlackEventEnvelope, SlackReactionEvent } from '../types/contracts.js';
 import { logger } from '../logging/logger.js';
 
 type SlackEventHandler = (event: SlackEventEnvelope, client: WebClient) => Promise<void>;
+type SlackReactionHandler = (event: SlackReactionEvent, client: WebClient) => Promise<void>;
 
 export class SocketSlackClient {
   private app: App;
   private readonly config: AppConfig;
   private readonly onEvent: SlackEventHandler;
+  private readonly onReaction?: SlackReactionHandler;
 
-  constructor(config: AppConfig, onEvent: SlackEventHandler) {
+  constructor(config: AppConfig, onEvent: SlackEventHandler, onReaction?: SlackReactionHandler) {
     this.config = config;
     this.onEvent = onEvent;
+    this.onReaction = onReaction;
     this.app = new App({
       token: config.slackBotToken,
       appToken: config.slackAppToken,
@@ -60,6 +63,30 @@ export class SocketSlackClient {
       );
       await this.onEvent(normalized, client);
     });
+
+    this.app.event('reaction_added', async ({ event, body, client }) => {
+      if (!this.onReaction) {
+        return;
+      }
+
+      const normalized = this.normalizeReactionEnvelope(
+        event as unknown as Record<string, unknown>,
+        body as unknown as Record<string, unknown>
+      );
+
+      logger.info(
+        {
+          component: 'slack',
+          eventType: 'reaction_added',
+          eventId: normalized.eventId,
+          channelId: normalized.channelId,
+          threadTs: normalized.threadTs,
+          reaction: normalized.reaction,
+        },
+        'received reaction_added event'
+      );
+      await this.onReaction(normalized, client);
+    });
   }
 
   private normalizeEnvelope(event: Record<string, unknown>, body: Record<string, unknown>): SlackEventEnvelope {
@@ -79,6 +106,28 @@ export class SocketSlackClient {
       userId,
       text,
       messageSubtype,
+      rawEvent: event,
+    };
+  }
+
+  private normalizeReactionEnvelope(event: Record<string, unknown>, body: Record<string, unknown>): SlackReactionEvent {
+    const item = (event.item as Record<string, unknown> | undefined) ?? {};
+    const channelId = String(item.channel ?? '');
+    const threadTs = String(item.ts ?? '');
+    const eventTs = String(event.event_ts ?? body.event_ts ?? '');
+    const eventId = String(body.event_id ?? `${channelId}:${eventTs}:reaction`);
+    const reaction = String(event.reaction ?? '');
+    const userId = String(event.user ?? '');
+    const itemUserId = event.item_user ? String(event.item_user) : undefined;
+
+    return {
+      eventId,
+      channelId,
+      threadTs,
+      eventTs,
+      userId,
+      reaction,
+      itemUserId,
       rawEvent: event,
     };
   }
