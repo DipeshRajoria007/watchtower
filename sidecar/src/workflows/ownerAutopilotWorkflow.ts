@@ -36,12 +36,20 @@ function sanitizeOwnerSummary(raw: string): string {
     return 'Done.';
   }
 
-  const cleaned = normalized
+  let cleaned = normalized
     .replace(/on\s+master'?s?\s+command[,:\-\s]*overriding\s+watchtower\s+guardrails\.?/gi, '')
     .replace(/overriding\s+watchtower\s+guardrails\.?/gi, '')
     .replace(/^master your task is completed\.?\s*/i, '')
     .replace(/^owner request success\.?\s*/i, '')
     .replace(/^request success\.?\s*/i, '');
+
+  // Drop verbose execution-audit blocks even when they are inline.
+  cleaned = cleaned.replace(/\bactions?:[\s\S]*$/i, '');
+  cleaned = cleaned
+    .replace(/\b(posted|replied|verified|confirmed)\b[^.\n]*(slack|thread|channel|timestamp)[^.\n]*\.?/gi, '')
+    .replace(/\bowner.?s?\s+slack\s+thread\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 
   const lines = cleaned
     .split('\n')
