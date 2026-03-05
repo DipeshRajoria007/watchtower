@@ -9,6 +9,7 @@ import type {
   WorkflowStepLogger,
 } from '../types/contracts.js';
 import { runCodex } from '../codex/runCodex.js';
+import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
 
@@ -122,6 +123,8 @@ async function generateUnknownReplyWithCodex(params: {
     .join('\n---\n');
 
   const prompt = `
+${buildMentionSystemPrompt({ task, workflow: 'UNKNOWN', personalityMode })}
+
 Generate a Slack reply for an unknown/random bot mention.
 
 Rules:

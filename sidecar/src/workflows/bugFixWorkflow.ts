@@ -4,6 +4,7 @@ import type { AppConfig, CodexRunRequest, NormalizedTask, WorkflowResult, Workfl
 import { fetchThreadContext } from '../slack/threadContext.js';
 import { classifyRepo } from '../router/repoClassifier.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
+import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { runCodex } from '../codex/runCodex.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import type { JobStore } from '../state/jobStore.js';
@@ -127,6 +128,8 @@ export async function runBugFixWorkflow(params: {
     : 'No explicit policy pack assigned for this channel.';
 
   const prompt = `
+${buildMentionSystemPrompt({ task, workflow: 'BUG_FIX' })}
+
 You are running Watchtower bug-fix automation.
 
 Thread summary:

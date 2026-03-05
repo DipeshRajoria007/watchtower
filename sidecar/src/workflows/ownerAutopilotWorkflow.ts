@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { WebClient } from '@slack/web-api';
 import type { AppConfig, CodexRunRequest, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
 import { runCodex } from '../codex/runCodex.js';
+import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
@@ -108,6 +109,8 @@ export async function runOwnerAutopilotWorkflow(params: {
   });
 
   const prompt = `
+${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT' })}
+
 You are running Watchtower owner-autopilot mode.
 
 The request below was sent by a configured owner Slack user. Watchtower owner override is active, so workflow guardrails are intentionally bypassed.

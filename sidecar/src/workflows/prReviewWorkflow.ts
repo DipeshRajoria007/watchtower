@@ -12,6 +12,7 @@ import type { JobStore } from '../state/jobStore.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
 import { extractPrContext } from '../router/intentParser.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
+import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { runCodex } from '../codex/runCodex.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 
@@ -261,6 +262,8 @@ export async function runPrReviewWorkflow(params: {
     : 'No explicit policy pack assigned for this channel.';
 
   const prompt = `
+${buildMentionSystemPrompt({ task, workflow: 'PR_REVIEW' })}
+
 You are executing Watchtower PR review automation.
 
 Context:
