@@ -34,25 +34,6 @@ function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function isVagueOwnerRequest(text: string): boolean {
-  const cleaned = stripMentions(text).toLowerCase();
-  if (!cleaned) {
-    return true;
-  }
-
-  // Explicit actionable signals that should not be treated as vague.
-  if (
-    /(https?:\/\/|github\.com\/|pull\/\d+|#\d+|wt\s+|watchtower\s+|translate\s+|review\s+|merge\s+|fix\s+|debug\s+)/i.test(
-      cleaned
-    )
-  ) {
-    return false;
-  }
-
-  // Common low-context prompts that need clarification before execution.
-  return /\b(do something|do anything|whatever|something cursed|cursed|surprise me|you decide)\b/i.test(cleaned);
-}
-
 function sanitizeOwnerSummary(raw: string): string {
   const normalized = raw.replace(/\r\n/g, '\n').trim();
   if (!normalized) {
@@ -113,37 +94,6 @@ export async function runOwnerAutopilotWorkflow(params: {
     },
   });
 
-  if (isVagueOwnerRequest(task.event.text)) {
-    const clarification =
-      'Tell me one concrete task with target. Example: "review PR <url>", "merge PR #123 in newton-web", or "translate <text> to Hindi".';
-
-    await slack.chat.postMessage({
-      channel: task.event.channelId,
-      thread_ts: task.event.threadTs,
-      text: clarification,
-    });
-
-    logStep?.({
-      stage: 'owner_autopilot.clarification.required',
-      message: 'Owner request is vague; asked for concrete task and paused.',
-      level: 'WARN',
-      data: {
-        text: stripMentions(task.event.text).slice(0, 200),
-      },
-    });
-
-    return {
-      workflow: 'OWNER_AUTOPILOT',
-      status: 'PAUSED',
-      message: clarification,
-      notifyDesktop: false,
-      slackPosted: true,
-      result: {
-        status: 'needs_clarification',
-      },
-    };
-  }
-
   logStep?.({
     stage: 'owner_autopilot.slack.ack_skipped',
     message: 'Skipped owner-autopilot acknowledgement message by configuration.',
@@ -169,17 +119,16 @@ Environment:
 
 Task:
 Execute the owner's request end-to-end. You may choose whichever local repos/files/commands are needed.
-If the request is ambiguous or missing key details, do not guess dangerously: ask one concise clarifying question instead.
+Infer intent from thread context and execute directly. Do not ask clarifying questions.
 
 Slack thread context:
 ${threadContext}
 
 Output rules:
 Return strict JSON with:
-- status: "success" | "failed" | "no_action" | "needs_clarification"
+- status: "success" | "failed" | "no_action"
 - summary: short human-facing outcome message for Slack. Do NOT include operational telemetry like channel IDs, thread IDs, timestamps, or "Actions performed" style audit logs.
 - summary must NOT include these phrases: "On Master's command", "Overriding Watchtower guardrails", "Owner override active", or any ceremonial/prefix wording.
-- for status="needs_clarification", summary must be one direct question asking only the minimum missing info.
 - actions: array of concrete actions performed
 - prUrl: PR URL if one was created, else empty string
 - confidence: number between 0 and 1
@@ -252,7 +201,11 @@ Return strict JSON with:
     };
   }
 
-  const status = String(result.parsedJson.status ?? 'success');
+  const rawStatus = String(result.parsedJson.status ?? 'success');
+  const normalizedStatus = rawStatus === 'needs_clarification' ? 'no_action' : rawStatus;
+  const status = normalizedStatus === 'success' || normalizedStatus === 'failed' || normalizedStatus === 'no_action'
+    ? normalizedStatus
+    : 'failed';
   const confidence = Number(result.parsedJson.confidence ?? Number.NaN);
   const summaryRaw = String(result.parsedJson.summary ?? 'Owner request completed.');
   const summary = sanitizeOwnerSummary(summaryRaw);
@@ -263,36 +216,6 @@ Return strict JSON with:
       : status === 'no_action'
         ? 'No action required.'
         : `Request ${status}.`;
-
-  if (status === 'needs_clarification') {
-    const clarifyingQuestion =
-      summary ||
-      'Could you clarify the exact task and expected output so I can execute it correctly?';
-
-    await slack.chat.postMessage({
-      channel: task.event.channelId,
-      thread_ts: task.event.threadTs,
-      text: clarifyingQuestion,
-    });
-
-    logStep?.({
-      stage: 'owner_autopilot.clarification.posted',
-      message: 'Posted clarifying question and paused owner-autopilot execution.',
-      level: 'WARN',
-      data: {
-        confidence: Number.isFinite(confidence) ? confidence : null,
-      },
-    });
-
-    return {
-      workflow: 'OWNER_AUTOPILOT',
-      status: 'PAUSED',
-      message: clarifyingQuestion,
-      notifyDesktop: false,
-      slackPosted: true,
-      result: result.parsedJson,
-    };
-  }
 
   const shouldSuppressMetaReply =
     !prUrl &&

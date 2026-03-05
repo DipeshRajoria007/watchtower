@@ -6,7 +6,7 @@
   "properties": {
     "status": {
       "type": "string",
-      "enum": ["success", "failed", "no_action", "needs_clarification"]
+      "enum": ["success", "failed", "no_action"]
     },
     "summary": {
       "type": "string",

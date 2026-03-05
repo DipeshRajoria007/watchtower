@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runOwnerAutopilotWorkflow } from '../src/workflows/ownerAutopilotWorkflow.js';
 import { runCodex } from '../src/codex/runCodex.js';
 
@@ -45,7 +45,26 @@ const config = {
 };
 
 describe('ownerAutopilotWorkflow', () => {
-  it('asks for clarification and skips codex for vague owner prompts', async () => {
+  beforeEach(() => {
+    vi.mocked(runCodex).mockReset();
+  });
+
+  it('runs codex for broad owner prompts instead of pausing for clarification', async () => {
+    vi.mocked(runCodex).mockResolvedValue({
+      ok: true,
+      exitCode: 0,
+      timedOut: false,
+      stdout: '',
+      stderr: '',
+      lastMessage: '',
+      parsedJson: {
+        status: 'success',
+        summary: 'Done. Applied a chaotic but safe tweak as requested.',
+        actions: ['Applied tweak'],
+        prUrl: '',
+      },
+    });
+
     const slack = {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
@@ -72,17 +91,17 @@ describe('ownerAutopilotWorkflow', () => {
       slack: slack as any,
     });
 
-    expect(result.status).toBe('PAUSED');
-    expect(result.message).toContain('Tell me one concrete task');
+    expect(result.status).toBe('SUCCESS');
+    expect(result.message).toContain('Applied a chaotic but safe tweak');
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining('Tell me one concrete task'),
+        text: expect.stringContaining('Applied a chaotic but safe tweak'),
       })
     );
-    expect(runCodex).not.toHaveBeenCalled();
+    expect(runCodex).toHaveBeenCalledTimes(1);
   });
 
-  it('pauses and asks one clarifying question when codex returns needs_clarification', async () => {
+  it('normalizes legacy needs_clarification output to no_action without pausing', async () => {
     vi.mocked(runCodex).mockResolvedValue({
       ok: true,
       exitCode: 0,
@@ -125,11 +144,11 @@ describe('ownerAutopilotWorkflow', () => {
       slack: slack as any,
     });
 
-    expect(result.status).toBe('PAUSED');
+    expect(result.status).toBe('SUCCESS');
     expect(result.message).toContain('Which repository should I use');
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining('Which repository should I use'),
+        text: expect.stringContaining('No action required.'),
       })
     );
   });
