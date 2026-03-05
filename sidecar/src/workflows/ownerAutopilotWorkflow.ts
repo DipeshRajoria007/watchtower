@@ -218,31 +218,35 @@ Return strict JSON with:
   });
 
   if (!result.ok || !result.parsedJson) {
-    const errorText = result.timedOut
+    const technicalError = result.timedOut
       ? 'Owner-autopilot workflow timed out.'
       : `Owner-autopilot workflow failed (exit=${result.exitCode ?? 'unknown'}).`;
+    const userFacingMessage =
+      'I could not execute that right now. Share the exact target (repo/PR/link) and expected action, and I will retry.';
 
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
-      text: `${errorText} Check execution trace for details.`,
+      text: userFacingMessage,
     });
 
     logStep?.({
-      stage: 'owner_autopilot.slack.failure_posted',
-      message: 'Posted owner-autopilot failure message in Slack thread.',
-      level: 'ERROR',
+      stage: 'owner_autopilot.slack.recoverable_posted',
+      message: 'Posted recoverable owner-autopilot retry prompt in Slack thread.',
+      level: 'WARN',
       data: {
-        errorText,
+        technicalError,
+        timedOut: result.timedOut,
+        exitCode: result.exitCode,
       },
     });
 
-    notifyDesktop('Watchtower owner-autopilot failed', `${errorText} thread=${task.event.threadTs}`);
+    notifyDesktop('Watchtower owner-autopilot failed', `${technicalError} thread=${task.event.threadTs}`);
 
     return {
       workflow: 'OWNER_AUTOPILOT',
-      status: 'FAILED',
-      message: errorText,
+      status: 'PAUSED',
+      message: userFacingMessage,
       notifyDesktop: true,
       slackPosted: true,
     };

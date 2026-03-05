@@ -188,4 +188,50 @@ describe('ownerAutopilotWorkflow', () => {
       })
     );
   });
+
+  it('returns paused with human retry prompt when codex fails', async () => {
+    vi.mocked(runCodex).mockResolvedValue({
+      ok: false,
+      exitCode: 1,
+      timedOut: false,
+      stdout: '',
+      stderr: 'fatal',
+      lastMessage: '',
+      parsedJson: undefined,
+    });
+
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+
+    const result = await runOwnerAutopilotWorkflow({
+      task: {
+        event: {
+          eventId: 'EvOwner3',
+          channelId: 'C1',
+          threadTs: '111.22',
+          eventTs: '111.22',
+          userId: 'UOWNER1',
+          text: '<@UBOT1> merge PR #123 in newton-web',
+          rawEvent: {},
+        },
+        mentionDetected: true,
+        mentionType: 'bot',
+        isOwnerAuthor: true,
+        intent: 'OWNER_AUTOPILOT',
+      },
+      config,
+      slack: slack as any,
+    });
+
+    expect(result.status).toBe('PAUSED');
+    expect(result.message).toContain('I could not execute that right now');
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.not.stringContaining('exit='),
+      })
+    );
+  });
 });
