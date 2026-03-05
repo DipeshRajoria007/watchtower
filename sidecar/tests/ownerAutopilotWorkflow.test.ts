@@ -49,6 +49,39 @@ describe('ownerAutopilotWorkflow', () => {
     vi.mocked(runCodex).mockReset();
   });
 
+  it('replies directly to lightweight owner presence ping without running codex', async () => {
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+
+    const result = await runOwnerAutopilotWorkflow({
+      task: {
+        event: {
+          eventId: 'EvOwnerPing',
+          channelId: 'C1',
+          threadTs: '111.22',
+          eventTs: '111.22',
+          userId: 'UOWNER1',
+          text: '<@UBOT1> you there?',
+          rawEvent: {},
+        },
+        mentionDetected: true,
+        mentionType: 'bot',
+        isOwnerAuthor: true,
+        intent: 'OWNER_AUTOPILOT',
+      },
+      config,
+      slack: slack as any,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.message.toLowerCase()).toMatch(/(here|online|present)/);
+    expect(slack.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(runCodex).not.toHaveBeenCalled();
+  });
+
   it('runs codex for broad owner prompts instead of pausing for clarification', async () => {
     vi.mocked(runCodex).mockResolvedValue({
       ok: true,
@@ -246,7 +279,7 @@ describe('ownerAutopilotWorkflow', () => {
     });
 
     expect(result.status).toBe('PAUSED');
-    expect(result.message).toContain('I could not execute that right now');
+    expect(result.message).toContain('I hit an execution issue right now');
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.not.stringContaining('exit='),

@@ -35,6 +35,46 @@ function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function isPresencePing(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[!?.,]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) {
+    return true;
+  }
+
+  return [
+    /^you there$/,
+    /^are you there$/,
+    /^can you hear me$/,
+    /^ping$/,
+    /^hi$/,
+    /^hello$/,
+    /^hey$/,
+    /^yo$/,
+    /^online$/,
+    /^awake$/,
+    /^alive$/,
+  ].some(pattern => pattern.test(normalized));
+}
+
+function buildPresenceReply(eventTs: string): string {
+  const variants = [
+    "Yeah, I'm here. What do you need?",
+    'Online and listening. Tell me what you want done.',
+    'Present. Drop the task and I will handle it.',
+  ];
+
+  let hash = 0;
+  for (let i = 0; i < eventTs.length; i += 1) {
+    hash = (hash * 31 + eventTs.charCodeAt(i)) >>> 0;
+  }
+  return variants[hash % variants.length];
+}
+
 function sanitizeOwnerSummary(raw: string): string {
   const normalized = raw.replace(/\r\n/g, '\n').trim();
   if (!normalized) {
@@ -99,6 +139,32 @@ export async function runOwnerAutopilotWorkflow(params: {
     stage: 'owner_autopilot.slack.ack_skipped',
     message: 'Skipped owner-autopilot acknowledgement message by configuration.',
   });
+
+  const ownerInput = stripMentions(task.event.text);
+  if (isPresencePing(ownerInput)) {
+    const presenceReply = buildPresenceReply(task.event.eventTs);
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: presenceReply,
+    });
+
+    logStep?.({
+      stage: 'owner_autopilot.presence.reply_posted',
+      message: 'Posted direct presence acknowledgement for lightweight owner ping.',
+      data: {
+        ownerInput,
+      },
+    });
+
+    return {
+      workflow: 'OWNER_AUTOPILOT',
+      status: 'SUCCESS',
+      message: presenceReply,
+      notifyDesktop: false,
+      slackPosted: true,
+    };
+  }
 
   const githubToken = await resolveGithubTokenForCodex();
 
@@ -174,7 +240,7 @@ Return strict JSON with:
       ? 'Owner-autopilot workflow timed out.'
       : `Owner-autopilot workflow failed (exit=${result.exitCode ?? 'unknown'}).`;
     const userFacingMessage =
-      'I could not execute that right now. Share the exact target (repo/PR/link) and expected action, and I will retry.';
+      'I hit an execution issue right now. Ask me again in a moment, or share the task in one line and I will retry.';
 
     await slack.chat.postMessage({
       channel: task.event.channelId,
