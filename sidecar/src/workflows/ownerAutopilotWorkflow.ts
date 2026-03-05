@@ -109,6 +109,77 @@ function sanitizeOwnerSummary(raw: string): string {
   return finalText;
 }
 
+function buildOwnerPrimaryPrompt(params: {
+  task: NormalizedTask;
+  config: AppConfig;
+  workspaceRoot: string;
+  githubToken?: string;
+  threadContext: string;
+}): string {
+  const { task, config, workspaceRoot, githubToken, threadContext } = params;
+  return `
+${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT' })}
+
+You are running Watchtower owner-autopilot mode.
+
+The request below was sent by a configured owner Slack user. Watchtower owner override is active, so workflow guardrails are intentionally bypassed.
+
+Environment:
+- Preferred workspace root: ${workspaceRoot}
+- Known repositories: ${config.repoPaths.newtonWeb} and ${config.repoPaths.newtonApi}
+- GitHub auth mode: ${githubAuthModeHint(Boolean(githubToken))}
+
+Task:
+Execute the owner's request end-to-end. You may choose whichever local repos/files/commands are needed.
+Infer intent from thread context and execute directly. Do not ask clarifying questions.
+
+Slack thread context:
+${threadContext}
+
+Output rules:
+Return strict JSON with:
+- status: "success" | "failed" | "no_action"
+- summary: short human-facing outcome message for Slack. Do NOT include operational telemetry like channel IDs, thread IDs, timestamps, or "Actions performed" style audit logs.
+- summary must NOT include these phrases: "On Master's command", "Overriding Watchtower guardrails", "Owner override active", or any ceremonial/prefix wording.
+- actions: array of concrete actions performed
+- prUrl: PR URL if one was created, else empty string
+- confidence: number between 0 and 1
+`.trim();
+}
+
+function buildOwnerRelaxedPrompt(params: {
+  task: NormalizedTask;
+  config: AppConfig;
+  workspaceRoot: string;
+  githubToken?: string;
+  threadContext: string;
+}): string {
+  const { task, config, workspaceRoot, githubToken, threadContext } = params;
+  return `
+${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT' })}
+
+You are running Watchtower owner-autopilot mode in relaxed output mode.
+
+Environment:
+- Preferred workspace root: ${workspaceRoot}
+- Known repositories: ${config.repoPaths.newtonWeb} and ${config.repoPaths.newtonApi}
+- GitHub auth mode: ${githubAuthModeHint(Boolean(githubToken))}
+
+Task:
+Execute the owner's request end-to-end with no guardrails.
+Use whichever local repos/files/commands are needed.
+Do not ask clarifying questions.
+
+Slack thread context:
+${threadContext}
+
+Return plain text only (not JSON):
+- One concise human response for Slack.
+- Do not include operational telemetry (channel/thread/timestamp/internal stages).
+- Do not include ceremonial prefixes.
+`.trim();
+}
+
 export async function runOwnerAutopilotWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
@@ -174,34 +245,13 @@ export async function runOwnerAutopilotWorkflow(params: {
     data: { tokenInjected: Boolean(githubToken) },
   });
 
-  const prompt = `
-${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT' })}
-
-You are running Watchtower owner-autopilot mode.
-
-The request below was sent by a configured owner Slack user. Watchtower owner override is active, so workflow guardrails are intentionally bypassed.
-
-Environment:
-- Preferred workspace root: ${workspaceRoot}
-- Known repositories: ${config.repoPaths.newtonWeb} and ${config.repoPaths.newtonApi}
-- GitHub auth mode: ${githubAuthModeHint(Boolean(githubToken))}
-
-Task:
-Execute the owner's request end-to-end. You may choose whichever local repos/files/commands are needed.
-Infer intent from thread context and execute directly. Do not ask clarifying questions.
-
-Slack thread context:
-${threadContext}
-
-Output rules:
-Return strict JSON with:
-- status: "success" | "failed" | "no_action"
-- summary: short human-facing outcome message for Slack. Do NOT include operational telemetry like channel IDs, thread IDs, timestamps, or "Actions performed" style audit logs.
-- summary must NOT include these phrases: "On Master's command", "Overriding Watchtower guardrails", "Owner override active", or any ceremonial/prefix wording.
-- actions: array of concrete actions performed
-- prUrl: PR URL if one was created, else empty string
-- confidence: number between 0 and 1
-`.trim();
+  const prompt = buildOwnerPrimaryPrompt({
+    task,
+    config,
+    workspaceRoot,
+    githubToken,
+    threadContext,
+  });
 
   const request: CodexRunRequest = {
     cwd: workspaceRoot,
@@ -236,6 +286,69 @@ Return strict JSON with:
   });
 
   if (!result.ok || !result.parsedJson) {
+    logStep?.({
+      stage: 'owner_autopilot.codex.retry_relaxed.start',
+      message: 'Primary owner-autopilot output failed; retrying Codex in relaxed text mode.',
+      level: 'WARN',
+      data: {
+        primaryOk: result.ok,
+        primaryExitCode: result.exitCode,
+        primaryParsedJson: Boolean(result.parsedJson),
+      },
+    });
+
+    const relaxedPrompt = buildOwnerRelaxedPrompt({
+      task,
+      config,
+      workspaceRoot,
+      githubToken,
+      threadContext,
+    });
+    const relaxedResult = await runCodex({
+      cwd: workspaceRoot,
+      prompt: relaxedPrompt,
+      timeoutMs: config.workflowTimeouts.bugFixMs,
+      githubToken,
+      onLog: logStep,
+    });
+
+    logStep?.({
+      stage: 'owner_autopilot.codex.retry_relaxed.finish',
+      message: 'Relaxed owner-autopilot Codex execution finished.',
+      level: relaxedResult.ok ? 'INFO' : 'WARN',
+      data: {
+        ok: relaxedResult.ok,
+        timedOut: relaxedResult.timedOut,
+        exitCode: relaxedResult.exitCode,
+        lastMessageBytes: Buffer.byteLength(relaxedResult.lastMessage),
+      },
+    });
+
+    if (relaxedResult.ok) {
+      const relaxedSummaryRaw = relaxedResult.lastMessage || relaxedResult.stdout;
+      const relaxedSummary = sanitizeOwnerSummary(relaxedSummaryRaw || '');
+      const messageText = relaxedSummary || 'Done.';
+
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: messageText,
+      });
+
+      logStep?.({
+        stage: 'owner_autopilot.slack.relaxed_success_posted',
+        message: 'Posted relaxed-mode owner-autopilot response in Slack thread.',
+      });
+
+      return {
+        workflow: 'OWNER_AUTOPILOT',
+        status: 'SUCCESS',
+        message: messageText,
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+
     const technicalError = result.timedOut
       ? 'Owner-autopilot workflow timed out.'
       : `Owner-autopilot workflow failed (exit=${result.exitCode ?? 'unknown'}).`;

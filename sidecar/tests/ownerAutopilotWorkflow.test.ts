@@ -285,5 +285,63 @@ describe('ownerAutopilotWorkflow', () => {
         text: expect.not.stringContaining('exit='),
       })
     );
+    expect(runCodex).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to relaxed plain-text mode when strict JSON output fails', async () => {
+    vi.mocked(runCodex)
+      .mockResolvedValueOnce({
+        ok: false,
+        exitCode: 1,
+        timedOut: false,
+        stdout: '',
+        stderr: 'schema mismatch',
+        lastMessage: '',
+        parsedJson: undefined,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: 'Created local repository `testing-mini-og` in /Users/dipesh/code.',
+        parsedJson: undefined,
+      });
+
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+
+    const result = await runOwnerAutopilotWorkflow({
+      task: {
+        event: {
+          eventId: 'EvOwner4',
+          channelId: 'C1',
+          threadTs: '111.22',
+          eventTs: '111.22',
+          userId: 'UOWNER1',
+          text: '<@UBOT1> create a testing-mini-og repo inside code folder on my machine',
+          rawEvent: {},
+        },
+        mentionDetected: true,
+        mentionType: 'bot',
+        isOwnerAuthor: true,
+        intent: 'OWNER_AUTOPILOT',
+      },
+      config,
+      slack: slack as any,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.message).toContain('Created local repository');
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Created local repository'),
+      })
+    );
+    expect(runCodex).toHaveBeenCalledTimes(2);
   });
 });
