@@ -3,7 +3,10 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 
@@ -39,10 +42,73 @@ impl SupervisorStatus {
     }
 }
 
+#[derive(Clone, Default)]
+struct SupervisorControl {
+    shutdown_requested: Arc<AtomicBool>,
+    sidecar_pid: Arc<Mutex<Option<u32>>>,
+}
+
+impl SupervisorControl {
+    fn request_shutdown(&self) {
+        self.shutdown_requested.store(true, Ordering::SeqCst);
+    }
+
+    fn is_shutdown_requested(&self) -> bool {
+        self.shutdown_requested.load(Ordering::SeqCst)
+    }
+
+    fn set_sidecar_pid(&self, pid: Option<u32>) {
+        if let Ok(mut guard) = self.sidecar_pid.lock() {
+            *guard = pid;
+        }
+    }
+
+    fn clear_sidecar_pid(&self) {
+        if let Ok(mut guard) = self.sidecar_pid.lock() {
+            let _ = guard.take();
+        }
+    }
+
+    fn terminate_sidecar(&self) -> Result<bool, String> {
+        let pid = self
+            .sidecar_pid
+            .lock()
+            .map_err(|_| "failed to lock sidecar pid state".to_string())?
+            .take();
+        let Some(pid) = pid else {
+            return Ok(false);
+        };
+
+        let pid_string = pid.to_string();
+        let term_status = std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(&pid_string)
+            .status()
+            .map_err(|err| format!("failed to send SIGTERM to sidecar pid {pid}: {err}"))?;
+        if term_status.success() {
+            return Ok(true);
+        }
+
+        let kill_status = std::process::Command::new("kill")
+            .arg("-KILL")
+            .arg(&pid_string)
+            .status()
+            .map_err(|err| format!("failed to send SIGKILL to sidecar pid {pid}: {err}"))?;
+        if kill_status.success() {
+            return Ok(true);
+        }
+
+        Err(format!(
+            "unable to terminate sidecar pid {pid} (SIGTERM status={term_status}, SIGKILL status={kill_status})"
+        ))
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     db_path: Arc<PathBuf>,
     supervisor: SupervisorStatus,
+    supervisor_control: SupervisorControl,
 }
 
 #[derive(Serialize)]
@@ -184,10 +250,13 @@ pub fn run() {
 #[cfg(target_os = "macos")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![])))
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
         .setup(|app| {
             let app_handle = app.handle().clone();
             let app_data_dir = app_handle
@@ -201,9 +270,11 @@ pub fn run() {
             initialize_db(&db_path).map_err(|err| format!("db init failed: {err}"))?;
 
             let supervisor = SupervisorStatus::default();
+            let supervisor_control = SupervisorControl::default();
             let state = AppState {
                 db_path: Arc::new(db_path.clone()),
                 supervisor: supervisor.clone(),
+                supervisor_control: supervisor_control.clone(),
             };
             app.manage(state.clone());
 
@@ -216,7 +287,12 @@ pub fn run() {
                 }
             });
 
-            spawn(start_sidecar_supervisor(app_handle, db_path, supervisor));
+            spawn(start_sidecar_supervisor(
+                app_handle,
+                db_path,
+                supervisor,
+                supervisor_control,
+            ));
 
             Ok(())
         })
@@ -226,13 +302,21 @@ pub fn run() {
             get_app_settings,
             save_app_settings
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+            shutdown_sidecar_for_exit(app_handle);
+        }
+        _ => {}
+    });
 }
 
 #[tauri::command]
 async fn get_dashboard_data(state: State<'_, AppState>) -> Result<DashboardData, String> {
-    let connection = Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
 
     let active_jobs = query_runs(
         &connection,
@@ -268,7 +352,8 @@ async fn get_dashboard_data(state: State<'_, AppState>) -> Result<DashboardData,
 
 #[tauri::command]
 async fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
-    let connection = Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
     read_app_settings(&connection)
 }
 
@@ -279,7 +364,8 @@ async fn get_job_logs(
     state: State<'_, AppState>,
 ) -> Result<Vec<JobLogEntry>, String> {
     let max_limit = i64::from(limit.unwrap_or(500)).clamp(1, 1000);
-    let connection = Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
 
     let mut stmt = connection
         .prepare(
@@ -319,7 +405,8 @@ async fn save_app_settings(
 ) -> Result<SaveSettingsResponse, String> {
     validate_settings_for_save(&settings)?;
 
-    let connection = Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
     persist_app_settings(&connection, &settings)?;
 
     Ok(SaveSettingsResponse {
@@ -492,7 +579,9 @@ fn query_learning_insights(connection: &Connection) -> Result<LearningInsights, 
         .map_err(|err| format!("db query learning_signals 24h failed: {err}"))?;
 
     let corrections_learned: i64 = connection
-        .query_row("SELECT COUNT(*) FROM intent_corrections", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM intent_corrections", [], |row| {
+            row.get(0)
+        })
         .map_err(|err| format!("db query intent corrections failed: {err}"))?;
 
     let corrections_applied_24h: i64 = connection
@@ -504,7 +593,9 @@ fn query_learning_insights(connection: &Connection) -> Result<LearningInsights, 
         .map_err(|err| format!("db query correction-applied 24h failed: {err}"))?;
 
     let personality_profiles: i64 = connection
-        .query_row("SELECT COUNT(*) FROM personality_profiles", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM personality_profiles", [], |row| {
+            row.get(0)
+        })
         .map_err(|err| format!("db query personality profile count failed: {err}"))?;
 
     let mut mode_stmt = connection
@@ -938,6 +1029,7 @@ fn setup_tray(app_handle: AppHandle) -> Result<(), String> {
                 }
             }
             "quit" => {
+                shutdown_sidecar_for_exit(app);
                 app.exit(0);
             }
             _ => {}
@@ -975,28 +1067,48 @@ async fn set_autostart_enabled(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-async fn start_sidecar_supervisor(app: AppHandle, db_path: PathBuf, status: SupervisorStatus) {
+async fn start_sidecar_supervisor(
+    app: AppHandle,
+    db_path: PathBuf,
+    status: SupervisorStatus,
+    control: SupervisorControl,
+) {
     let mut crash_window: VecDeque<Instant> = VecDeque::new();
     let mut restart_attempt = 0usize;
 
     loop {
+        if control.is_shutdown_requested() {
+            status.set("stopped (app shutdown)").await;
+            break;
+        }
+
         match settings_ready(&db_path) {
             Ok(true) => {}
             Ok(false) => {
                 status
                     .set("waiting for settings (configure Watchtower > Settings)")
                     .await;
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                if sleep_with_shutdown_check(&control, Duration::from_secs(5)).await {
+                    status.set("stopped (app shutdown)").await;
+                    break;
+                }
                 continue;
             }
             Err(err) => {
                 status.set(format!("settings error ({err})")).await;
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                if sleep_with_shutdown_check(&control, Duration::from_secs(5)).await {
+                    status.set("stopped (app shutdown)").await;
+                    break;
+                }
                 continue;
             }
         }
 
-        let spawn_result = spawn_sidecar_once(&app, &db_path, &status).await;
+        let spawn_result = spawn_sidecar_once(&app, &db_path, &status, &control).await;
+        if control.is_shutdown_requested() {
+            status.set("stopped (app shutdown)").await;
+            break;
+        }
         match spawn_result {
             Ok(exit_code) => {
                 status
@@ -1030,7 +1142,10 @@ async fn start_sidecar_supervisor(app: AppHandle, db_path: PathBuf, status: Supe
                 "Watchtower crash loop",
                 "Sidecar exited repeatedly (5+ crashes in 5 minutes).",
             );
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            if sleep_with_shutdown_check(&control, Duration::from_secs(60)).await {
+                status.set("stopped (app shutdown)").await;
+                break;
+            }
         }
 
         restart_attempt += 1;
@@ -1040,10 +1155,11 @@ async fn start_sidecar_supervisor(app: AppHandle, db_path: PathBuf, status: Supe
             3 => 15,
             _ => 30,
         };
-        status
-            .set(format!("restarting in {}s", backoff_secs))
-            .await;
-        tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+        status.set(format!("restarting in {}s", backoff_secs)).await;
+        if sleep_with_shutdown_check(&control, Duration::from_secs(backoff_secs)).await {
+            status.set("stopped (app shutdown)").await;
+            break;
+        }
     }
 }
 
@@ -1051,6 +1167,7 @@ async fn spawn_sidecar_once(
     app: &AppHandle,
     db_path: &PathBuf,
     status: &SupervisorStatus,
+    control: &SupervisorControl,
 ) -> Result<Option<i32>, String> {
     let sidecar_root = resolve_sidecar_root(app)?;
     let dist_entry = sidecar_root.join("dist/index.js");
@@ -1077,6 +1194,7 @@ async fn spawn_sidecar_once(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| format!("failed to spawn sidecar: {err}"))?;
+    control.set_sidecar_pid(child.id());
 
     status.set("running").await;
 
@@ -1102,12 +1220,38 @@ async fn spawn_sidecar_once(
         });
     }
 
-    let status_result = child
-        .wait()
-        .await
-        .map_err(|err| format!("failed waiting sidecar: {err}"))?;
+    let status_result = child.wait().await;
+    control.clear_sidecar_pid();
+    let status_result = status_result.map_err(|err| format!("failed waiting sidecar: {err}"))?;
 
     Ok(status_result.code())
+}
+
+fn shutdown_sidecar_for_exit(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        state.supervisor_control.request_shutdown();
+        if let Err(err) = state.supervisor_control.terminate_sidecar() {
+            eprintln!("failed to terminate sidecar during app exit: {err}");
+        }
+    }
+}
+
+async fn sleep_with_shutdown_check(control: &SupervisorControl, duration: Duration) -> bool {
+    if duration.is_zero() {
+        return control.is_shutdown_requested();
+    }
+
+    let mut remaining = duration;
+    while remaining > Duration::from_secs(0) {
+        if control.is_shutdown_requested() {
+            return true;
+        }
+
+        let step = remaining.min(Duration::from_secs(1));
+        tokio::time::sleep(step).await;
+        remaining = remaining.saturating_sub(step);
+    }
+    control.is_shutdown_requested()
 }
 
 fn resolve_sidecar_root(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1205,7 +1349,10 @@ fn resolve_node_binary(sidecar_root: &Path) -> Result<PathBuf, String> {
         return Ok(fallback);
     }
 
-    Err("node runtime not found; install node or set NODE_BIN to an absolute node binary path".to_string())
+    Err(
+        "node runtime not found; install node or set NODE_BIN to an absolute node binary path"
+            .to_string(),
+    )
 }
 
 fn find_in_path(executable: &str) -> Option<PathBuf> {
@@ -1273,10 +1420,5 @@ fn handle_sidecar_line(app: &AppHandle, line: &str) {
 
 fn emit_notification(app: &AppHandle, title: &str, body: &str) {
     use tauri_plugin_notification::NotificationExt;
-    let _ = app
-        .notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .show();
+    let _ = app.notification().builder().title(title).body(body).show();
 }
