@@ -416,6 +416,19 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
     return;
   }
 
+  if (event.channelId !== config.bugsAndUpdatesChannelId) {
+    store.recordEvent(event.eventId, event.channelId, event.threadTs);
+    logger.info(
+      {
+        eventId: event.eventId,
+        channelId: event.channelId,
+        allowedChannelId: config.bugsAndUpdatesChannelId,
+      },
+      'skip mention outside bugs-and-updates channel'
+    );
+    return;
+  }
+
   const learning = applyLearning({ task, config, store });
   const routedTask = learning.intent === task.intent ? task : { ...task, intent: learning.intent };
 
