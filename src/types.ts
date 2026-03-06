@@ -1,4 +1,4 @@
-export type AppView = 'overview' | 'runs' | 'intelligence' | 'settings';
+export type AppView = 'overview' | 'launchpad' | 'runs' | 'intelligence' | 'settings';
 
 export type RunsSubView = 'active' | 'failures' | 'recent' | 'diagnostics';
 

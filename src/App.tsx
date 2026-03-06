@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { AppShell } from './components/AppShell';
 import { formatSidecarLine } from './lib/formatters';
 import { IntelligencePage } from './pages/IntelligencePage';
+import { LaunchpadPage } from './pages/LaunchpadPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { RunsPage } from './pages/RunsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -121,7 +122,7 @@ function App() {
       if (event.metaKey && event.key.toLowerCase() === 'm') {
         event.preventDefault();
         setSlackCommandTarget('miniog');
-        setView('overview');
+        setView('launchpad');
         setNavDrawerOpen(false);
         setSlackComposerFocusToken(previous => previous + 1);
         return;
@@ -301,15 +302,20 @@ function App() {
       {view === 'overview' ? (
         <OverviewPage
           data={data}
-          composerDraft={slackComposerDraft}
-          composerFocusToken={slackComposerFocusToken}
           onOpenIntelligence={() => navigateToView('intelligence')}
           onOpenRuns={openRunsWorkspace}
           onOpenSettings={() => navigateToView('settings')}
           onSelectRun={setSelectedRunId}
-          onComposerDraftChange={setSlackComposerDraft}
-          onSlackCommandTargetChange={setSlackCommandTarget}
-          slackCommandTarget={slackCommandTarget}
+        />
+      ) : null}
+
+      {view === 'launchpad' ? (
+        <LaunchpadPage
+          draft={slackComposerDraft}
+          focusToken={slackComposerFocusToken}
+          onDraftChange={setSlackComposerDraft}
+          onTargetChange={setSlackCommandTarget}
+          target={slackCommandTarget}
         />
       ) : null}
 

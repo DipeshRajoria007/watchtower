@@ -4,6 +4,7 @@ import type { AppView } from '../types';
 import {
   CloseIcon,
   IntelligenceIcon,
+  LaunchpadIcon,
   MenuIcon,
   OverviewIcon,
   RunsIcon,
@@ -47,6 +48,12 @@ export function AppShell({
       label: 'Overview',
       helper: 'Condensed operating snapshot',
       icon: <OverviewIcon />,
+    },
+    {
+      view: 'launchpad',
+      label: 'Launchpad',
+      helper: 'Minimal Slack task composer',
+      icon: <LaunchpadIcon />,
     },
     {
       view: 'runs',

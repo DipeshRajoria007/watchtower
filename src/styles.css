@@ -420,6 +420,42 @@ button {
   align-items: start;
 }
 
+.launchpad-page {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+  padding-top: 8px;
+}
+
+.launchpad-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.launchpad-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.launchpad-copy {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.55;
+  max-width: 640px;
+}
+
+.launchpad-shell {
+  padding: 22px;
+  box-shadow: none;
+  border-color: rgba(118, 145, 168, 0.16);
+  background: rgba(13, 19, 25, 0.76);
+}
+
 .page-intro {
   display: flex;
   justify-content: space-between;
@@ -1017,6 +1053,10 @@ h2 {
   gap: 14px;
 }
 
+.slack-launchpad.minimal {
+  gap: 12px;
+}
+
 .slack-launchpad-top,
 .slack-launchpad-bottom,
 .slack-launchpad-footer {
@@ -1056,6 +1096,15 @@ h2 {
   background: linear-gradient(160deg, rgba(83, 210, 255, 0.12), rgba(83, 210, 255, 0.03));
 }
 
+.slack-launchpad.minimal .slack-target {
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.slack-launchpad.minimal .slack-target.active {
+  background: rgba(83, 210, 255, 0.08);
+}
+
 .slack-target-label {
   font-size: 1rem;
   font-weight: 600;
@@ -1083,6 +1132,12 @@ h2 {
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.05);
   background: rgba(255, 255, 255, 0.02);
+}
+
+.slack-launchpad.minimal .slack-shortcut-note,
+.slack-launchpad.minimal .slack-preview {
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.015);
 }
 
 .slack-presets {
@@ -1386,6 +1441,7 @@ h2 {
 
 @media (max-width: 980px) {
   .page-intro,
+  .launchpad-header,
   .global-banner,
   .settings-sticky-bar,
   .slack-launchpad-top,

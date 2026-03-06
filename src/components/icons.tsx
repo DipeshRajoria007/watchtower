@@ -41,6 +41,17 @@ export function RunsIcon(props: IconProps) {
   );
 }
 
+export function LaunchpadIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M5 19h14" />
+      <path d="M7 15V8.5A2.5 2.5 0 0 1 9.5 6h5A2.5 2.5 0 0 1 17 8.5V15" />
+      <path d="m10 12 2-2 2 2" />
+      <path d="M12 10v6" />
+    </BaseIcon>
+  );
+}
+
 export function IntelligenceIcon(props: IconProps) {
   return (
     <BaseIcon {...props}>

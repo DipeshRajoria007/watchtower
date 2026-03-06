@@ -30,6 +30,7 @@ type SlackLaunchpadProps = {
   onDraftChange: (value: string) => void;
   onTargetChange: (value: SlackCommandTarget) => void;
   target: SlackCommandTarget;
+  variant?: 'default' | 'minimal';
 };
 
 export function SlackLaunchpad({
@@ -38,6 +39,7 @@ export function SlackLaunchpad({
   onDraftChange,
   onTargetChange,
   target,
+  variant = 'default',
 }: SlackLaunchpadProps) {
   const [feedback, setFeedback] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -92,7 +94,7 @@ export function SlackLaunchpad({
   };
 
   return (
-    <div className="slack-launchpad">
+    <div className={variant === 'minimal' ? 'slack-launchpad minimal' : 'slack-launchpad'}>
       <div className="slack-launchpad-top">
         <div className="slack-targets" role="tablist" aria-label="Slack command target">
           {SLACK_TARGETS.map(item => (
