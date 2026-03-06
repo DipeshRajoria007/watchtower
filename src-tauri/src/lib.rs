@@ -15,7 +15,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::{
     async_runtime::spawn,
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, State,
 };
@@ -25,6 +25,9 @@ use tokio::{
     process::Command,
     sync::RwLock,
 };
+
+const TRAY_ID: &str = "watchtower-tray";
+const TRAY_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Default)]
 struct SupervisorStatus {
@@ -109,6 +112,18 @@ struct AppState {
     db_path: Arc<PathBuf>,
     supervisor: SupervisorStatus,
     supervisor_control: SupervisorControl,
+}
+
+#[derive(Clone)]
+struct TrayStatsSnapshot {
+    active_jobs: i64,
+    max_concurrent_jobs: i64,
+    runs_24h: i64,
+    failed_runs_24h: i64,
+    success_rate_24h: f64,
+    success_streak: i64,
+    sidecar_status: String,
+    settings_configured: bool,
 }
 
 #[derive(Serialize)]
@@ -280,6 +295,12 @@ pub fn run() {
             app.manage(state.clone());
 
             setup_tray(app_handle.clone())?;
+
+            let app_handle_for_tray = app_handle.clone();
+            let tray_state = state.clone();
+            spawn(async move {
+                start_tray_refresh_loop(app_handle_for_tray, tray_state).await;
+            });
 
             let app_handle_for_autostart = app_handle.clone();
             spawn(async move {
@@ -769,6 +790,199 @@ fn query_dashboard_metrics(connection: &Connection) -> Result<DashboardMetrics, 
         success_streak,
         chaos_index,
     })
+}
+
+fn query_active_job_count(connection: &Connection) -> Result<i64, String> {
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM jobs WHERE status = 'RUNNING'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("db query active_jobs failed: {err}"))
+}
+
+async fn query_tray_stats_snapshot(state: &AppState) -> Result<TrayStatsSnapshot, String> {
+    let sidecar_status = state.supervisor.get().await;
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    let metrics = query_dashboard_metrics(&connection)?;
+    let settings = read_app_settings(&connection)?;
+
+    Ok(TrayStatsSnapshot {
+        active_jobs: query_active_job_count(&connection)?,
+        max_concurrent_jobs: settings.max_concurrent_jobs.max(1),
+        runs_24h: metrics.runs_24h,
+        failed_runs_24h: metrics.failed_runs_24h,
+        success_rate_24h: metrics.success_rate_24h,
+        success_streak: metrics.success_streak,
+        sidecar_status,
+        settings_configured: is_settings_complete(&settings),
+    })
+}
+
+fn compact_sidecar_status_label(status: &str, settings_configured: bool) -> &'static str {
+    if !settings_configured || status.starts_with("waiting for settings") {
+        "setup"
+    } else if status.starts_with("running") {
+        "running"
+    } else if status.starts_with("starting") {
+        "starting"
+    } else if status.starts_with("restarting") {
+        "retrying"
+    } else if status.starts_with("failed") || status.starts_with("error") {
+        "issue"
+    } else if status.starts_with("stopped") {
+        "stopped"
+    } else {
+        "status"
+    }
+}
+
+fn format_percent(value: f64) -> String {
+    let rounded = (value * 10.0).round() / 10.0;
+    if (rounded - rounded.round()).abs() < f64::EPSILON {
+        format!("{}%", rounded.round() as i64)
+    } else {
+        format!("{rounded:.1}%")
+    }
+}
+
+fn format_tray_title(snapshot: &TrayStatsSnapshot) -> String {
+    let queue = format!("{}/{}", snapshot.active_jobs, snapshot.max_concurrent_jobs);
+    let sidecar_label =
+        compact_sidecar_status_label(&snapshot.sidecar_status, snapshot.settings_configured);
+
+    if sidecar_label == "running" {
+        format!(
+            "WT {queue} active | {}",
+            format_percent(snapshot.success_rate_24h)
+        )
+    } else {
+        format!("WT {queue} active | {sidecar_label}")
+    }
+}
+
+fn format_tray_tooltip(snapshot: &TrayStatsSnapshot) -> String {
+    format!(
+        "Watchtower | Active jobs: {} / {} | Runs (24h): {} | Failures (24h): {} | Success (24h): {} | Sidecar: {}",
+        snapshot.active_jobs,
+        snapshot.max_concurrent_jobs,
+        snapshot.runs_24h,
+        snapshot.failed_runs_24h,
+        format_percent(snapshot.success_rate_24h),
+        sentence_case(&snapshot.sidecar_status)
+    )
+}
+
+fn build_tray_menu(
+    app_handle: &AppHandle,
+    snapshot: &TrayStatsSnapshot,
+) -> Result<Menu<tauri::Wry>, String> {
+    let queue_text = if snapshot.settings_configured {
+        format!(
+            "Active jobs: {} / {}",
+            snapshot.active_jobs, snapshot.max_concurrent_jobs
+        )
+    } else {
+        format!(
+            "Active jobs: {} / {} (setup incomplete)",
+            snapshot.active_jobs, snapshot.max_concurrent_jobs
+        )
+    };
+
+    let active = MenuItem::with_id(app_handle, "stats_active", queue_text, false, None::<&str>)
+        .map_err(|err| format!("tray menu active jobs failed: {err}"))?;
+    let runs = MenuItem::with_id(
+        app_handle,
+        "stats_runs_24h",
+        format!("Runs last 24h: {}", snapshot.runs_24h),
+        false,
+        None::<&str>,
+    )
+    .map_err(|err| format!("tray menu runs failed: {err}"))?;
+    let failures = MenuItem::with_id(
+        app_handle,
+        "stats_failures_24h",
+        format!("Failures last 24h: {}", snapshot.failed_runs_24h),
+        false,
+        None::<&str>,
+    )
+    .map_err(|err| format!("tray menu failures failed: {err}"))?;
+    let success = MenuItem::with_id(
+        app_handle,
+        "stats_success_24h",
+        format!(
+            "Success rate last 24h: {}",
+            format_percent(snapshot.success_rate_24h)
+        ),
+        false,
+        None::<&str>,
+    )
+    .map_err(|err| format!("tray menu success failed: {err}"))?;
+    let streak = MenuItem::with_id(
+        app_handle,
+        "stats_success_streak",
+        format!("Success streak: {}", snapshot.success_streak),
+        false,
+        None::<&str>,
+    )
+    .map_err(|err| format!("tray menu streak failed: {err}"))?;
+    let sidecar = MenuItem::with_id(
+        app_handle,
+        "stats_sidecar_status",
+        format!("Sidecar: {}", sentence_case(&snapshot.sidecar_status)),
+        false,
+        None::<&str>,
+    )
+    .map_err(|err| format!("tray menu sidecar failed: {err}"))?;
+    let separator = PredefinedMenuItem::separator(app_handle)
+        .map_err(|err| format!("tray menu separator failed: {err}"))?;
+    let open = MenuItem::with_id(app_handle, "open", "Open Watchtower", true, None::<&str>)
+        .map_err(|err| format!("tray menu open failed: {err}"))?;
+    let quit = MenuItem::with_id(app_handle, "quit", "Quit", true, None::<&str>)
+        .map_err(|err| format!("tray menu quit failed: {err}"))?;
+
+    Menu::with_items(
+        app_handle,
+        &[
+            &active, &runs, &failures, &success, &streak, &sidecar, &separator, &open, &quit,
+        ],
+    )
+    .map_err(|err| format!("tray menu build failed: {err}"))
+}
+
+async fn refresh_tray_widget(app_handle: &AppHandle, state: &AppState) -> Result<(), String> {
+    let snapshot = query_tray_stats_snapshot(state).await?;
+    let menu = build_tray_menu(app_handle, &snapshot)?;
+    let tray = app_handle
+        .tray_by_id(TRAY_ID)
+        .ok_or_else(|| "tray icon not found".to_string())?;
+
+    tray.set_title(Some(format_tray_title(&snapshot)))
+        .map_err(|err| format!("tray title update failed: {err}"))?;
+    tray.set_tooltip(Some(format_tray_tooltip(&snapshot)))
+        .map_err(|err| format!("tray tooltip update failed: {err}"))?;
+    tray.set_menu(Some(menu))
+        .map_err(|err| format!("tray menu update failed: {err}"))?;
+
+    Ok(())
+}
+
+async fn start_tray_refresh_loop(app_handle: AppHandle, state: AppState) {
+    let mut interval = tokio::time::interval(TRAY_REFRESH_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        interval.tick().await;
+        if state.supervisor_control.is_shutdown_requested() {
+            break;
+        }
+
+        if let Err(err) = refresh_tray_widget(&app_handle, &state).await {
+            eprintln!("failed to refresh tray widget: {err}");
+        }
+    }
 }
 
 fn query_success_streak(connection: &Connection) -> Result<i64, String> {
@@ -1266,15 +1480,28 @@ fn settings_ready(db_path: &PathBuf) -> Result<bool, String> {
 }
 
 fn setup_tray(app_handle: AppHandle) -> Result<(), String> {
+    let loading = MenuItem::with_id(
+        &app_handle,
+        "stats_loading",
+        "Loading Watchtower status...",
+        false,
+        None::<&str>,
+    )
+    .map_err(|err| format!("tray menu loading failed: {err}"))?;
+    let separator = PredefinedMenuItem::separator(&app_handle)
+        .map_err(|err| format!("tray menu separator failed: {err}"))?;
     let open = MenuItem::with_id(&app_handle, "open", "Open Watchtower", true, None::<&str>)
         .map_err(|err| format!("tray menu open failed: {err}"))?;
     let quit = MenuItem::with_id(&app_handle, "quit", "Quit", true, None::<&str>)
         .map_err(|err| format!("tray menu quit failed: {err}"))?;
-    let menu = Menu::with_items(&app_handle, &[&open, &quit])
+    let menu = Menu::with_items(&app_handle, &[&loading, &separator, &open, &quit])
         .map_err(|err| format!("tray menu build failed: {err}"))?;
 
-    TrayIconBuilder::new()
+    TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
+        .title("WT starting")
+        .tooltip("Watchtower is starting")
+        .icon_as_template(true)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => {
