@@ -16,6 +16,7 @@ import type {
   RunSummary,
   RunsSubView,
   SaveSettingsResponse,
+  SlackCommandTarget,
 } from './types';
 
 const POLL_MS = 5000;
@@ -32,6 +33,9 @@ function App() {
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
+  const [slackComposerDraft, setSlackComposerDraft] = useState('');
+  const [slackCommandTarget, setSlackCommandTarget] = useState<SlackCommandTarget>('miniog');
+  const [slackComposerFocusToken, setSlackComposerFocusToken] = useState(0);
 
   const settingsIncomplete = useMemo(() => {
     return data ? !data.settingsConfigured : false;
@@ -114,6 +118,15 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey && event.key.toLowerCase() === 'm') {
+        event.preventDefault();
+        setSlackCommandTarget('miniog');
+        setView('overview');
+        setNavDrawerOpen(false);
+        setSlackComposerFocusToken(previous => previous + 1);
+        return;
+      }
+
       if (event.key === 'Escape') {
         setNavDrawerOpen(false);
       }
@@ -288,10 +301,15 @@ function App() {
       {view === 'overview' ? (
         <OverviewPage
           data={data}
+          composerDraft={slackComposerDraft}
+          composerFocusToken={slackComposerFocusToken}
           onOpenIntelligence={() => navigateToView('intelligence')}
           onOpenRuns={openRunsWorkspace}
           onOpenSettings={() => navigateToView('settings')}
           onSelectRun={setSelectedRunId}
+          onComposerDraftChange={setSlackComposerDraft}
+          onSlackCommandTargetChange={setSlackCommandTarget}
+          slackCommandTarget={slackCommandTarget}
         />
       ) : null}
 

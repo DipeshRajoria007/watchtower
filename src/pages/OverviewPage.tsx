@@ -1,5 +1,6 @@
+import { SlackLaunchpad } from '../components/SlackLaunchpad';
 import { getSidecarTone, humanizeMode, humanizeToken } from '../lib/formatters';
-import type { DashboardData, RunsSubView } from '../types';
+import type { DashboardData, RunsSubView, SlackCommandTarget } from '../types';
 import {
   ChannelHeatList,
   MetricCard,
@@ -11,19 +12,29 @@ import {
 } from '../components/primitives';
 
 type OverviewPageProps = {
+  composerDraft: string;
+  composerFocusToken: number;
   data: DashboardData | null;
+  onComposerDraftChange: (value: string) => void;
   onOpenIntelligence: () => void;
   onOpenRuns: (subView: RunsSubView) => void;
   onOpenSettings: () => void;
   onSelectRun: (runId: string) => void;
+  onSlackCommandTargetChange: (value: SlackCommandTarget) => void;
+  slackCommandTarget: SlackCommandTarget;
 };
 
 export function OverviewPage({
+  composerDraft,
+  composerFocusToken,
   data,
+  onComposerDraftChange,
   onOpenIntelligence,
   onOpenRuns,
   onOpenSettings,
   onSelectRun,
+  onSlackCommandTargetChange,
+  slackCommandTarget,
 }: OverviewPageProps) {
   const sidecarStatus = data?.sidecarStatus ?? 'starting';
   const sidecarTone = getSidecarTone(sidecarStatus);
@@ -53,6 +64,20 @@ export function OverviewPage({
         <MetricCard label="24h Success" value={`${data?.metrics.successRate24h ?? 0}%`} tone="success" />
         <MetricCard label="Success Streak" value={data?.metrics.successStreak ?? 0} tone="accent" />
       </section>
+
+      <SectionCard
+        title="Slack Launchpad"
+        subtitle="Draft a task in the desktop app, target miniOG or Watchtower, and copy a Slack-ready command. Cmd+M selects miniOG."
+        actions={<StatusBadge label={slackCommandTarget === 'miniog' ? 'miniOG Ready' : 'Watchtower Ready'} tone="info" />}
+      >
+        <SlackLaunchpad
+          draft={composerDraft}
+          focusToken={composerFocusToken}
+          onDraftChange={onComposerDraftChange}
+          onTargetChange={onSlackCommandTargetChange}
+          target={slackCommandTarget}
+        />
+      </SectionCard>
 
       <section className="panel-grid overview-grid">
         <SectionCard
