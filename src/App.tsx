@@ -21,6 +21,26 @@ import type {
 } from './types';
 
 const POLL_MS = 5000;
+const PENDING_SHORTCUT_VIEW_KEY = 'watchtower:pending-shortcut-view';
+const PENDING_SHORTCUT_TARGET_KEY = 'watchtower:pending-shortcut-target';
+
+function readPendingShortcutView(): AppView | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const value = window.localStorage.getItem(PENDING_SHORTCUT_VIEW_KEY);
+  return value === 'launchpad' ? 'launchpad' : null;
+}
+
+function readPendingShortcutTarget(): SlackCommandTarget | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const value = window.localStorage.getItem(PENDING_SHORTCUT_TARGET_KEY);
+  return value === 'miniog' || value === 'watchtower' ? value : null;
+}
 
 function App() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -118,13 +138,38 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const pendingView = readPendingShortcutView();
+    const pendingTarget = readPendingShortcutTarget();
+    if (pendingView !== 'launchpad') {
+      return;
+    }
+
+    setView('launchpad');
+    if (pendingTarget) {
+      setSlackCommandTarget(pendingTarget);
+    }
+    window.localStorage.removeItem(PENDING_SHORTCUT_VIEW_KEY);
+    window.localStorage.removeItem(PENDING_SHORTCUT_TARGET_KEY);
+  }, []);
+
+  const openLaunchpad = (target: SlackCommandTarget = 'miniog') => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(PENDING_SHORTCUT_VIEW_KEY, 'launchpad');
+      window.localStorage.setItem(PENDING_SHORTCUT_TARGET_KEY, target);
+    }
+
+    setSlackCommandTarget(target);
+    setView('launchpad');
+    setNavDrawerOpen(false);
+    setSlackComposerFocusToken(previous => previous + 1);
+  };
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.metaKey && event.key.toLowerCase() === 'm') {
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.code === 'KeyM') {
         event.preventDefault();
-        setSlackCommandTarget('miniog');
-        setView('launchpad');
-        setNavDrawerOpen(false);
-        setSlackComposerFocusToken(previous => previous + 1);
+        event.stopPropagation();
+        openLaunchpad('miniog');
         return;
       }
 
@@ -133,9 +178,9 @@ function App() {
       }
     };
 
-    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, { capture: true });
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keydown', onKeyDown, { capture: true });
     };
   }, []);
 
