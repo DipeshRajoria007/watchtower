@@ -51,8 +51,8 @@ export function AppShell({
     },
     {
       view: 'launchpad',
-      label: 'Launchpad',
-      helper: 'Minimal Slack task composer',
+      label: 'Composer',
+      helper: 'Draft a Slack task, choose the handler to execute it.',
       icon: <LaunchpadIcon />,
     },
     {
