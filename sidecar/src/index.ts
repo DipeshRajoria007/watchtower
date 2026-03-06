@@ -38,6 +38,88 @@ function isTransientError(message: string): boolean {
   return /ETIMEDOUT|ECONNRESET|429|SlackApiError|timeout/i.test(message);
 }
 
+function extractSlackErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') {
+    return undefined;
+  }
+  const maybeData = (error as { data?: { error?: unknown } }).data;
+  if (maybeData && typeof maybeData.error === 'string') {
+    return maybeData.error;
+  }
+  return undefined;
+}
+
+async function postViaResponseUrl(params: {
+  responseUrl: string;
+  text: string;
+  threadTs?: string;
+}): Promise<void> {
+  const { responseUrl, text, threadTs } = params;
+  const payload: Record<string, unknown> = {
+    response_type: 'in_channel',
+    replace_original: false,
+    text,
+  };
+  if (threadTs) {
+    payload.thread_ts = threadTs;
+  }
+
+  const response = await fetch(responseUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`response_url post failed (${response.status}): ${body}`);
+  }
+}
+
+function buildEventAwareClient(client: WebClient, event: SlackEventEnvelope): WebClient {
+  if (!event.responseUrl) {
+    return client;
+  }
+
+  const wrappedClient = Object.create(client) as WebClient;
+  const originalPostMessage = client.chat.postMessage.bind(client.chat);
+  const wrappedChat = Object.create(client.chat) as typeof client.chat;
+
+  wrappedChat.postMessage = async (...args: Parameters<typeof client.chat.postMessage>) => {
+    const payload = (args[0] ?? {}) as {
+      channel?: string;
+      thread_ts?: string;
+      text?: string;
+    };
+    try {
+      return await originalPostMessage(...args);
+    } catch (error) {
+      const errorCode = extractSlackErrorCode(error);
+      const sameChannel = payload.channel === event.channelId;
+      const sameThread = !payload.thread_ts || payload.thread_ts === event.threadTs;
+
+      if (errorCode === 'not_in_channel' && sameChannel && sameThread && event.responseUrl) {
+        await postViaResponseUrl({
+          responseUrl: event.responseUrl,
+          text: String(payload.text ?? ''),
+          threadTs: payload.thread_ts ?? event.threadTs,
+        });
+        return {
+          ok: true,
+          ts: payload.thread_ts ?? event.threadTs,
+          channel: event.channelId,
+        } as Awaited<ReturnType<typeof client.chat.postMessage>>;
+      }
+      throw error;
+    }
+  };
+
+  (wrappedClient as unknown as { chat: typeof client.chat }).chat = wrappedChat;
+  return wrappedClient;
+}
+
 async function postFailureDoctorHint(params: {
   client: WebClient;
   event: SlackEventEnvelope;
@@ -395,8 +477,10 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
     return;
   }
 
+  const eventClient = buildEventAwareClient(client, event);
+
   logger.info({ eventId: event.eventId }, 'fetching thread context for intake');
-  const threadMessages = await fetchThreadContext(client, event.channelId, event.threadTs).catch(() => []);
+  const threadMessages = await fetchThreadContext(eventClient, event.channelId, event.threadTs).catch(() => []);
   const threadTexts = threadMessages.map(message => message.text);
   logger.info({ eventId: event.eventId, messages: threadMessages.length }, 'thread context fetched for intake');
   const task = normalizeTask(event, config, threadTexts);
@@ -537,7 +621,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         const result = await routeTask({
           task: routedTask,
           config,
-          slack: client,
+          slack: eventClient,
           store,
           personalityMode: learning.personalityMode,
           logStep,
@@ -560,7 +644,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
           });
 
           await postFailureDoctorHint({
-            client,
+            client: eventClient,
             event,
             errorKind: diagnosis.errorKind,
             summary: diagnosis.summary,
@@ -670,7 +754,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       },
     });
 
-    await client.chat.postMessage({
+    await eventClient.chat.postMessage({
       channel: event.channelId,
       thread_ts: event.threadTs,
       text: `${errorMessage}`,
@@ -678,7 +762,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
 
     if (diagnosis) {
       await postFailureDoctorHint({
-        client,
+        client: eventClient,
         event,
         errorKind: diagnosis.errorKind,
         summary: diagnosis.summary,

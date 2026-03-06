@@ -193,7 +193,7 @@ export async function runOwnerAutopilotWorkflow(params: {
     message: 'Fetching thread context for owner-autopilot execution.',
   });
 
-  const threadMessages = await fetchThreadContext(slack, task.event.channelId, task.event.threadTs);
+  const threadMessages = await fetchThreadContext(slack, task.event.channelId, task.event.threadTs).catch(() => []);
   const workspaceRoot = resolveOwnerWorkspaceRoot(config);
   const threadContext = formatThreadContext(task, threadMessages);
 
