@@ -2,6 +2,8 @@ export type AppView = 'overview' | 'runs' | 'intelligence' | 'settings';
 
 export type RunsSubView = 'active' | 'failures' | 'recent' | 'diagnostics';
 
+export type SlackCommandTarget = 'miniog' | 'watchtower';
+
 export type RunSummary = {
   id: string;
   workflow: string;

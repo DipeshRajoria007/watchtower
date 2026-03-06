@@ -380,6 +380,13 @@ button {
   color: var(--text-strong);
 }
 
+.ghost-button:disabled,
+.primary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+}
+
 .primary-button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
@@ -407,6 +414,10 @@ button {
 .page-stack {
   display: grid;
   gap: 20px;
+}
+
+.overview-grid {
+  align-items: start;
 }
 
 .page-intro {
@@ -970,6 +981,173 @@ h2 {
   background: rgba(83, 210, 255, 0.14);
 }
 
+.composer-field {
+  display: grid;
+  gap: 8px;
+}
+
+.composer-field span {
+  color: var(--text-label);
+  font-family: 'IBM Plex Mono', 'SF Mono', monospace;
+  font-size: 0.74rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.composer-field textarea {
+  width: 100%;
+  min-height: 132px;
+  resize: vertical;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(9, 15, 20, 0.96);
+  color: var(--text-strong);
+  line-height: 1.55;
+}
+
+.composer-field textarea:focus {
+  outline: none;
+  border-color: rgba(83, 210, 255, 0.4);
+  box-shadow: 0 0 0 3px rgba(83, 210, 255, 0.08);
+}
+
+.slack-launchpad {
+  display: grid;
+  gap: 14px;
+}
+
+.slack-launchpad-top,
+.slack-launchpad-bottom,
+.slack-launchpad-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.slack-targets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  flex: 1 1 auto;
+}
+
+.slack-target {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-soft);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.slack-target:hover {
+  transform: translateY(-1px);
+  border-color: rgba(83, 210, 255, 0.24);
+}
+
+.slack-target.active {
+  border-color: rgba(83, 210, 255, 0.34);
+  background: linear-gradient(160deg, rgba(83, 210, 255, 0.12), rgba(83, 210, 255, 0.03));
+}
+
+.slack-target-label {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.slack-target-command {
+  color: var(--accent);
+  font-family: 'IBM Plex Mono', 'SF Mono', monospace;
+  font-size: 0.82rem;
+}
+
+.slack-target-description,
+.slack-shortcut-note span,
+.slack-launchpad-footer span {
+  color: var(--text-muted);
+  line-height: 1.5;
+  font-size: 0.88rem;
+}
+
+.slack-shortcut-note {
+  min-width: 220px;
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.slack-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.slack-preset {
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text-soft);
+  cursor: pointer;
+}
+
+.slack-preset:hover {
+  border-color: rgba(83, 210, 255, 0.24);
+  color: var(--text-strong);
+}
+
+.slack-preview {
+  flex: 1 1 auto;
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(83, 210, 255, 0.16);
+  background: rgba(8, 14, 19, 0.92);
+}
+
+.slack-preview span {
+  color: var(--text-label);
+  font-family: 'IBM Plex Mono', 'SF Mono', monospace;
+  font-size: 0.74rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.slack-preview code {
+  color: var(--text-strong);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  font-family: 'IBM Plex Mono', 'SF Mono', monospace;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.slack-launchpad-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.slack-launchpad-footer {
+  align-items: center;
+}
+
+.slack-launchpad-footer strong {
+  color: var(--success);
+  font-size: 0.9rem;
+}
+
 .runs-workspace,
 .diagnostics-grid {
   display: grid;
@@ -1209,7 +1387,10 @@ h2 {
 @media (max-width: 980px) {
   .page-intro,
   .global-banner,
-  .settings-sticky-bar {
+  .settings-sticky-bar,
+  .slack-launchpad-top,
+  .slack-launchpad-bottom,
+  .slack-launchpad-footer {
     flex-direction: column;
     align-items: stretch;
   }
@@ -1221,6 +1402,7 @@ h2 {
   .runs-workspace,
   .diagnostics-grid,
   .settings-summary-grid,
+  .slack-targets,
   .settings-fields.two-column,
   .detail-grid,
   .mode-heat-grid,
