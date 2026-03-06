@@ -44,16 +44,16 @@ export function AppShell({
 }: AppShellProps) {
   const navItems: NavItem[] = [
     {
-      view: 'overview',
-      label: 'Overview',
-      helper: 'Condensed operating snapshot',
-      icon: <OverviewIcon />,
-    },
-    {
       view: 'launchpad',
       label: 'Composer',
       helper: 'Draft a Slack task, choose the handler to execute it.',
       icon: <LaunchpadIcon />,
+    },
+    {
+      view: 'overview',
+      label: 'Overview',
+      helper: 'Condensed operating snapshot',
+      icon: <OverviewIcon />,
     },
     {
       view: 'runs',
