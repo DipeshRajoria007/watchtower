@@ -1,110 +1,37 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { FormEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-
-type RunSummary = {
-  id: string;
-  workflow: string;
-  status: string;
-  channelId: string;
-  threadTs: string;
-  createdAt: string;
-  updatedAt: string;
-  errorMessage: string | null;
-};
-
-type DashboardMetrics = {
-  runs24h: number;
-  successRate24h: number;
-  failedRuns24h: number;
-  avgResolutionSeconds24h: number;
-  unknownTasks24h: number;
-  catchupRecovered24h: number;
-  successStreak: number;
-  chaosIndex: number;
-};
-
-type DashboardRecommendation = {
-  id: string;
-  priority: 'HIGH' | 'MEDIUM' | 'LOW' | string;
-  title: string;
-  detail: string;
-};
-
-type ChannelHeat = {
-  channelId: string;
-  runs: number;
-  failures: number;
-};
-
-type PersonalityModeStats = {
-  mode: string;
-  count: number;
-};
-
-type LearningInsights = {
-  signals24h: number;
-  correctionsLearned: number;
-  correctionsApplied24h: number;
-  personalityProfiles: number;
-  dominantPersonalityMode: string;
-  topFailureKind: string;
-  topFailureCount: number;
-  profilesByMode: PersonalityModeStats[];
-};
-
-type DashboardData = {
-  sidecarStatus: string;
-  settingsConfigured: boolean;
-  activeJobs: RunSummary[];
-  recentRuns: RunSummary[];
-  failures: RunSummary[];
-  metrics: DashboardMetrics;
-  learning: LearningInsights;
-  recommendations: DashboardRecommendation[];
-  channelHeat: ChannelHeat[];
-};
-
-type JobLogEntry = {
-  id: number;
-  jobId: string;
-  level: 'INFO' | 'WARN' | 'ERROR' | string;
-  stage: string;
-  message: string;
-  dataJson: string | null;
-  createdAt: string;
-};
-
-type AppSettings = {
-  slackBotToken: string;
-  slackAppToken: string;
-  ownerSlackUserIds: string;
-  botUserId: string;
-  bugsAndUpdatesChannelId: string;
-  newtonWebPath: string;
-  newtonApiPath: string;
-  maxConcurrentJobs: number;
-  prReviewTimeoutMs: number;
-  bugFixTimeoutMs: number;
-  repoClassifierThreshold: number;
-};
-
-type SaveSettingsResponse = {
-  configured: boolean;
-};
+import { AppShell } from './components/AppShell';
+import { formatSidecarLine } from './lib/formatters';
+import { IntelligencePage } from './pages/IntelligencePage';
+import { OverviewPage } from './pages/OverviewPage';
+import { RunsPage } from './pages/RunsPage';
+import { SettingsPage } from './pages/SettingsPage';
+import type {
+  AppSettings,
+  AppView,
+  DashboardData,
+  JobLogEntry,
+  RunSummary,
+  RunsSubView,
+  SaveSettingsResponse,
+} from './types';
 
 const POLL_MS = 5000;
 
 function App() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [view, setView] = useState<AppView>('overview');
+  const [runsSubView, setRunsSubView] = useState<RunsSubView>('active');
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRunLogs, setSelectedRunLogs] = useState<JobLogEntry[]>([]);
   const [liveSidecarLogs, setLiveSidecarLogs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [navDrawerOpen, setNavDrawerOpen] = useState(false);
 
   const settingsIncomplete = useMemo(() => {
     return data ? !data.settingsConfigured : false;
@@ -140,11 +67,13 @@ function App() {
   const loadDashboard = async () => {
     const result = await invoke<DashboardData>('get_dashboard_data');
     setData(result);
+    setError(null);
   };
 
   const loadSettings = async () => {
     const result = await invoke<AppSettings>('get_app_settings');
     setSettings(result);
+    setError(null);
   };
 
   useEffect(() => {
@@ -186,7 +115,7 @@ function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setIsSettingsOpen(false);
+        setNavDrawerOpen(false);
       }
     };
 
@@ -200,13 +129,37 @@ function App() {
     if (!data) {
       return;
     }
+
     const runExists = selectedRunId ? allRuns.some(run => run.id === selectedRunId) : false;
     if (runExists) {
       return;
     }
-    const preferred = data.activeJobs[0]?.id ?? data.recentRuns[0]?.id ?? data.failures[0]?.id ?? null;
+
+    const preferred = data.activeJobs[0]?.id ?? data.failures[0]?.id ?? data.recentRuns[0]?.id ?? null;
     setSelectedRunId(preferred);
   }, [allRuns, data, selectedRunId]);
+
+  useEffect(() => {
+    if (!data || runsSubView === 'diagnostics') {
+      return;
+    }
+
+    const viewRuns =
+      runsSubView === 'active'
+        ? data.activeJobs
+        : runsSubView === 'failures'
+          ? data.failures
+          : data.recentRuns;
+
+    if (viewRuns.length === 0) {
+      return;
+    }
+
+    const existsInView = selectedRunId ? viewRuns.some(run => run.id === selectedRunId) : false;
+    if (!existsInView) {
+      setSelectedRunId(viewRuns[0].id);
+    }
+  }, [data, runsSubView, selectedRunId]);
 
   useEffect(() => {
     let active = true;
@@ -223,6 +176,7 @@ function App() {
         const logs = await invoke<JobLogEntry[]>('get_job_logs', { jobId: selectedRunId, limit: 1000 });
         if (active) {
           setSelectedRunLogs(logs);
+          setError(null);
         }
       } catch (err) {
         if (active) {
@@ -271,7 +225,7 @@ function App() {
     };
   }, []);
 
-  const saveSettings = async (event: React.FormEvent) => {
+  const saveSettings = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!settings) {
       return;
@@ -282,12 +236,11 @@ function App() {
 
     try {
       const result = await invoke<SaveSettingsResponse>('save_app_settings', { settings });
-      await loadDashboard();
-      await loadSettings();
+      await Promise.all([loadDashboard(), loadSettings()]);
 
       setSettingsMessage(
         result.configured
-          ? 'Settings saved. Runtime config is complete and sidecar should boot automatically.'
+          ? 'Settings saved. Runtime config is complete and the sidecar should boot automatically.'
           : 'Saved, but config is still incomplete. Fill all required fields.'
       );
     } catch (err) {
@@ -297,10 +250,22 @@ function App() {
     }
   };
 
-  if (error) {
+  const navigateToView = (nextView: AppView) => {
+    setView(nextView);
+    setNavDrawerOpen(false);
+  };
+
+  const openRunsWorkspace = (subView: RunsSubView) => {
+    setRunsSubView(subView);
+    setView('runs');
+    setNavDrawerOpen(false);
+  };
+
+  if (error && !data && !settings) {
     return (
-      <main className="app-shell">
-        <section className="panel error-panel">
+      <main className="error-view">
+        <section className="surface-card">
+          <p className="eyebrow">Startup Error</p>
           <h1>Watchtower</h1>
           <p className="error">{error}</p>
         </section>
@@ -309,612 +274,53 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
-      <div className="glow glow-1" />
-      <div className="glow glow-2" />
+    <AppShell
+      currentView={view}
+      failuresCount={summary.failures}
+      navDrawerOpen={navDrawerOpen}
+      onNavigate={navigateToView}
+      onToggleNavDrawer={() => setNavDrawerOpen(open => !open)}
+      settingsRequired={settingsIncomplete}
+      sidecarStatus={data?.sidecarStatus ?? 'starting'}
+    >
+      {error ? <div className="inline-error-banner">{error}</div> : null}
 
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">Developer Automation Console</p>
-          <h1>Watchtower</h1>
-          <p className="status-line">Sidecar: {data?.sidecarStatus ?? 'starting'}</p>
-        </div>
-
-        <div className="top-actions">
-          <button
-            className="icon-btn"
-            type="button"
-            aria-label="Open settings"
-            onClick={() => setIsSettingsOpen(true)}
-          >
-            <GearIcon />
-          </button>
-        </div>
-      </header>
-
-      {settingsIncomplete ? (
-        <section className="warning-strip">
-          <div>
-            <strong>Configuration required.</strong> Settings are incomplete, so the sidecar will stay paused.
-          </div>
-          <button type="button" onClick={() => setIsSettingsOpen(true)}>
-            Open Settings
-          </button>
-        </section>
+      {view === 'overview' ? (
+        <OverviewPage
+          data={data}
+          onOpenIntelligence={() => navigateToView('intelligence')}
+          onOpenRuns={openRunsWorkspace}
+          onOpenSettings={() => navigateToView('settings')}
+          onSelectRun={setSelectedRunId}
+        />
       ) : null}
 
-      <section className="stats-grid">
-        <StatCard label="Active Jobs" value={summary.active} tone="active" />
-        <StatCard label="Recent Runs" value={summary.recent} tone="recent" />
-        <StatCard label="Failures" value={summary.failures} tone="failures" />
-      </section>
-
-      <section className="panel">
-        <PanelHeader
-          title="Adaptive Intelligence"
-          subtitle="Learning Memory Engine + Intent Self-Correction + Failure Doctor + Personality Profiles"
-          count={data?.learning.profilesByMode.length ?? 0}
-        />
-        {data?.learning ? <LearningInsightsPanel learning={data.learning} /> : null}
-      </section>
-
-      <section className="panel-grid autonomy-grid">
-        <section className="panel">
-          <PanelHeader
-            title="Autonomy Center"
-            subtitle="Self-learning recommendations generated from local runtime behavior"
-            count={data?.recommendations.length ?? 0}
-          />
-          <RecommendationList recommendations={data?.recommendations ?? []} />
-        </section>
-
-        <section className="panel">
-          <PanelHeader
-            title="Ops Pulse"
-            subtitle="Productivity telemetry + fun signals"
-            count={data?.channelHeat.length ?? 0}
-          />
-          {data?.metrics ? <PulseMetrics metrics={data.metrics} /> : null}
-          <ChannelHeatList channels={data?.channelHeat ?? []} />
-        </section>
-      </section>
-
-      <section className="panel">
-        <PanelHeader title="Active Jobs" subtitle="In-flight workflow executions" count={summary.active} />
-        <RunList
-          runs={data?.activeJobs ?? []}
-          empty="No active jobs. Idle and watching Slack."
+      {view === 'runs' ? (
+        <RunsPage
+          data={data}
+          liveSidecarLogs={liveSidecarLogs}
+          onSelectRun={setSelectedRunId}
+          onSubViewChange={setRunsSubView}
+          runsSubView={runsSubView}
+          selectedRun={selectedRun}
           selectedRunId={selectedRunId}
-          onSelect={runId => setSelectedRunId(runId)}
+          selectedRunLogs={selectedRunLogs}
         />
-      </section>
+      ) : null}
 
-      <section className="panel-grid">
-        <section className="panel">
-          <PanelHeader
-            title="Execution Trace"
-            subtitle={selectedRun ? `job=${selectedRun.id}` : 'Select a run to inspect every step'}
-            count={selectedRunLogs.length}
-          />
-          <TraceList logs={selectedRunLogs} selectedRun={selectedRun} />
-        </section>
+      {view === 'intelligence' ? <IntelligencePage data={data} /> : null}
 
-        <section className="panel">
-          <PanelHeader
-            title="Live Sidecar Stream"
-            subtitle="Raw sidecar output (stdout + stderr), newest at bottom"
-            count={liveSidecarLogs.length}
-          />
-          <LiveLogConsole lines={liveSidecarLogs} />
-        </section>
-      </section>
-
-      <section className="panel-grid">
-        <section className="panel">
-          <PanelHeader title="Failures" subtitle="Items requiring manual attention" count={summary.failures} />
-          <RunList
-            runs={data?.failures ?? []}
-            empty="No failures. System stable."
-            selectedRunId={selectedRunId}
-            onSelect={runId => setSelectedRunId(runId)}
-          />
-        </section>
-
-        <section className="panel">
-          <PanelHeader title="Last 50 Runs" subtitle="Most recent execution history" count={summary.recent} />
-          <RunList
-            runs={data?.recentRuns ?? []}
-            empty="No run history yet."
-            selectedRunId={selectedRunId}
-            onSelect={runId => setSelectedRunId(runId)}
-          />
-        </section>
-      </section>
-
-      <div className={isSettingsOpen ? 'settings-overlay open' : 'settings-overlay'} onClick={() => setIsSettingsOpen(false)} />
-
-      <aside className={isSettingsOpen ? 'settings-drawer open' : 'settings-drawer'}>
-        <div className="drawer-head">
-          <div>
-            <p className="eyebrow">Runtime Configuration</p>
-            <h2>Settings</h2>
-          </div>
-          <button className="icon-btn" type="button" aria-label="Close settings" onClick={() => setIsSettingsOpen(false)}>
-            <CloseIcon />
-          </button>
-        </div>
-
-        {!settings ? (
-          <p className="muted">Loading settings...</p>
-        ) : (
-          <form className="settings-form" onSubmit={saveSettings}>
-            <div className="field-group">
-              <label className="field">
-                <span>Slack Bot Token</span>
-                <input
-                  type="password"
-                  value={settings.slackBotToken}
-                  onChange={event => setSettings({ ...settings, slackBotToken: event.target.value })}
-                  placeholder="xoxb-..."
-                />
-              </label>
-
-              <label className="field">
-                <span>Slack App Token (Socket Mode)</span>
-                <input
-                  type="password"
-                  value={settings.slackAppToken}
-                  onChange={event => setSettings({ ...settings, slackAppToken: event.target.value })}
-                  placeholder="xapp-..."
-                />
-              </label>
-            </div>
-
-            <div className="field-group">
-              <label className="field">
-                <span>Owner Slack User IDs (comma separated)</span>
-                <input
-                  type="text"
-                  value={settings.ownerSlackUserIds}
-                  onChange={event => setSettings({ ...settings, ownerSlackUserIds: event.target.value })}
-                  placeholder="U01234567,U07654321"
-                />
-              </label>
-
-              <label className="field">
-                <span>Bot Slack User ID</span>
-                <input
-                  type="text"
-                  value={settings.botUserId}
-                  onChange={event => setSettings({ ...settings, botUserId: event.target.value })}
-                  placeholder="U0BOTUSER"
-                />
-              </label>
-            </div>
-
-            <div className="field-group">
-              <label className="field">
-                <span>Bug-fix Channel IDs (comma separated)</span>
-                <input
-                  type="text"
-                  value={settings.bugsAndUpdatesChannelId}
-                  onChange={event => setSettings({ ...settings, bugsAndUpdatesChannelId: event.target.value })}
-                  placeholder="C01H25RNLJH,C02XXXXXXX"
-                />
-                <small className="field-hint">
-                  Mentions are processed from all channels where the bot is present. This list only controls where
-                  bug-fix workflow auto-runs.
-                </small>
-              </label>
-
-              <label className="field">
-                <span>Max Concurrent Jobs</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={settings.maxConcurrentJobs}
-                  onChange={event =>
-                    setSettings({
-                      ...settings,
-                      maxConcurrentJobs: Number(event.target.value) || 1,
-                    })
-                  }
-                />
-              </label>
-            </div>
-
-            <div className="field-group">
-              <label className="field">
-                <span>newton-web Path</span>
-                <input
-                  type="text"
-                  value={settings.newtonWebPath}
-                  onChange={event => setSettings({ ...settings, newtonWebPath: event.target.value })}
-                  placeholder="/Users/you/code/newton-web"
-                />
-              </label>
-
-              <label className="field">
-                <span>newton-api Path</span>
-                <input
-                  type="text"
-                  value={settings.newtonApiPath}
-                  onChange={event => setSettings({ ...settings, newtonApiPath: event.target.value })}
-                  placeholder="/Users/you/code/newton-api"
-                />
-              </label>
-            </div>
-
-            <div className="field-group">
-              <label className="field">
-                <span>PR Review Timeout (ms)</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={settings.prReviewTimeoutMs}
-                  onChange={event =>
-                    setSettings({
-                      ...settings,
-                      prReviewTimeoutMs: Number(event.target.value) || 1,
-                    })
-                  }
-                />
-              </label>
-
-              <label className="field">
-                <span>Bug Fix Timeout (ms)</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={settings.bugFixTimeoutMs}
-                  onChange={event =>
-                    setSettings({
-                      ...settings,
-                      bugFixTimeoutMs: Number(event.target.value) || 1,
-                    })
-                  }
-                />
-              </label>
-            </div>
-
-            <label className="field">
-              <span>Repo Classifier Threshold</span>
-              <input
-                type="number"
-                min={0}
-                max={1}
-                step={0.01}
-                value={settings.repoClassifierThreshold}
-                onChange={event =>
-                  setSettings({
-                    ...settings,
-                    repoClassifierThreshold: Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-
-            <div className="actions">
-              <button type="submit" disabled={savingSettings}>
-                {savingSettings ? 'Saving...' : 'Save Settings'}
-              </button>
-            </div>
-
-            {settingsMessage ? (
-              <p className={settingsMessage.startsWith('Failed') ? 'error' : 'success'}>{settingsMessage}</p>
-            ) : null}
-          </form>
-        )}
-      </aside>
-    </main>
-  );
-}
-
-function PanelHeader({ title, subtitle, count }: { title: string; subtitle: string; count: number }) {
-  return (
-    <div className="panel-head">
-      <div>
-        <h2>{title}</h2>
-        <p className="muted">{subtitle}</p>
-      </div>
-      <span className="chip">{count}</span>
-    </div>
-  );
-}
-
-function StatCard({ label, value, tone }: { label: string; value: number; tone: 'active' | 'recent' | 'failures' }) {
-  return (
-    <article className={`stat-card ${tone}`}>
-      <p>{label}</p>
-      <strong>{value}</strong>
-    </article>
-  );
-}
-
-function RunList({
-  runs,
-  empty,
-  selectedRunId,
-  onSelect,
-}: {
-  runs: RunSummary[];
-  empty: string;
-  selectedRunId?: string | null;
-  onSelect?: (runId: string) => void;
-}) {
-  if (runs.length === 0) {
-    return <p className="empty-state">{empty}</p>;
-  }
-
-  return (
-    <ul className="run-list">
-      {runs.map(run => (
-        <li
-          key={run.id}
-          className={run.id === selectedRunId ? 'selected' : ''}
-          role="button"
-          tabIndex={0}
-          onClick={() => onSelect?.(run.id)}
-          onKeyDown={event => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault();
-              onSelect?.(run.id);
-            }
-          }}
-        >
-          <div className="run-top">
-            <span className="run-workflow">{run.workflow}</span>
-            <span className={`badge ${run.status.toLowerCase()}`}>{run.status}</span>
-          </div>
-          <div className="run-meta">channel={run.channelId}</div>
-          <div className="run-meta">thread={run.threadTs}</div>
-          <div className="run-meta">updated={run.updatedAt}</div>
-          {run.errorMessage ? <div className="error">{run.errorMessage}</div> : null}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function TraceList({ logs, selectedRun }: { logs: JobLogEntry[]; selectedRun: RunSummary | null }) {
-  if (!selectedRun) {
-    return <p className="empty-state">Pick any run above to inspect detailed step logs.</p>;
-  }
-
-  if (logs.length === 0) {
-    return <p className="empty-state">No trace entries persisted yet for this run.</p>;
-  }
-
-  return (
-    <ul className="trace-list">
-      {logs.map(log => (
-        <li key={log.id}>
-          <div className="trace-top">
-            <span className={`badge ${log.level.toLowerCase()}`}>{log.level}</span>
-            <span className="trace-stage">{log.stage}</span>
-            <span className="trace-time">{log.createdAt}</span>
-          </div>
-          <div className="trace-message">{log.message}</div>
-          {log.dataJson ? <pre className="trace-data">{prettyJson(log.dataJson)}</pre> : null}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function LiveLogConsole({ lines }: { lines: string[] }) {
-  if (lines.length === 0) {
-    return <p className="empty-state">Waiting for sidecar log output...</p>;
-  }
-
-  return (
-    <pre className="live-log-console">
-      {lines.map((line, index) => (
-        <div key={`${index}-${line.slice(0, 30)}`}>{line}</div>
-      ))}
-    </pre>
-  );
-}
-
-function RecommendationList({ recommendations }: { recommendations: DashboardRecommendation[] }) {
-  if (recommendations.length === 0) {
-    return <p className="empty-state">No recommendations generated yet.</p>;
-  }
-
-  return (
-    <ul className="recommendation-list">
-      {recommendations.map(item => (
-        <li key={item.id}>
-          <div className="recommendation-top">
-            <strong>{item.title}</strong>
-            <span className={`badge priority-${item.priority.toLowerCase()}`}>{item.priority}</span>
-          </div>
-          <p>{item.detail}</p>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function PulseMetrics({ metrics }: { metrics: DashboardMetrics }) {
-  return (
-    <div className="pulse-metrics">
-      <article className="pulse-metric">
-        <span>24h Success</span>
-        <strong>{metrics.successRate24h}%</strong>
-      </article>
-      <article className="pulse-metric">
-        <span>Avg Resolution</span>
-        <strong>{formatDurationSeconds(metrics.avgResolutionSeconds24h)}</strong>
-      </article>
-      <article className="pulse-metric">
-        <span>Success Streak</span>
-        <strong>{metrics.successStreak}</strong>
-      </article>
-      <article className="pulse-metric">
-        <span>Catch-up Wins</span>
-        <strong>{metrics.catchupRecovered24h}</strong>
-      </article>
-      <article className="pulse-metric">
-        <span>Unknown 24h</span>
-        <strong>{metrics.unknownTasks24h}</strong>
-      </article>
-      <article className="pulse-metric">
-        <span>Chaos Index</span>
-        <strong>{metrics.chaosIndex}</strong>
-      </article>
-    </div>
-  );
-}
-
-function ChannelHeatList({ channels }: { channels: ChannelHeat[] }) {
-  if (channels.length === 0) {
-    return <p className="empty-state">No channel activity yet for this week.</p>;
-  }
-
-  return (
-    <ul className="channel-heat-list">
-      {channels.map(channel => (
-        <li key={channel.channelId}>
-          <span className="channel-id">{channel.channelId}</span>
-          <span className="channel-runs">runs={channel.runs}</span>
-          <span className={`badge ${channel.failures > 0 ? 'warn' : 'success'}`}>failures={channel.failures}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function LearningInsightsPanel({ learning }: { learning: LearningInsights }) {
-  return (
-    <div className="learning-block">
-      <div className="learning-metrics">
-        <article className="learning-metric">
-          <span>Signals 24h</span>
-          <strong>{learning.signals24h}</strong>
-        </article>
-        <article className="learning-metric">
-          <span>Corrections Learned</span>
-          <strong>{learning.correctionsLearned}</strong>
-        </article>
-        <article className="learning-metric">
-          <span>Corrections Applied 24h</span>
-          <strong>{learning.correctionsApplied24h}</strong>
-        </article>
-        <article className="learning-metric">
-          <span>Personality Profiles</span>
-          <strong>{learning.personalityProfiles}</strong>
-        </article>
-        <article className="learning-metric">
-          <span>Dominant Mode</span>
-          <strong>{humanizeMode(learning.dominantPersonalityMode)}</strong>
-        </article>
-        <article className="learning-metric">
-          <span>Top Failure Signature</span>
-          <strong>
-            {learning.topFailureKind === 'none'
-              ? 'None'
-              : `${learning.topFailureKind} (${learning.topFailureCount})`}
-          </strong>
-        </article>
-      </div>
-
-      <ul className="mode-heat-list">
-        {learning.profilesByMode.length === 0 ? (
-          <li className="mode-heat-empty">No personality profiles learned yet.</li>
-        ) : (
-          learning.profilesByMode.map(mode => (
-            <li key={mode.mode}>
-              <span>{humanizeMode(mode.mode)}</span>
-              <span className="chip">{mode.count}</span>
-            </li>
-          ))
-        )}
-      </ul>
-    </div>
-  );
-}
-
-function prettyJson(raw: string): string {
-  try {
-    return JSON.stringify(JSON.parse(raw), null, 2);
-  } catch {
-    return raw;
-  }
-}
-
-function formatDurationSeconds(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return '0s';
-  }
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-  const minutes = Math.floor(seconds / 60);
-  const rem = seconds % 60;
-  if (minutes < 60) {
-    return `${minutes}m ${rem}s`;
-  }
-  const hours = Math.floor(minutes / 60);
-  const minuteRem = minutes % 60;
-  return `${hours}h ${minuteRem}m`;
-}
-
-function humanizeMode(mode: string): string {
-  const value = mode.replace(/[_-]+/g, ' ').trim();
-  if (!value) {
-    return 'Dark Humor';
-  }
-  return value.replace(/\b\w/g, letter => letter.toUpperCase());
-}
-
-function formatSidecarLine(raw: string): string {
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const level = mapPinoLevel(parsed.level);
-    const message = typeof parsed.msg === 'string' ? parsed.msg : raw;
-    const time = typeof parsed.time === 'string' ? parsed.time : new Date().toISOString();
-    const stage = typeof parsed.stage === 'string' ? parsed.stage : '';
-    const jobId = typeof parsed.jobId === 'string' ? parsed.jobId : '';
-    const workflow = typeof parsed.workflow === 'string' ? parsed.workflow : '';
-
-    const parts = [`[${time}]`, `[${level}]`];
-    if (workflow) parts.push(`[${workflow}]`);
-    if (stage) parts.push(`[${stage}]`);
-    if (jobId) parts.push(`[job=${jobId}]`);
-    parts.push(message);
-    return parts.join(' ');
-  } catch {
-    return raw;
-  }
-}
-
-function mapPinoLevel(level: unknown): string {
-  if (typeof level === 'number') {
-    if (level >= 50) return 'ERROR';
-    if (level >= 40) return 'WARN';
-    if (level >= 30) return 'INFO';
-    return 'DEBUG';
-  }
-  return 'INFO';
-}
-
-function GearIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 15.3a3.3 3.3 0 1 0 0-6.6 3.3 3.3 0 0 0 0 6.6Z" />
-      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.56 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1Z" />
-    </svg>
-  );
-}
-
-function CloseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m18 6-12 12" />
-      <path d="m6 6 12 12" />
-    </svg>
+      {view === 'settings' ? (
+        <SettingsPage
+          onSettingsChange={nextSettings => setSettings(nextSettings)}
+          onSubmit={saveSettings}
+          savingSettings={savingSettings}
+          settings={settings}
+          settingsConfigured={data?.settingsConfigured ?? false}
+          settingsMessage={settingsMessage}
+        />
+      ) : null}
+    </AppShell>
   );
 }
 
