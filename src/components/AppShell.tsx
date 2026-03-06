@@ -117,6 +117,8 @@ export function AppShell({
             key={item.view}
             type="button"
             className={item.view === currentView ? 'nav-button active' : 'nav-button'}
+            aria-current={item.view === currentView ? 'page' : undefined}
+            title={variant === 'rail' ? item.label : undefined}
             onClick={() => {
               onNavigate(item.view);
               if (variant === 'drawer') {
