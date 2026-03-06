@@ -88,14 +88,16 @@ export function AppShell({
           <WatchtowerIcon />
         </div>
         <div className="brand-copy">
-          <span className="eyebrow">Developer Automation Console</span>
-          <strong>Watchtower</strong>
-          <div
-            className={`sidebar-status sidebar-status-${sidecarTone}`}
-            aria-label={`Sidecar status: ${humanizeToken(sidecarStatus)}`}
-            title={`Sidecar status: ${humanizeToken(sidecarStatus)}`}
-          >
-            <span className="sidebar-status-dot" />
+          <span className="eyebrow brand-eyebrow">Developer Automation Console</span>
+          <div className="brand-title-row">
+            <strong>Watchtower</strong>
+            <div
+              className={`sidebar-status sidebar-status-${sidecarTone}`}
+              aria-label={`Sidecar status: ${humanizeToken(sidecarStatus)}`}
+              title={`Sidecar status: ${humanizeToken(sidecarStatus)}`}
+            >
+              <span className="sidebar-status-dot" />
+            </div>
           </div>
         </div>
 

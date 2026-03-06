@@ -77,22 +77,22 @@ button {
 
 .sidebar-brand {
   display: flex;
-  gap: 14px;
-  align-items: flex-start;
+  gap: 12px;
+  align-items: center;
 }
 
 .brand-mark {
-  width: 52px;
-  height: 52px;
+  width: 46px;
+  height: 46px;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 16px;
-  border: 1px solid rgba(83, 210, 255, 0.28);
-  background: linear-gradient(160deg, rgba(18, 33, 44, 0.92), rgba(10, 15, 20, 0.95));
+  border-radius: 15px;
+  border: 1px solid rgba(83, 210, 255, 0.22);
+  background: linear-gradient(160deg, rgba(16, 28, 37, 0.82), rgba(8, 13, 18, 0.94));
   color: var(--accent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .brand-mark svg,
@@ -105,12 +105,14 @@ button {
 .brand-copy {
   min-width: 0;
   display: grid;
-  gap: 6px;
+  gap: 5px;
+  flex: 1 1 auto;
 }
 
 .brand-copy strong {
-  font-size: 1.25rem;
-  letter-spacing: -0.03em;
+  font-size: 1.1rem;
+  letter-spacing: -0.035em;
+  line-height: 1;
 }
 
 .eyebrow {
@@ -122,24 +124,34 @@ button {
   text-transform: uppercase;
 }
 
+.brand-eyebrow {
+  font-size: 0.64rem;
+  letter-spacing: 0.05em;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.brand-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .sidebar-status {
   display: inline-flex;
   align-items: center;
   width: fit-content;
-  padding: 8px;
-  border-radius: 999px;
+  flex: 0 0 auto;
   color: var(--text-soft);
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .sidebar-status-dot {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 999px;
   background: currentColor;
-  box-shadow: 0 0 18px currentColor;
+  box-shadow: 0 0 16px currentColor;
 }
 
 .sidebar-status-good {
@@ -1441,6 +1453,15 @@ h2 {
 
 .nav-drawer .sidebar-menu-trigger {
   display: inline-flex;
+}
+
+.nav-drawer .brand-eyebrow {
+  white-space: normal;
+}
+
+.nav-drawer .brand-title-row {
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 
 .nav-drawer .sidebar-footer,
