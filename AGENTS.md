@@ -58,6 +58,11 @@ Before merge:
 3. `npm run build`
 4. `cargo check --manifest-path src-tauri/Cargo.toml`
 
+## Git Workflow
+- Do not commit changes directly to `main`.
+- For every change, create a branch with the `codex/` prefix, push it, open a pull request, and merge that pull request.
+- Treat the pull request as the default delivery path unless the user explicitly asks for a different git workflow.
+
 ## Guardrails
 - Keep orchestrator non-destructive.
 - Restrict repo operations to configured allowlisted repo paths.
