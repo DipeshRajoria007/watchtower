@@ -8,6 +8,7 @@ export type RunSummary = {
   id: string;
   workflow: string;
   status: string;
+  taskSummary: string;
   channelId: string;
   threadTs: string;
   createdAt: string;
