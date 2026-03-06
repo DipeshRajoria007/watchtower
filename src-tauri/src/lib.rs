@@ -117,6 +117,7 @@ struct RunSummary {
     id: String,
     workflow: String,
     status: String,
+    task_summary: String,
     channel_id: String,
     thread_ts: String,
     created_at: String,
@@ -320,15 +321,15 @@ async fn get_dashboard_data(state: State<'_, AppState>) -> Result<DashboardData,
 
     let active_jobs = query_runs(
         &connection,
-        "SELECT id, workflow, status, channel_id, thread_ts, created_at, updated_at, error_message FROM jobs WHERE status = 'RUNNING' ORDER BY updated_at DESC LIMIT 50",
+        "SELECT id, workflow, status, channel_id, thread_ts, created_at, updated_at, error_message, payload_json FROM jobs WHERE status = 'RUNNING' ORDER BY updated_at DESC LIMIT 50",
     )?;
     let recent_runs = query_runs(
         &connection,
-        "SELECT id, workflow, status, channel_id, thread_ts, created_at, updated_at, error_message FROM jobs ORDER BY updated_at DESC LIMIT 50",
+        "SELECT id, workflow, status, channel_id, thread_ts, created_at, updated_at, error_message, payload_json FROM jobs ORDER BY updated_at DESC LIMIT 50",
     )?;
     let failures = query_runs(
         &connection,
-        "SELECT id, workflow, status, channel_id, thread_ts, created_at, updated_at, error_message FROM jobs WHERE status = 'FAILED' ORDER BY updated_at DESC LIMIT 50",
+        "SELECT id, workflow, status, channel_id, thread_ts, created_at, updated_at, error_message, payload_json FROM jobs WHERE status = 'FAILED' ORDER BY updated_at DESC LIMIT 50",
     )?;
     let metrics = query_dashboard_metrics(&connection)?;
     let learning = query_learning_insights(&connection)?;
@@ -420,15 +421,23 @@ fn query_runs(connection: &Connection, sql: &str) -> Result<Vec<RunSummary>, Str
         .map_err(|err| format!("db prepare failed: {err}"))?;
     let rows = stmt
         .query_map([], |row| {
+            let workflow: String = row.get(1)?;
+            let error_message: Option<String> = row.get(7)?;
+            let payload_json: Option<String> = row.get(8)?;
             Ok(RunSummary {
                 id: row.get(0)?,
-                workflow: row.get(1)?,
+                workflow: workflow.clone(),
                 status: row.get(2)?,
+                task_summary: derive_task_summary(
+                    &workflow,
+                    payload_json.as_deref(),
+                    error_message.as_deref(),
+                ),
                 channel_id: row.get(3)?,
                 thread_ts: row.get(4)?,
                 created_at: row.get(5)?,
                 updated_at: row.get(6)?,
-                error_message: row.get(7)?,
+                error_message,
             })
         })
         .map_err(|err| format!("db query failed: {err}"))?;
@@ -438,6 +447,252 @@ fn query_runs(connection: &Connection, sql: &str) -> Result<Vec<RunSummary>, Str
         output.push(row.map_err(|err| format!("db row failed: {err}"))?);
     }
     Ok(output)
+}
+
+fn derive_task_summary(
+    workflow: &str,
+    payload_json: Option<&str>,
+    error_message: Option<&str>,
+) -> String {
+    if let Some(text) = extract_payload_text(payload_json) {
+        let cleaned = strip_request_leadin(&clean_slack_text(&text));
+        if workflow == "DEV_ASSIST" {
+            if let Some(summary) = summarize_dev_assist_command(&cleaned) {
+                return summary;
+            }
+        }
+        if workflow == "PR_REVIEW" {
+            if let Some(summary) = summarize_pull_request(&cleaned) {
+                return summary;
+            }
+        }
+        if !cleaned.is_empty() {
+            return sentence_case(&truncate_summary(&cleaned, 96));
+        }
+    }
+
+    if let Some(message) = error_message {
+        let concise = message.split(':').next().unwrap_or(message).trim();
+        if !concise.is_empty() {
+            return truncate_summary(concise, 72);
+        }
+    }
+
+    match workflow {
+        "PR_REVIEW" => "Pull request review".to_string(),
+        "BUG_FIX" => "Bug fix request".to_string(),
+        "OWNER_AUTOPILOT" => "Owner request".to_string(),
+        "DEV_ASSIST" => "Watchtower command".to_string(),
+        _ => "Workflow task".to_string(),
+    }
+}
+
+fn extract_payload_text(payload_json: Option<&str>) -> Option<String> {
+    let payload = payload_json?;
+    let parsed: serde_json::Value = serde_json::from_str(payload).ok()?;
+    let text = parsed.get("text")?.as_str()?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    Some(text.to_string())
+}
+
+fn clean_slack_text(raw: &str) -> String {
+    let mut output = String::new();
+    let mut remainder = raw;
+
+    while let Some(start) = remainder.find('<') {
+        output.push_str(&remainder[..start]);
+        let token_start = start + 1;
+        let Some(end_offset) = remainder[token_start..].find('>') else {
+            output.push_str(&remainder[start..]);
+            remainder = "";
+            break;
+        };
+
+        let token_end = token_start + end_offset;
+        output.push_str(&decode_slack_token(&remainder[token_start..token_end]));
+        remainder = &remainder[token_end + 1..];
+    }
+
+    output.push_str(remainder);
+
+    output
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn decode_slack_token(token: &str) -> String {
+    if token.starts_with('@') || token.starts_with('!') {
+        return String::new();
+    }
+
+    if token.starts_with('#') {
+        if let Some((_, label)) = token.split_once('|') {
+            return format!("#{}", label.trim_start_matches('#'));
+        }
+        return "channel".to_string();
+    }
+
+    if let Some((url, label)) = token.split_once('|') {
+        if !label.is_empty() {
+            return label.to_string();
+        }
+        return url.to_string();
+    }
+
+    token.to_string()
+}
+
+fn strip_request_leadin(input: &str) -> String {
+    let mut cleaned = input.trim();
+    let prefixes = [
+        "watchtower ",
+        "wt ",
+        "please ",
+        "pls ",
+        "can you ",
+        "could you ",
+        "would you ",
+        "hey ",
+        "hi ",
+        "hello ",
+    ];
+
+    loop {
+        let lower = cleaned.to_ascii_lowercase();
+        let mut matched = false;
+        for prefix in prefixes {
+            if lower.starts_with(prefix) {
+                cleaned = cleaned[prefix.len()..].trim_start_matches([' ', ':', ',', '-']);
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            break;
+        }
+    }
+
+    cleaned.trim().to_string()
+}
+
+fn summarize_dev_assist_command(text: &str) -> Option<String> {
+    let command = text.trim();
+    if command.is_empty() {
+        return None;
+    }
+
+    let lower = command.to_ascii_lowercase();
+    let summary = if lower == "help" {
+        "Show available Watchtower commands"
+    } else if lower == "status" {
+        "Show Watchtower status"
+    } else if lower.starts_with("runs") {
+        "List recent runs"
+    } else if lower.starts_with("failures") {
+        "List recent failures"
+    } else if lower.starts_with("trace ") {
+        "Show trace for a job"
+    } else if lower.starts_with("diagnose ") {
+        "Diagnose a failed job"
+    } else if lower == "learn" {
+        "Run the learning pass"
+    } else if lower.starts_with("heat") {
+        "Show channel heat"
+    } else if lower.starts_with("personality set ") {
+        "Update personality mode"
+    } else if lower.starts_with("personality show") {
+        "Show personality mode"
+    } else if lower.starts_with("replay ") {
+        "Replay a previous job"
+    } else if lower.starts_with("fork ") {
+        "Fork a previous job"
+    } else if lower.starts_with("my queue") {
+        "Show my prioritized queue"
+    } else {
+        return None;
+    };
+
+    Some(summary.to_string())
+}
+
+fn summarize_pull_request(text: &str) -> Option<String> {
+    for token in text.split_whitespace() {
+        let trimmed = token.trim_matches(|ch: char| matches!(ch, '.' | ',' | ')' | '('));
+        let Some(marker_index) = trimmed.find("github.com/") else {
+            continue;
+        };
+        let path = &trimmed[marker_index + "github.com/".len()..];
+        let mut parts = path.split('/');
+        let Some(owner) = parts.next() else {
+            continue;
+        };
+        let Some(repo) = parts.next() else {
+            continue;
+        };
+        let Some(kind) = parts.next() else {
+            continue;
+        };
+        if kind != "pull" {
+            continue;
+        }
+        let Some(number_part) = parts.next() else {
+            continue;
+        };
+        let number = number_part.trim_matches(|ch: char| !ch.is_ascii_digit());
+        if !owner.is_empty() && !repo.is_empty() && !number.is_empty() {
+            return Some(format!("Review PR {owner}/{repo}#{number}"));
+        }
+    }
+
+    None
+}
+
+fn truncate_summary(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+
+    let soft_limit = max_chars.saturating_sub(3);
+    let mut truncated = String::new();
+
+    for word in input.split_whitespace() {
+        let next_len = if truncated.is_empty() {
+            word.chars().count()
+        } else {
+            truncated.chars().count() + 1 + word.chars().count()
+        };
+
+        if next_len > soft_limit {
+            break;
+        }
+
+        if !truncated.is_empty() {
+            truncated.push(' ');
+        }
+        truncated.push_str(word);
+    }
+
+    if truncated.is_empty() {
+        truncated = input.chars().take(soft_limit).collect();
+    }
+
+    format!("{truncated}...")
+}
+
+fn sentence_case(input: &str) -> String {
+    let mut chars = input.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let mut output = first.to_uppercase().collect::<String>();
+    output.push_str(chars.as_str());
+    output
 }
 
 fn query_dashboard_metrics(connection: &Connection) -> Result<DashboardMetrics, String> {

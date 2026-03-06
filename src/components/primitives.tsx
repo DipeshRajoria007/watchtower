@@ -155,15 +155,16 @@ export function RunList({
               onClick={() => onSelect?.(run.id)}
             >
               <div className="run-card-top">
-                <span className="run-card-title">{run.workflow}</span>
+                <div className="run-card-copy">
+                  <span className="run-card-workflow">{run.workflow.replaceAll('_', ' ')}</span>
+                  <span className="run-card-title">{run.taskSummary}</span>
+                </div>
                 <StatusBadge label={run.status} tone={getStatusTone(run.status)} />
               </div>
               <div className="run-card-meta">
-                <span>{run.channelId}</span>
-                <span>{formatTimestamp(run.updatedAt)}</span>
+                <span>Updated {formatTimestamp(run.updatedAt)}</span>
               </div>
-              <div className="run-card-thread">thread {run.threadTs}</div>
-              {run.errorMessage ? <p className="detail-error">{run.errorMessage}</p> : null}
+              {run.errorMessage ? <p className="run-card-error">{run.errorMessage}</p> : null}
             </button>
           </li>
         );
@@ -182,8 +183,8 @@ export function RunInspector({ logs, run }: { logs: JobLogEntry[]; run: RunSumma
       <article className="surface-card detail-card">
         <div className="detail-header">
           <div>
-            <p className="eyebrow">Selected Run</p>
-            <h2>{run.workflow}</h2>
+            <p className="eyebrow">{run.workflow.replaceAll('_', ' ')}</p>
+            <h2>{run.taskSummary}</h2>
           </div>
           <StatusBadge label={run.status} tone={getStatusTone(run.status)} />
         </div>
