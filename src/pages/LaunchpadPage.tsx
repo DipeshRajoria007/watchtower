@@ -19,7 +19,7 @@ export function LaunchpadPage({
   return (
     <div className="launchpad-page">
       <p className="launchpad-copy">
-        Draft the task here, choose who should handle it in Slack, and copy the exact command. This page stays deliberately minimal.
+        Draft a Slack task, choose the handler to execute it.
       </p>
 
       <section className="surface-card launchpad-shell">
