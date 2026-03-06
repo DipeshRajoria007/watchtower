@@ -69,20 +69,26 @@ export function SectionCard({ actions, children, className, count, subtitle, tit
 }
 
 export function MetricCard({
+  className,
   detail,
   label,
   tone = 'neutral',
   value,
+  valueTitle,
+  variant = 'default',
 }: {
+  className?: string;
   detail?: string;
   label: string;
   tone?: 'accent' | 'danger' | 'neutral' | 'success' | 'warning';
   value: ReactNode;
+  valueTitle?: string;
+  variant?: 'compact' | 'default';
 }) {
   return (
-    <article className={`metric-card metric-${tone}`}>
+    <article className={className ? `metric-card metric-${tone} metric-${variant} ${className}` : `metric-card metric-${tone} metric-${variant}`}>
       <span>{label}</span>
-      <strong>{value}</strong>
+      <strong title={valueTitle}>{value}</strong>
       {detail ? <p>{detail}</p> : null}
     </article>
   );
@@ -285,7 +291,7 @@ export function RecommendationList({
             <strong>{item.title}</strong>
             <StatusBadge label={item.priority} tone={getPriorityTone(item.priority)} />
           </div>
-          <p>{item.detail}</p>
+          <p className="recommendation-body">{item.detail}</p>
         </li>
       ))}
     </ul>
@@ -295,14 +301,14 @@ export function RecommendationList({
 export function PulseMetrics({ metrics }: { metrics: DashboardMetrics }) {
   return (
     <div className="pulse-grid">
-      <MetricCard label="24h Success" value={`${metrics.successRate24h}%`} tone="success" />
-      <MetricCard label="24h Runs" value={metrics.runs24h} />
-      <MetricCard label="24h Failures" value={metrics.failedRuns24h} tone="danger" />
-      <MetricCard label="Avg Resolution" value={formatDurationSeconds(metrics.avgResolutionSeconds24h)} />
-      <MetricCard label="Catch-up Wins" value={metrics.catchupRecovered24h} tone="accent" />
-      <MetricCard label="Unknown 24h" value={metrics.unknownTasks24h} tone="warning" />
-      <MetricCard label="Success Streak" value={metrics.successStreak} tone="success" />
-      <MetricCard label="Chaos Index" value={metrics.chaosIndex} tone="warning" />
+      <MetricCard label="24h Success" value={`${metrics.successRate24h}%`} tone="success" variant="compact" />
+      <MetricCard label="24h Runs" value={metrics.runs24h} variant="compact" />
+      <MetricCard label="24h Failures" value={metrics.failedRuns24h} tone="danger" variant="compact" />
+      <MetricCard label="Avg Resolution" value={formatDurationSeconds(metrics.avgResolutionSeconds24h)} variant="compact" />
+      <MetricCard label="Catch-up Wins" value={metrics.catchupRecovered24h} tone={metrics.catchupRecovered24h > 0 ? 'accent' : 'neutral'} variant="compact" />
+      <MetricCard label="Unknown 24h" value={metrics.unknownTasks24h} tone={metrics.unknownTasks24h > 0 ? 'warning' : 'neutral'} variant="compact" />
+      <MetricCard label="Success Streak" value={metrics.successStreak} tone={metrics.successStreak > 0 ? 'success' : 'neutral'} variant="compact" />
+      <MetricCard label="Chaos Index" value={metrics.chaosIndex} tone={metrics.chaosIndex > 0 ? 'warning' : 'neutral'} variant="compact" />
     </div>
   );
 }
@@ -325,10 +331,8 @@ export function ChannelHeatList({
     <ul className="channel-heat-list">
       {items.map(channel => (
         <li key={channel.channelId}>
-          <div>
-            <strong className="channel-id">{channel.channelId}</strong>
-            <div className="channel-runs">{channel.runs} runs</div>
-          </div>
+          <strong className="channel-id">{channel.channelId}</strong>
+          <div className="channel-runs">{channel.runs} runs</div>
           <StatusBadge
             label={`${channel.failures} failures`}
             tone={channel.failures > 0 ? 'warn' : 'success'}
@@ -340,33 +344,60 @@ export function ChannelHeatList({
 }
 
 export function LearningInsightsPanel({ learning }: { learning: LearningInsights }) {
+  const dominantMode = humanizeMode(learning.dominantPersonalityMode);
+  const topFailure =
+    learning.topFailureKind === 'none' ? 'None' : `${learning.topFailureKind} (${learning.topFailureCount})`;
+
   return (
     <div className="learning-stack">
-      <div className="learning-metrics">
-        <MetricCard label="Signals 24h" value={learning.signals24h} />
-        <MetricCard label="Corrections Learned" value={learning.correctionsLearned} tone="accent" />
-        <MetricCard label="Corrections Applied" value={learning.correctionsApplied24h} tone="success" />
-        <MetricCard label="Profiles" value={learning.personalityProfiles} />
-        <MetricCard label="Dominant Mode" value={humanizeMode(learning.dominantPersonalityMode)} tone="accent" />
+      <div className="learning-metrics learning-metrics-primary">
+        <MetricCard label="Signals 24h" value={learning.signals24h} variant="compact" />
+        <MetricCard
+          label="Corrections Learned"
+          value={learning.correctionsLearned}
+          tone={learning.correctionsLearned > 0 ? 'accent' : 'neutral'}
+          variant="compact"
+        />
+        <MetricCard
+          label="Corrections Applied"
+          value={learning.correctionsApplied24h}
+          tone={learning.correctionsApplied24h > 0 ? 'success' : 'neutral'}
+          variant="compact"
+        />
+        <MetricCard label="Profiles" value={learning.personalityProfiles} variant="compact" />
+      </div>
+
+      <div className="learning-highlights">
+        <MetricCard
+          label="Dominant Mode"
+          value={dominantMode}
+          tone="accent"
+          variant="compact"
+          className="metric-highlight"
+        />
         <MetricCard
           label="Top Failure Signature"
-          value={learning.topFailureKind === 'none' ? 'None' : `${learning.topFailureKind} (${learning.topFailureCount})`}
+          value={topFailure}
           tone={learning.topFailureKind === 'none' ? 'neutral' : 'warning'}
+          variant="compact"
+          className="metric-highlight metric-value-wrap"
+          valueTitle={topFailure}
         />
       </div>
 
-      <div className="mode-heat-grid">
-        {learning.profilesByMode.length === 0 ? (
-          <EmptyState>No personality profiles learned yet.</EmptyState>
-        ) : (
-          learning.profilesByMode.map(mode => (
-            <article className="mode-card" key={mode.mode}>
-              <span>{humanizeMode(mode.mode)}</span>
-              <strong>{mode.count}</strong>
-            </article>
-          ))
-        )}
-      </div>
+      {learning.profilesByMode.length > 1 ? (
+        <div className="learning-mode-section">
+          <div className="section-label">Profiles by Mode</div>
+          <div className="mode-heat-grid">
+            {learning.profilesByMode.map(mode => (
+              <article className="mode-card" key={mode.mode}>
+                <span>{humanizeMode(mode.mode)}</span>
+                <strong>{mode.count}</strong>
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

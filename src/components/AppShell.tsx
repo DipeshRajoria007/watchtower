@@ -114,10 +114,14 @@ export function AppShell({
           >
             <span className="nav-icon">{item.icon}</span>
             <span className="nav-copy">
-              <span className="nav-label">{item.label}</span>
+              <span className="nav-row">
+                <span className="nav-label">{item.label}</span>
+                {item.badge ? (
+                  <span className={`nav-badge nav-badge-${item.badgeTone ?? 'info'}`}>{item.badge}</span>
+                ) : null}
+              </span>
               <span className="nav-helper">{item.helper}</span>
             </span>
-            {item.badge ? <span className={`nav-badge nav-badge-${item.badgeTone ?? 'info'}`}>{item.badge}</span> : null}
           </button>
         ))}
       </nav>
@@ -141,19 +145,23 @@ export function AppShell({
       <aside className={navDrawerOpen ? 'nav-drawer open' : 'nav-drawer'}>{renderNav('drawer')}</aside>
 
       <section className="shell-content">
-        {settingsRequired ? (
-          <div className="global-banner">
-            <div>
-              <strong>Settings required.</strong>
-              <span>Runtime config is incomplete, so the sidecar will remain paused until the Settings page is complete.</span>
-            </div>
-            <button type="button" onClick={() => onNavigate('settings')}>
-              Open Settings
-            </button>
-          </div>
-        ) : null}
+        <div className="content-scroll">
+          <div className="content-inner">
+            {settingsRequired ? (
+              <div className="global-banner">
+                <div>
+                  <strong>Settings required.</strong>
+                  <span>Runtime config is incomplete, so the sidecar will remain paused until the Settings page is complete.</span>
+                </div>
+                <button type="button" onClick={() => onNavigate('settings')}>
+                  Open Settings
+                </button>
+              </div>
+            ) : null}
 
-        <div className="content-scroll">{children}</div>
+            {children}
+          </div>
+        </div>
       </section>
     </main>
   );
