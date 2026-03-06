@@ -21,8 +21,15 @@ const BUG_FIX_KEYWORDS = [
 
 const GITHUB_PR_REGEX = /https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)/g;
 
-export function detectMention(text: string, config: AppConfig): { detected: boolean; type: 'bot' | 'owner' | 'none' } {
+export function detectMention(
+  text: string,
+  config: AppConfig,
+  channelType?: string
+): { detected: boolean; type: 'bot' | 'owner' | 'none' } {
   if (!text) {
+    if (channelType === 'im') {
+      return { detected: true, type: 'bot' };
+    }
     return { detected: false, type: 'none' };
   }
 
@@ -35,6 +42,12 @@ export function detectMention(text: string, config: AppConfig): { detected: bool
     if (text.includes(`<@${ownerId}>`)) {
       return { detected: true, type: 'owner' };
     }
+  }
+
+  // In a direct message to the bot (channel_type=im), explicit mention markup is usually absent.
+  // Treat any non-empty DM message as an implicit bot mention.
+  if (channelType === 'im') {
+    return { detected: true, type: 'bot' };
   }
 
   return { detected: false, type: 'none' };
@@ -93,7 +106,7 @@ export function normalizeTask(
   config: AppConfig,
   threadTexts: string[] = []
 ): NormalizedTask {
-  const mention = detectMention(event.text, config);
+  const mention = detectMention(event.text, config, event.channelType);
   const isOwnerAuthor = config.ownerSlackUserIds.includes(event.userId);
   const prContext = extractPrContext([event.text, ...threadTexts]);
 

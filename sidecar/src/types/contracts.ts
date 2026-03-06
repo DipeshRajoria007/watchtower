@@ -31,6 +31,7 @@ export interface AppConfig {
 export interface SlackEventEnvelope {
   eventId: string;
   channelId: string;
+  channelType?: string;
   threadTs: string;
   eventTs: string;
   userId: string;

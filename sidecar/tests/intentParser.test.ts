@@ -44,6 +44,12 @@ describe('intentParser', () => {
     expect(detectMention('no mention', config)).toEqual({ detected: false, type: 'none' });
   });
 
+  it('treats direct-message text as implicit bot mention', () => {
+    expect(detectMention('can you do this?', config, 'im')).toEqual({ detected: true, type: 'bot' });
+    expect(detectMention('', config, 'im')).toEqual({ detected: true, type: 'bot' });
+    expect(detectMention('can you do this?', config, 'channel')).toEqual({ detected: false, type: 'none' });
+  });
+
   it('extracts PR context from text', () => {
     const result = extractPrContext(['https://github.com/Newton-School/newton-web/pull/123']);
     expect(result?.owner).toBe('Newton-School');
@@ -132,6 +138,24 @@ describe('intentParser', () => {
 
     expect(task.mentionDetected).toBe(true);
     expect(task.isOwnerAuthor).toBe(true);
+    expect(task.intent).toBe('OWNER_AUTOPILOT');
+  });
+
+  it('routes owner-authored DM to owner-autopilot without explicit mention markup', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        channelId: 'D12345',
+        channelType: 'im',
+        userId: 'UOWNER1',
+        text: 'create a folder for me',
+      },
+      config,
+      [],
+    );
+
+    expect(task.mentionDetected).toBe(true);
+    expect(task.mentionType).toBe('bot');
     expect(task.intent).toBe('OWNER_AUTOPILOT');
   });
 

@@ -91,6 +91,7 @@ export class SocketSlackClient {
 
   private normalizeEnvelope(event: Record<string, unknown>, body: Record<string, unknown>): SlackEventEnvelope {
     const channelId = String(event.channel ?? '');
+    const channelType = String(event.channel_type ?? '');
     const eventTs = String(event.ts ?? body.event_ts ?? '');
     const threadTs = String(event.thread_ts ?? event.ts ?? '');
     const text = String(event.text ?? '');
@@ -101,6 +102,7 @@ export class SocketSlackClient {
     return {
       eventId,
       channelId,
+      channelType,
       threadTs,
       eventTs,
       userId,
