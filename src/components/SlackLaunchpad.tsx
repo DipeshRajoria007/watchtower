@@ -130,7 +130,7 @@ export function SlackLaunchpad({
           </div>
 
           <div className="slack-shortcut-note">
-            <span>Cmd+M selects miniOG and focuses the prompt.</span>
+            <span>Cmd+M toggles miniOG and Watchtower, then focuses the prompt.</span>
           </div>
         </div>
       )}
