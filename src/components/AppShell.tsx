@@ -90,9 +90,12 @@ export function AppShell({
         <div className="brand-copy">
           <span className="eyebrow">Developer Automation Console</span>
           <strong>Watchtower</strong>
-          <div className={`sidebar-status sidebar-status-${sidecarTone}`}>
+          <div
+            className={`sidebar-status sidebar-status-${sidecarTone}`}
+            aria-label={`Sidecar status: ${humanizeToken(sidecarStatus)}`}
+            title={`Sidecar status: ${humanizeToken(sidecarStatus)}`}
+          >
             <span className="sidebar-status-dot" />
-            <span>{humanizeToken(sidecarStatus)}</span>
           </div>
         </div>
 
