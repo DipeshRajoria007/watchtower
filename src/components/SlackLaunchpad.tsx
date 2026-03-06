@@ -17,10 +17,26 @@ const SLACK_TARGETS: Array<{ command: string; description: string; label: string
 ];
 
 const PROMPT_PRESETS = [
-  'Review this PR and summarize blockers before I request human review.',
-  'Diagnose the latest failed run and tell me the fastest next step.',
-  'Draft an implementation plan for this feature with risks and sequencing.',
-  'Summarize channel heat and tell me where I should intervene first.',
+  {
+    label: 'Review PR',
+    prompt: 'Review this PR and summarize blockers before I request human review.',
+  },
+  {
+    label: 'Diagnose run',
+    prompt: 'Diagnose the latest failed run and tell me the fastest next step.',
+  },
+  {
+    label: 'Plan feature',
+    prompt: 'Draft an implementation plan for this feature with risks and sequencing.',
+  },
+  {
+    label: 'Channel heat',
+    prompt: 'Summarize channel heat and tell me where I should intervene first.',
+  },
+  {
+    label: 'Draft reply',
+    prompt: 'Draft a concise Slack reply that acknowledges the issue, explains the next step, and asks for the missing detail.',
+  },
 ];
 
 type SlackLaunchpadProps = {
@@ -95,113 +111,87 @@ export function SlackLaunchpad({
 
   return (
     <div className={isMinimal ? 'slack-launchpad minimal' : 'slack-launchpad'}>
-      {isMinimal ? (
-        <div className="slack-launchpad-top slack-launchpad-top-minimal">
-          <label className="slack-dropdown-field">
-            <span>Slack Target</span>
-            <select
-              value={target}
-              aria-label="Slack command target"
-              onChange={event => onTargetChange(event.target.value as SlackCommandTarget)}
-            >
-              {SLACK_TARGETS.map(item => (
-                <option key={item.value} value={item.value}>
-                  {item.label} ({item.command})
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      ) : (
-        <div className="slack-launchpad-top">
-          <div className="slack-targets" role="tablist" aria-label="Slack command target">
+      <div className="slack-composer-card">
+        <label className="composer-field slack-composer-field">
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            aria-label="Task prompt"
+            onChange={event => onDraftChange(event.target.value)}
+            placeholder="Describe the review, bug, handoff, or next action you want ready for Slack."
+            rows={4}
+          />
+        </label>
+
+        <div className="slack-composer-toolbar">
+          <div className="slack-target-segment" role="group" aria-label="Slack command target">
             {SLACK_TARGETS.map(item => (
               <button
                 key={item.value}
-                className={item.value === target ? 'slack-target active' : 'slack-target'}
+                className={item.value === target ? 'slack-segment-button active' : 'slack-segment-button'}
+                aria-pressed={item.value === target}
                 type="button"
                 onClick={() => onTargetChange(item.value)}
               >
-                <span className="slack-target-label">{item.label}</span>
-                <span className="slack-target-command">{item.command}</span>
-                <span className="slack-target-description">{item.description}</span>
+                <span className="slack-segment-label">{item.label}</span>
+                <span className="slack-segment-command">{item.command}</span>
               </button>
             ))}
           </div>
 
-          <div className="slack-shortcut-note">
-            <span>Cmd+M toggles miniOG and Watchtower, then focuses the prompt.</span>
+          <div className="slack-toolbar-actions">
+            <button className="ghost-button slack-toolbar-button" type="button" onClick={openSlack}>
+              Open Slack
+            </button>
+            <button className="ghost-button slack-toolbar-button" type="button" onClick={() => onDraftChange('')}>
+              Clear
+            </button>
           </div>
         </div>
-      )}
 
-      <label className="composer-field">
-        <span>Task Prompt</span>
-        <textarea
-          ref={textareaRef}
-          value={draft}
-          onChange={event => onDraftChange(event.target.value)}
-          placeholder="Ask for a PR review, a debugging pass, a spec draft, or a Slack-thread response."
-          rows={5}
-        />
-      </label>
+        <div className="slack-command-bar">
+          <div className="slack-preview">
+            <span>Command preview</span>
+            <code>{commandPreview}</code>
+          </div>
+
+          <div className="slack-launchpad-actions">
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => copyText(commandPreview, `${selectedTarget.command} copied`)}
+            >
+              Copy command
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => copyText(draft.trim(), 'Prompt copied')}
+              disabled={!draft.trim()}
+            >
+              Copy prompt
+            </button>
+          </div>
+        </div>
+      </div>
 
       <div className="slack-presets">
         {PROMPT_PRESETS.map(preset => (
           <button
-            key={preset}
+            key={preset.label}
             className="slack-preset"
             type="button"
-            onClick={() => onDraftChange(preset)}
+            onClick={() => onDraftChange(preset.prompt)}
           >
-            {preset}
+            {preset.label}
           </button>
         ))}
       </div>
 
-      <div className="slack-launchpad-bottom">
-        <div className="slack-preview">
-          <span>Slack Command Preview</span>
-          <code>{commandPreview}</code>
-        </div>
-
-        <div className="slack-launchpad-actions">
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => copyText(commandPreview, `${selectedTarget.command} copied`)}
-          >
-            Copy Slack Command
-          </button>
-          <button
-            className="ghost-button"
-            type="button"
-            onClick={() => copyText(draft.trim(), 'Prompt copied')}
-            disabled={!draft.trim()}
-          >
-            Copy Prompt Only
-          </button>
-          <button className="ghost-button" type="button" onClick={openSlack}>
-            Open Slack
-          </button>
-          <button className="ghost-button" type="button" onClick={() => onDraftChange('')}>
-            Clear
-          </button>
-        </div>
+      <div className="slack-launchpad-footer">
+        <span>{selectedTarget.description}</span>
+        {feedback ? <strong>{feedback}</strong> : <span>{selectedTarget.command} stays ready while you move through the app.</span>}
       </div>
-
-      {isMinimal ? (
-        feedback ? (
-          <div className="slack-launchpad-footer slack-launchpad-feedback-only">
-            <strong>{feedback}</strong>
-          </div>
-        ) : null
-      ) : (
-        <div className="slack-launchpad-footer">
-          <span>{selectedTarget.label} uses {selectedTarget.command} in Slack.</span>
-          {feedback ? <strong>{feedback}</strong> : <span>Drafts stay in the app while you move between pages.</span>}
-        </div>
-      )}
     </div>
   );
 }
