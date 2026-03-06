@@ -1,5 +1,5 @@
-import { SlackLaunchpad } from '../components/SlackLaunchpad';
-import type { SlackCommandTarget } from '../types';
+import { SlackLaunchpad } from "../components/SlackLaunchpad";
+import type { SlackCommandTarget } from "../types";
 
 type LaunchpadPageProps = {
   draft: string;
@@ -19,21 +19,13 @@ export function LaunchpadPage({
   return (
     <div className="launchpad-page">
       <div className="launchpad-intro">
-        <p className="launchpad-kicker">
-          <span className="launchpad-kicker-mark" aria-hidden="true" />
-          Slack launchpad
-        </p>
-
         <h1 className="launchpad-title">Where should we start?</h1>
 
         <p className="launchpad-copy">
-          Draft a task once, route it to the right assistant, and keep the exact Slack command ready to send.
+          Draft a task once, route it to the right assistant, and keep the exact
+          Slack command ready to send.
         </p>
       </div>
-
-      <p className="launchpad-copy">
-        Choose the route below or use Cmd+M to switch between miniOG and Watchtower while the prompt stays in focus.
-      </p>
 
       <section className="launchpad-shell">
         <SlackLaunchpad
