@@ -70,13 +70,13 @@ Why this is worth reading further:
 2. Install sidecar dependencies: `npm --prefix sidecar install`
 3. Start the app: `npm run tauri:dev`
 4. Open the Settings drawer in the app and fill in:
-   - Slack bot token
-   - Slack app token
-   - owner Slack user IDs
-   - bot user ID
-   - bug/update channel IDs (comma separated)
-   - absolute local paths for `newton-web` and `newton-api`
-   - concurrency, timeout, and repo-classifier settings
+  - Slack bot token
+  - Slack app token
+  - owner Slack user IDs
+  - bot user ID
+  - bug/update channel IDs (comma separated)
+  - absolute local paths for `newton-web` and `newton-api`
+  - concurrency, timeout, and repo-classifier settings
 5. Save settings. The sidecar starts automatically once configuration is complete.
 
 ## Useful Commands
@@ -111,3 +111,4 @@ Why this is worth reading further:
 - Automated PR review currently allowlists the `Newton-School` GitHub org.
 - Unknown-task reaction posting requires Slack scope `reactions:write`.
 - GitHub auth works best with `gh auth login`; if unavailable, Codex GitHub MCP auth can be used.
+

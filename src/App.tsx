@@ -49,7 +49,7 @@ function readPendingShortcutTarget(): SlackCommandTarget | null {
 function App() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [view, setView] = useState<AppView>('overview');
+  const [view, setView] = useState<AppView>('launchpad');
   const [runsSubView, setRunsSubView] = useState<RunsSubView>('active');
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRunLogs, setSelectedRunLogs] = useState<JobLogEntry[]>([]);
