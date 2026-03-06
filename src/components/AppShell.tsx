@@ -44,16 +44,16 @@ export function AppShell({
 }: AppShellProps) {
   const navItems: NavItem[] = [
     {
-      view: 'overview',
-      label: 'Overview',
-      helper: 'Condensed operating snapshot',
-      icon: <OverviewIcon />,
-    },
-    {
       view: 'launchpad',
       label: 'Composer',
       helper: 'Draft a Slack task, choose the handler to execute it.',
       icon: <LaunchpadIcon />,
+    },
+    {
+      view: 'overview',
+      label: 'Overview',
+      helper: 'Condensed operating snapshot',
+      icon: <OverviewIcon />,
     },
     {
       view: 'runs',
@@ -117,6 +117,8 @@ export function AppShell({
             key={item.view}
             type="button"
             className={item.view === currentView ? 'nav-button active' : 'nav-button'}
+            aria-current={item.view === currentView ? 'page' : undefined}
+            title={variant === 'rail' ? item.label : undefined}
             onClick={() => {
               onNavigate(item.view);
               if (variant === 'drawer') {
