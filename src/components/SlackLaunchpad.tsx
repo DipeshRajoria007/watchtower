@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { StatusBadge } from './primitives';
 import type { SlackCommandTarget } from '../types';
 
 const SLACK_TARGETS: Array<{ command: string; description: string; label: string; value: SlackCommandTarget }> = [
@@ -43,6 +42,7 @@ export function SlackLaunchpad({
 }: SlackLaunchpadProps) {
   const [feedback, setFeedback] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const isMinimal = variant === 'minimal';
 
   const selectedTarget = useMemo(() => {
     return SLACK_TARGETS.find(item => item.value === target) ?? SLACK_TARGETS[0];
@@ -94,28 +94,46 @@ export function SlackLaunchpad({
   };
 
   return (
-    <div className={variant === 'minimal' ? 'slack-launchpad minimal' : 'slack-launchpad'}>
-      <div className="slack-launchpad-top">
-        <div className="slack-targets" role="tablist" aria-label="Slack command target">
-          {SLACK_TARGETS.map(item => (
-            <button
-              key={item.value}
-              className={item.value === target ? 'slack-target active' : 'slack-target'}
-              type="button"
-              onClick={() => onTargetChange(item.value)}
+    <div className={isMinimal ? 'slack-launchpad minimal' : 'slack-launchpad'}>
+      {isMinimal ? (
+        <div className="slack-launchpad-top slack-launchpad-top-minimal">
+          <label className="slack-dropdown-field">
+            <span>Slack Target</span>
+            <select
+              value={target}
+              aria-label="Slack command target"
+              onChange={event => onTargetChange(event.target.value as SlackCommandTarget)}
             >
-              <span className="slack-target-label">{item.label}</span>
-              <span className="slack-target-command">{item.command}</span>
-              <span className="slack-target-description">{item.description}</span>
-            </button>
-          ))}
+              {SLACK_TARGETS.map(item => (
+                <option key={item.value} value={item.value}>
+                  {item.label} ({item.command})
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
+      ) : (
+        <div className="slack-launchpad-top">
+          <div className="slack-targets" role="tablist" aria-label="Slack command target">
+            {SLACK_TARGETS.map(item => (
+              <button
+                key={item.value}
+                className={item.value === target ? 'slack-target active' : 'slack-target'}
+                type="button"
+                onClick={() => onTargetChange(item.value)}
+              >
+                <span className="slack-target-label">{item.label}</span>
+                <span className="slack-target-command">{item.command}</span>
+                <span className="slack-target-description">{item.description}</span>
+              </button>
+            ))}
+          </div>
 
-        <div className="slack-shortcut-note">
-          <StatusBadge label="Cmd+M" tone="info" />
-          <span>Selects miniOG and focuses the prompt.</span>
+          <div className="slack-shortcut-note">
+            <span>Cmd+M selects miniOG and focuses the prompt.</span>
+          </div>
         </div>
-      </div>
+      )}
 
       <label className="composer-field">
         <span>Task Prompt</span>
@@ -172,10 +190,18 @@ export function SlackLaunchpad({
         </div>
       </div>
 
-      <div className="slack-launchpad-footer">
-        <span>{selectedTarget.label} uses {selectedTarget.command} in Slack.</span>
-        {feedback ? <strong>{feedback}</strong> : <span>Drafts stay in the app while you move between pages.</span>}
-      </div>
+      {isMinimal ? (
+        feedback ? (
+          <div className="slack-launchpad-footer slack-launchpad-feedback-only">
+            <strong>{feedback}</strong>
+          </div>
+        ) : null
+      ) : (
+        <div className="slack-launchpad-footer">
+          <span>{selectedTarget.label} uses {selectedTarget.command} in Slack.</span>
+          {feedback ? <strong>{feedback}</strong> : <span>Drafts stay in the app while you move between pages.</span>}
+        </div>
+      )}
     </div>
   );
 }

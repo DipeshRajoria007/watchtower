@@ -1,5 +1,4 @@
 import { SlackLaunchpad } from '../components/SlackLaunchpad';
-import { StatusBadge } from '../components/primitives';
 import type { SlackCommandTarget } from '../types';
 
 type LaunchpadPageProps = {
@@ -19,18 +18,6 @@ export function LaunchpadPage({
 }: LaunchpadPageProps) {
   return (
     <div className="launchpad-page">
-      <header className="launchpad-header">
-        <div>
-          <p className="eyebrow">Slack Composer</p>
-          <h1>Launchpad</h1>
-        </div>
-
-        <div className="launchpad-header-actions">
-          <StatusBadge label={target === 'miniog' ? 'miniOG' : 'Watchtower'} tone="info" />
-          <StatusBadge label="Cmd+M" tone="info" />
-        </div>
-      </header>
-
       <p className="launchpad-copy">
         Draft the task here, choose who should handle it in Slack, and copy the exact command. This page stays deliberately minimal.
       </p>
