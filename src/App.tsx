@@ -24,6 +24,10 @@ const POLL_MS = 5000;
 const PENDING_SHORTCUT_VIEW_KEY = 'watchtower:pending-shortcut-view';
 const PENDING_SHORTCUT_TARGET_KEY = 'watchtower:pending-shortcut-target';
 
+function toggleSlackCommandTarget(target: SlackCommandTarget): SlackCommandTarget {
+  return target === 'miniog' ? 'watchtower' : 'miniog';
+}
+
 function readPendingShortcutView(): AppView | null {
   if (typeof window === 'undefined') {
     return null;
@@ -169,7 +173,7 @@ function App() {
       if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.code === 'KeyM') {
         event.preventDefault();
         event.stopPropagation();
-        openLaunchpad('miniog');
+        openLaunchpad(toggleSlackCommandTarget(slackCommandTarget));
         return;
       }
 
@@ -182,7 +186,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown, { capture: true });
     };
-  }, []);
+  }, [slackCommandTarget]);
 
   useEffect(() => {
     if (!data) {
