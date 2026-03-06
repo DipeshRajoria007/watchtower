@@ -1160,7 +1160,7 @@ h2 {
   border-radius: 0;
   background: transparent;
   color: rgba(242, 247, 251, 0.96);
-  font-size: clamp(1.12rem, 0.94rem + 0.9vw, 1.52rem);
+  font-size: clamp(0.98rem, 0.9rem + 0.45vw, 1.18rem);
   line-height: 1.4;
   letter-spacing: -0.03em;
   box-shadow: none;
