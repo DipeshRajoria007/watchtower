@@ -517,8 +517,8 @@ h2 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 22px;
+  height: 22px;
   flex: 0 0 auto;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -527,8 +527,8 @@ h2 {
 }
 
 .sidebar-status-dot {
-  width: 10px;
-  height: 10px;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
   background: currentColor;
   box-shadow: 0 0 18px currentColor;
@@ -2131,7 +2131,6 @@ h2 {
 }
 
 .slack-launchpad-footer {
-  width: min(100%, 820px);
   margin: 0 auto;
   display: grid;
   justify-items: center;
@@ -2613,6 +2612,7 @@ h2 {
   }
 
   .shell-sidebar .brand-copy,
+  .shell-sidebar .brand-title-row,
   .shell-sidebar .nav-label,
   .shell-sidebar .nav-badge,
   .shell-sidebar .sidebar-footer {
@@ -2628,7 +2628,8 @@ h2 {
 
   .shell-sidebar .sidebar-menu-trigger {
     display: inline-flex;
-    margin-left: 0;
+    margin: 0;
+    justify-self: center;
   }
 
   .shell-sidebar .nav-button {
