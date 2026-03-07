@@ -15,7 +15,7 @@ export function IntelligencePage({ data }: { data: DashboardData | null }) {
       <PageIntro
         eyebrow="Adaptive Layer"
         title="Intelligence"
-        description="Full recommendations, learning metrics, personality mode heat, operations pulse, and channel activity live in one analytical workspace."
+        description="Recommendations, learned corrections, operational pulse, and channel heat arranged as one atmospheric analytical workspace."
       />
 
       <section className="stats-grid intelligence-stats">
@@ -32,7 +32,7 @@ export function IntelligencePage({ data }: { data: DashboardData | null }) {
       <section className="panel-grid intelligence-grid">
         <SectionCard
           title="Adaptive Intelligence"
-          subtitle="Learning memory, self-correction, failure signatures, and personality profiles."
+          subtitle="Learning memory, self-correction, failure signatures, and personality profile distribution."
         >
           {data?.learning ? <LearningInsightsPanel learning={data.learning} /> : null}
         </SectionCard>

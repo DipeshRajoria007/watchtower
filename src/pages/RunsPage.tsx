@@ -65,7 +65,7 @@ export function RunsPage({
       <PageIntro
         eyebrow="Operational Workspace"
         title="Runs"
-        description="Use the sub-tabs for queue-specific run selection, persisted trace inspection, and live diagnostics without losing the selected run context."
+        description="Move between active work, failures, recent history, and live diagnostics without losing the selected run or its trace context."
         actions={
           selectedRun ? (
             <StatusBadge label={selectedRun.status} tone={getStatusTone(selectedRun.status)} />
@@ -86,7 +86,7 @@ export function RunsPage({
         <section className="panel-grid diagnostics-grid">
           <SectionCard
             title="Selected Run Context"
-            subtitle="Shared selection persists across Active, Failures, Recent, and Diagnostics."
+            subtitle="The same selection follows you across queue views and the live diagnostics console."
             count={selectedRun ? 1 : 0}
           >
             {selectedRun ? (
@@ -118,7 +118,7 @@ export function RunsPage({
 
           <SectionCard
             title="Live Sidecar Stream"
-            subtitle="Buffered stdout and stderr. Output persists while you move between pages."
+            subtitle="Buffered stdout and stderr that stay visible while you move through the rest of the app."
             count={liveSidecarLogs.length}
           >
             <LiveLogConsole lines={liveSidecarLogs} />

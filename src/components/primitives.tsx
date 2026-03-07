@@ -38,13 +38,19 @@ export function PageIntro({
 }) {
   return (
     <header className="page-intro">
-      <div>
+      <div className="page-intro-copy">
         <p className="eyebrow">{eyebrow}</p>
         <h1>{title}</h1>
         <p className="page-description">{description}</p>
+        {actions ? <div className="page-actions">{actions}</div> : null}
       </div>
 
-      {actions ? <div className="page-actions">{actions}</div> : null}
+      <div className="page-intro-visual" aria-hidden="true">
+        <span className="page-intro-ring page-intro-ring-outer" />
+        <span className="page-intro-ring page-intro-ring-mid" />
+        <span className="page-intro-ring page-intro-ring-inner" />
+        <span className="page-intro-core" />
+      </div>
     </header>
   );
 }
@@ -53,7 +59,7 @@ export function SectionCard({ actions, children, className, count, subtitle, tit
   return (
     <section className={className ? `surface-card ${className}` : 'surface-card'}>
       <div className="section-head">
-        <div>
+        <div className="section-heading-copy">
           <h2>{title}</h2>
           {subtitle ? <p className="muted">{subtitle}</p> : null}
         </div>
@@ -87,9 +93,11 @@ export function MetricCard({
 }) {
   return (
     <article className={className ? `metric-card metric-${tone} metric-${variant} ${className}` : `metric-card metric-${tone} metric-${variant}`}>
-      <span>{label}</span>
-      <strong title={valueTitle}>{value}</strong>
-      {detail ? <p>{detail}</p> : null}
+      <span className="metric-label">{label}</span>
+      <strong className="metric-value" title={valueTitle}>
+        {value}
+      </strong>
+      {detail ? <p className="metric-detail">{detail}</p> : null}
     </article>
   );
 }
@@ -262,11 +270,11 @@ export function LiveLogConsole({ lines }: { lines: string[] }) {
   }
 
   return (
-    <pre className="live-log-console">
+    <div className="live-log-console" role="log" aria-live="polite">
       {lines.map((line, index) => (
         <div key={`${index}-${line.slice(0, 30)}`}>{line}</div>
       ))}
-    </pre>
+    </div>
   );
 }
 

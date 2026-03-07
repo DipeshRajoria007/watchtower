@@ -33,7 +33,7 @@ export function OverviewPage({
       <PageIntro
         eyebrow="Operating Snapshot"
         title="Overview"
-        description="Condensed health, queue pressure, and preview cards for the parts of Watchtower you need to monitor all day."
+        description="A centered control-room read on sidecar health, queue pressure, learning activity, and the next places worth your attention."
         actions={
           <div className="header-chip-row">
             <StatusBadge label={humanizeToken(sidecarStatus)} tone={sidecarTone === 'good' ? 'success' : sidecarTone === 'danger' ? 'failed' : sidecarTone === 'warn' ? 'warn' : 'info'} />
@@ -57,7 +57,7 @@ export function OverviewPage({
       <section className="panel-grid overview-grid">
         <SectionCard
           title="Top Recommendations"
-          subtitle="Preview only. Open Intelligence for the full learning workspace."
+          subtitle="A tight preview of the highest-priority guidance generated from current runtime behavior."
           count={data?.recommendations.length ?? 0}
           actions={
             <button className="ghost-button" type="button" onClick={onOpenIntelligence}>
@@ -74,7 +74,7 @@ export function OverviewPage({
 
         <SectionCard
           title="Active Jobs Preview"
-          subtitle="Most recent in-flight work. Open Runs for the full master-detail workspace."
+          subtitle="The in-flight queue, surfaced in a quieter layout before you jump into the full run workspace."
           count={data?.activeJobs.length ?? 0}
           actions={
             <button className="ghost-button" type="button" onClick={() => onOpenRuns('active')}>
@@ -94,7 +94,7 @@ export function OverviewPage({
 
         <SectionCard
           title="Learning Snapshot"
-          subtitle="A condensed view of the adaptive layer."
+          subtitle="Signals, corrections, and the dominant behavior mode without leaving the overview page."
           count={data?.learning.personalityProfiles ?? 0}
           actions={
             <button className="ghost-button" type="button" onClick={onOpenIntelligence}>
@@ -124,7 +124,7 @@ export function OverviewPage({
 
         <SectionCard
           title="Channel Heat Snapshot"
-          subtitle="Highest-traffic channels for current operations."
+          subtitle="Where workload and failure pressure are concentrating right now."
           count={data?.channelHeat.length ?? 0}
           actions={
             <button className="ghost-button" type="button" onClick={onOpenIntelligence}>
