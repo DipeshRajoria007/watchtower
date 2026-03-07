@@ -78,6 +78,41 @@ body {
   font-family: var(--font-sans);
 }
 
+.watchtower-toast {
+  border: 1px solid rgba(var(--accent-rgb), 0.24);
+  border-radius: 18px;
+  background:
+    linear-gradient(160deg, var(--panel-gradient-top), var(--panel-gradient-bottom)),
+    var(--bg-panel-strong);
+  color: var(--text-strong);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.watchtower-toast-title {
+  color: var(--text-strong);
+  font-size: 0.94rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.watchtower-toast-description {
+  color: var(--text-soft);
+  line-height: 1.45;
+}
+
+.watchtower-toast-close {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-soft);
+}
+
+.watchtower-toast-close:hover {
+  border-color: rgba(var(--accent-rgb), 0.28);
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--text-strong);
+}
+
 button,
 input,
 textarea,

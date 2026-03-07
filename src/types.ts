@@ -104,3 +104,8 @@ export type AppSettings = {
 export type SaveSettingsResponse = {
   configured: boolean;
 };
+
+export type AppNotificationPayload = {
+  title: string;
+  body: string;
+};

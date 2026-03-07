@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { toast } from 'sonner';
 import { AppShell } from './components/AppShell';
 import { applyAppTheme } from './lib/theme';
 import { formatSidecarLine } from './lib/formatters';
@@ -12,6 +13,7 @@ import { RunsPage } from './pages/RunsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import type {
   AppSettings,
+  AppNotificationPayload,
   AppView,
   DashboardData,
   JobLogEntry,
@@ -24,6 +26,7 @@ import type {
 const POLL_MS = 5000;
 const PENDING_SHORTCUT_VIEW_KEY = 'watchtower:pending-shortcut-view';
 const PENDING_SHORTCUT_TARGET_KEY = 'watchtower:pending-shortcut-target';
+const APP_NOTIFICATION_EVENT = 'watchtower-notification';
 
 function toggleSlackCommandTarget(target: SlackCommandTarget): SlackCommandTarget {
   return target === 'miniog' ? 'watchtower' : 'miniog';
@@ -276,6 +279,32 @@ function App() {
           return next.slice(next.length - 400);
         }
         return next;
+      });
+    }).then(handler => {
+      if (disposed) {
+        handler();
+      } else {
+        unlisten = handler;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+
+    void listen<AppNotificationPayload>(APP_NOTIFICATION_EVENT, event => {
+      const title = event.payload.title.trim() || 'Watchtower';
+      const description = event.payload.body.trim();
+      toast(title, {
+        description: description || undefined,
       });
     }).then(handler => {
       if (disposed) {
