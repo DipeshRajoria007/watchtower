@@ -45,20 +45,20 @@ export function AppShell({
   const navItems: NavItem[] = [
     {
       view: 'launchpad',
-      label: 'Composer',
-      helper: 'Draft a Slack task, choose the handler to execute it.',
+      label: 'Launchpad',
+      helper: 'Draft the Slack command and choose the assistant that should run it.',
       icon: <LaunchpadIcon />,
     },
     {
       view: 'overview',
       label: 'Overview',
-      helper: 'Condensed operating snapshot',
+      helper: 'Sidecar status, queue pressure, and what needs attention next.',
       icon: <OverviewIcon />,
     },
     {
       view: 'runs',
       label: 'Runs',
-      helper: 'Primary operational workspace',
+      helper: 'Inspect active jobs, failures, recent work, and live diagnostics.',
       icon: <RunsIcon />,
       badge: failuresCount > 0 ? failuresCount : null,
       badgeTone: failuresCount > 0 ? 'danger' : 'info',
@@ -66,13 +66,13 @@ export function AppShell({
     {
       view: 'intelligence',
       label: 'Intelligence',
-      helper: 'Learning, recommendations, and heat',
+      helper: 'Recommendations, adaptive signals, and channel heat.',
       icon: <IntelligenceIcon />,
     },
     {
       view: 'settings',
       label: 'Settings',
-      helper: 'Slack, ownership, repo, and runtime config',
+      helper: 'Slack auth, repo boundaries, runtime limits, and appearance.',
       icon: <SettingsIcon />,
       badge: settingsRequired ? 'Required' : null,
       badgeTone: settingsRequired ? 'warning' : 'info',
@@ -82,11 +82,11 @@ export function AppShell({
   const sidecarTone = getSidecarTone(sidecarStatus);
 
   const renderNav = (variant: 'rail' | 'drawer') => (
-    <div className={variant === 'drawer' ? 'sidebar-frame expanded' : 'sidebar-frame'}>
-      <div className="sidebar-brand">
-        <div className="brand-mark">
-          <WatchtowerIcon />
-        </div>
+      <div className={variant === 'drawer' ? 'sidebar-frame expanded' : 'sidebar-frame'}>
+        <div className="sidebar-brand">
+          <div className="brand-mark">
+            <WatchtowerIcon />
+          </div>
         <div className="brand-copy">
           <span className="eyebrow brand-eyebrow">Developer Automation Console</span>
           <div className="brand-title-row">
@@ -138,13 +138,21 @@ export function AppShell({
             </span>
           </button>
         ))}
-      </nav>
+        </nav>
 
-      <div className="sidebar-footer">
-        <p>Daily operations first.</p>
-        <span>Persistent polling and traces stay live across pages.</span>
+        <div className="sidebar-footer">
+          <div className="sidebar-footer-pill-row">
+            <span className={`status-badge ${sidecarTone === 'good' ? 'success' : sidecarTone === 'danger' ? 'failed' : sidecarTone === 'warn' ? 'warn' : 'info'}`}>
+              {humanizeToken(sidecarStatus)}
+            </span>
+            <span className={`status-badge ${settingsRequired ? 'warn' : 'success'}`}>
+              {settingsRequired ? 'Setup needed' : 'Runtime ready'}
+            </span>
+          </div>
+          <p>Atmospheric control room for autonomous Slack workflows.</p>
+          <span>Draft commands, inspect traces, follow learned signals, and adjust runtime controls without losing live context.</span>
+        </div>
       </div>
-    </div>
   );
 
   return (

@@ -148,7 +148,7 @@ export function SettingsPage({
       <PageIntro
         eyebrow="Runtime + Appearance"
         title="Settings"
-        description="Slack auth, ownership, repo controls, execution limits, and the desktop theme all live here. Appearance changes preview immediately and persist with the rest of the app settings."
+        description="Slack auth, ownership rules, repo boundaries, execution limits, and desktop appearance all live in one polished configuration surface."
         actions={
           <StatusBadge
             label={settingsConfigured ? 'Runtime Ready' : 'Action Needed'}
