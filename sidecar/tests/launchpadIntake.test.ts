@@ -118,4 +118,71 @@ describe('launchpadIntake', () => {
     store.close();
     fs.rmSync(dbPath, { force: true });
   });
+
+  it('falls back to direct user-id post when conversations.open is missing write scope', async () => {
+    const { dbPath, store } = createStore();
+    store.createLaunchpadRequest({
+      id: 'req-2',
+      target: 'miniog',
+      prompt: 'Fix the launchpad',
+      ownerUserId: 'UOWNER1',
+    });
+
+    const webClient = {
+      conversations: {
+        open: vi.fn().mockRejectedValue({
+          data: {
+            error: 'missing_scope',
+            needed: 'channels:write,groups:write,mpim:write,im:write',
+            response_metadata: {
+              acceptedScopes: ['channels:write', 'groups:write', 'mpim:write', 'im:write'],
+            },
+          },
+        }),
+      },
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({
+          ok: true,
+          channel: 'D555',
+          ts: '1888.91',
+        }),
+      },
+    };
+
+    const enqueue = vi.fn<
+      (event: SlackEventEnvelope, client: typeof webClient, source: 'launchpad') => Promise<void>
+    >()
+      .mockResolvedValue(undefined);
+
+    await runLaunchpadRequestPoller({
+      webClient: webClient as any,
+      config,
+      store,
+      enqueue,
+    });
+
+    const request = store.getLaunchpadRequest('req-2');
+    expect(request?.status).toBe('QUEUED');
+    expect(request?.slackChannelId).toBe('D555');
+    expect(request?.anchorTs).toBe('1888.91');
+    expect(webClient.conversations.open).toHaveBeenCalledWith({
+      users: 'UOWNER1',
+    });
+    expect(webClient.chat.postMessage).toHaveBeenCalledWith({
+      channel: 'UOWNER1',
+      text: 'Fix the launchpad',
+    });
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: 'D555',
+        threadTs: '1888.91',
+        launchpadRequestId: 'req-2',
+      }),
+      webClient,
+      'launchpad',
+    );
+
+    store.close();
+    fs.rmSync(dbPath, { force: true });
+  });
 });
