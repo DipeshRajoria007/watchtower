@@ -453,7 +453,7 @@ function App() {
     return (
       <main className="error-view">
         <section className="surface-card">
-          <p className="eyebrow">Startup Error</p>
+          <span className="eyebrow">Startup Error</span>
           <h1>Watchtower</h1>
           <p className="error">{error}</p>
         </section>
