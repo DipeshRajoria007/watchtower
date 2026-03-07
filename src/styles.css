@@ -1606,8 +1606,11 @@ h2 {
 .launchpad-page {
   width: 100%;
   max-width: 1220px;
+  min-height: calc(100vh - 152px);
   margin: 0 auto;
   display: grid;
+  align-items: center;
+  justify-items: center;
   gap: 20px;
   animation: fadeInUp 400ms ease-out;
 }
@@ -2517,6 +2520,12 @@ h2 {
   .slack-toolbar-actions,
   .slack-launchpad-actions {
     justify-content: flex-start;
+  }
+
+  .launchpad-page {
+    min-height: auto;
+    align-items: start;
+    justify-items: stretch;
   }
 }
 
