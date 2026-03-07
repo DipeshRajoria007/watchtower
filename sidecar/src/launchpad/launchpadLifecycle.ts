@@ -1,12 +1,16 @@
-import type { WebClient } from '@slack/web-api';
-import { notifyDesktop } from '../notify/desktopNotifier.js';
-import type { SlackEventEnvelope, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
+import type { WebClient } from "@slack/web-api";
+import { notifyDesktop } from "../notify/desktopNotifier.js";
+import type {
+  SlackEventEnvelope,
+  WorkflowResult,
+  WorkflowStepLogger,
+} from "../types/contracts.js";
 
 type LaunchpadStore = {
   markLaunchpadRequestRunning: (input: { id: string; jobId: string }) => void;
   markLaunchpadRequestFinished: (input: {
     id: string;
-    status: 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED';
+    status: "SUCCESS" | "FAILED" | "PAUSED" | "SKIPPED";
     result?: Record<string, unknown>;
     errorMessage?: string;
   }) => void;
@@ -14,7 +18,7 @@ type LaunchpadStore = {
 
 function fallbackCompletionText(message: string): string {
   const trimmed = message.trim();
-  return trimmed || 'miniOG task finished.';
+  return trimmed || "miniOG task finished.";
 }
 
 export function markLaunchpadJobCreated(params: {
@@ -34,8 +38,8 @@ export function markLaunchpadJobCreated(params: {
   });
 
   logStep?.({
-    stage: 'launchpad.request.running',
-    message: 'Linked launchpad request to job execution.',
+    stage: "launchpad.request.running",
+    message: "Linked launchpad request to job execution.",
     data: {
       requestId: event.launchpadRequestId,
       jobId,
@@ -66,8 +70,8 @@ export async function finalizeLaunchpadWorkflowResult(params: {
       });
       fallbackPosted = true;
       logStep?.({
-        stage: 'launchpad.slack.fallback_posted',
-        message: 'Posted fallback completion reply for launchpad task.',
+        stage: "launchpad.slack.fallback_posted",
+        message: "Posted fallback completion reply for launchpad task.",
         data: {
           requestId: event.launchpadRequestId,
           status: result.status,
@@ -75,9 +79,9 @@ export async function finalizeLaunchpadWorkflowResult(params: {
       });
     } catch (error) {
       logStep?.({
-        stage: 'launchpad.slack.fallback_failed',
-        message: 'Failed to post fallback completion reply for launchpad task.',
-        level: 'WARN',
+        stage: "launchpad.slack.fallback_failed",
+        message: "Failed to post fallback completion reply for launchpad task.",
+        level: "WARN",
         data: {
           requestId: event.launchpadRequestId,
           error: String(error),
@@ -90,12 +94,12 @@ export async function finalizeLaunchpadWorkflowResult(params: {
     id: event.launchpadRequestId,
     status: result.status,
     result: result.result,
-    errorMessage: result.status === 'FAILED' ? result.message : undefined,
+    errorMessage: result.status === "FAILED" ? result.message : undefined,
   });
 
   logStep?.({
-    stage: 'launchpad.request.completed',
-    message: 'Marked launchpad request with terminal workflow status.',
+    stage: "launchpad.request.completed",
+    message: "Marked launchpad request with terminal workflow status.",
     data: {
       requestId: event.launchpadRequestId,
       status: result.status,
@@ -103,11 +107,15 @@ export async function finalizeLaunchpadWorkflowResult(params: {
     },
   });
 
-  if (result.status === 'SUCCESS') {
-    notifyDesktop('Watchtower miniOG complete', fallbackCompletionText(result.message));
+  if (result.status === "SUCCESS") {
+    notifyDesktop(
+      "Watchtower miniOG complete",
+      fallbackCompletionText(result.message),
+      "success",
+    );
     logStep?.({
-      stage: 'launchpad.notify.success',
-      message: 'Emitted success notification for launchpad miniOG task.',
+      stage: "launchpad.notify.success",
+      message: "Emitted success notification for launchpad miniOG task.",
       data: {
         requestId: event.launchpadRequestId,
       },
@@ -128,14 +136,14 @@ export function failLaunchpadWorkflow(params: {
 
   store.markLaunchpadRequestFinished({
     id: event.launchpadRequestId,
-    status: 'FAILED',
+    status: "FAILED",
     errorMessage,
   });
 
   logStep?.({
-    stage: 'launchpad.request.failed',
-    message: 'Marked launchpad request as failed.',
-    level: 'WARN',
+    stage: "launchpad.request.failed",
+    message: "Marked launchpad request as failed.",
+    level: "WARN",
     data: {
       requestId: event.launchpadRequestId,
       errorMessage,

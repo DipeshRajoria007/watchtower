@@ -1,31 +1,40 @@
-import { useRef } from 'react';
-import type { ChangeEvent, CSSProperties, FormEvent } from 'react';
+import { useRef } from "react";
+import type { ChangeEvent, CSSProperties, FormEvent } from "react";
 import {
   THEME_FONT_OPTIONS,
   THEME_PRESETS,
   resolveAppTheme,
   resolveThemeFont,
-} from '../lib/theme';
-import type { AppSettings, ThemePresetId } from '../types';
+} from "../lib/theme";
+import type {
+  AppSettings,
+  NotificationAudioDefaultSoundId,
+  NotificationAudioMode,
+  NotificationAudioTone,
+  ThemePresetId,
+} from "../types";
 import {
   EmptyState,
   MetricCard,
   PageIntro,
   SectionCard,
   StatusBadge,
-} from '../components/primitives';
+} from "../components/primitives";
 
 type SettingsPageProps = {
   onSettingsChange: (settings: AppSettings) => void;
-  onImportNotificationAudio: (file: File) => Promise<void>;
-  onPreviewNotification: () => void;
+  onImportNotificationAudio: (
+    tone: NotificationAudioTone,
+    file: File,
+  ) => Promise<void>;
+  onPreviewNotification: (tone: NotificationAudioTone) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  previewingNotification: boolean;
+  previewingNotificationTone: NotificationAudioTone | null;
   savingSettings: boolean;
   settings: AppSettings | null;
   settingsConfigured: boolean;
   settingsMessage: string | null;
-  uploadingNotificationAudio: boolean;
+  uploadingNotificationAudioTone: NotificationAudioTone | null;
 };
 
 type SectionSummary = {
@@ -47,52 +56,67 @@ type ThemeCard = {
 
 type NotificationAudioModeCard = {
   description: string;
-  id: AppSettings['notificationAudioMode'];
+  id: NotificationAudioMode;
   label: string;
 };
 
 type NotificationAudioSoundCard = {
   description: string;
-  id: AppSettings['notificationAudioDefaultSound'];
+  id: NotificationAudioDefaultSoundId;
   label: string;
+};
+
+type NotificationAudioProfileState = {
+  customPath: string;
+  defaultSound: NotificationAudioDefaultSoundId;
+  mode: NotificationAudioMode;
+};
+
+type NotificationAudioProfileCard = {
+  description: string;
+  previewCopy: string;
+  title: string;
+  tone: NotificationAudioTone;
 };
 
 const NOTIFICATION_AUDIO_MODE_CARDS: NotificationAudioModeCard[] = [
   {
-    description: 'Keep Watchtower desktop notifications silent.',
-    id: 'off',
-    label: 'No Sound',
+    description: "Keep Watchtower desktop notifications silent.",
+    id: "off",
+    label: "No Sound",
   },
   {
-    description: 'Use a built-in macOS alert sound for every notification.',
-    id: 'default',
-    label: 'Built-in Sounds',
+    description: "Use a built-in macOS alert sound for every notification.",
+    id: "default",
+    label: "Built-in Sounds",
   },
   {
-    description: 'Import your own audio file and store it with Watchtower.',
-    id: 'custom',
-    label: 'Custom File',
+    description: "Import your own audio file and store it with Watchtower.",
+    id: "custom",
+    label: "Custom File",
   },
 ];
 
 const NOTIFICATION_AUDIO_SOUND_CARDS: NotificationAudioSoundCard[] = [
-  { description: 'Low, warm tap', id: 'basso', label: 'Basso' },
-  { description: 'Bright glass chime', id: 'glass', label: 'Glass' },
-  { description: 'Confident upward tone', id: 'hero', label: 'Hero' },
-  { description: 'Classic single ping', id: 'ping', label: 'Ping' },
-  { description: 'Short rounded pop', id: 'pop', label: 'Pop' },
-  { description: 'Soft synthetic pulse', id: 'purr', label: 'Purr' },
-  { description: 'Retro system chirp', id: 'sosumi', label: 'Sosumi' },
-  { description: 'Deep submarine ping', id: 'submarine', label: 'Submarine' },
-  { description: 'Small crystal tick', id: 'tink', label: 'Tink' },
+  { description: "Low, warm tap", id: "basso", label: "Basso" },
+  { description: "Bright glass chime", id: "glass", label: "Glass" },
+  { description: "Confident upward tone", id: "hero", label: "Hero" },
+  { description: "Classic single ping", id: "ping", label: "Ping" },
+  { description: "Short rounded pop", id: "pop", label: "Pop" },
+  { description: "Soft synthetic pulse", id: "purr", label: "Purr" },
+  { description: "Retro system chirp", id: "sosumi", label: "Sosumi" },
+  { description: "Deep submarine ping", id: "submarine", label: "Submarine" },
+  { description: "Small crystal tick", id: "tink", label: "Tink" },
 ];
 
-function buildThemePreviewStyle(theme: ReturnType<typeof resolveAppTheme>): CSSProperties {
+function buildThemePreviewStyle(
+  theme: ReturnType<typeof resolveAppTheme>,
+): CSSProperties {
   return {
-    '--theme-preview-accent': theme.accentColor,
-    '--theme-preview-bg': theme.backgroundColor,
-    '--theme-preview-font': theme.font.stack,
-    '--theme-preview-fg': theme.foregroundColor,
+    "--theme-preview-accent": theme.accentColor,
+    "--theme-preview-bg": theme.backgroundColor,
+    "--theme-preview-font": theme.font.stack,
+    "--theme-preview-fg": theme.foregroundColor,
   } as CSSProperties;
 }
 
@@ -106,19 +130,70 @@ function readFileNameFromPath(pathValue: string): string | null {
   return parts.at(-1) ?? trimmed;
 }
 
+function readNotificationAudioProfile(
+  settings: AppSettings,
+  tone: NotificationAudioTone,
+): NotificationAudioProfileState {
+  if (tone === "success") {
+    return {
+      mode: settings.successNotificationAudioMode,
+      defaultSound: settings.successNotificationAudioDefaultSound,
+      customPath: settings.successNotificationAudioCustomPath,
+    };
+  }
+
+  return {
+    mode: settings.failureNotificationAudioMode,
+    defaultSound: settings.failureNotificationAudioDefaultSound,
+    customPath: settings.failureNotificationAudioCustomPath,
+  };
+}
+
+function buildNotificationAudioProfilePatch(
+  tone: NotificationAudioTone,
+  patch: Partial<NotificationAudioProfileState>,
+): Partial<AppSettings> {
+  if (tone === "success") {
+    return {
+      ...(patch.mode ? { successNotificationAudioMode: patch.mode } : {}),
+      ...(patch.defaultSound
+        ? { successNotificationAudioDefaultSound: patch.defaultSound }
+        : {}),
+      ...(patch.customPath !== undefined
+        ? { successNotificationAudioCustomPath: patch.customPath }
+        : {}),
+    };
+  }
+
+  return {
+    ...(patch.mode ? { failureNotificationAudioMode: patch.mode } : {}),
+    ...(patch.defaultSound
+      ? { failureNotificationAudioDefaultSound: patch.defaultSound }
+      : {}),
+    ...(patch.customPath !== undefined
+      ? { failureNotificationAudioCustomPath: patch.customPath }
+      : {}),
+  };
+}
+
 export function SettingsPage({
   onSettingsChange,
   onImportNotificationAudio,
   onPreviewNotification,
   onSubmit,
-  previewingNotification,
+  previewingNotificationTone,
   savingSettings,
   settings,
   settingsConfigured,
   settingsMessage,
-  uploadingNotificationAudio,
+  uploadingNotificationAudioTone,
 }: SettingsPageProps) {
-  const notificationAudioInputRef = useRef<HTMLInputElement | null>(null);
+  const successNotificationAudioInputRef = useRef<HTMLInputElement | null>(
+    null,
+  );
+  const failureNotificationAudioInputRef = useRef<HTMLInputElement | null>(
+    null,
+  );
 
   if (!settings) {
     return (
@@ -128,28 +203,49 @@ export function SettingsPage({
           title="Settings"
           description="Slack authentication, ownership, repo path, runtime limits, and desktop appearance all live here."
         />
-        <SectionCard title="Loading Settings" subtitle="Pulling runtime configuration and theme state from the local database.">
+        <SectionCard
+          title="Loading Settings"
+          subtitle="Pulling runtime configuration and theme state from the local database."
+        >
           <EmptyState>Loading settings.</EmptyState>
         </SectionCard>
       </div>
     );
   }
 
-  const isAbsolutePath = (value: string) => value.trim().startsWith('/');
-  const hasCommaList = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean).length > 0;
-  const updateSettings = (patch: Partial<AppSettings>) => onSettingsChange({ ...settings, ...patch });
+  const isAbsolutePath = (value: string) => value.trim().startsWith("/");
+  const hasCommaList = (value: string) =>
+    value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean).length > 0;
+  const updateSettings = (patch: Partial<AppSettings>) =>
+    onSettingsChange({ ...settings, ...patch });
   const activeTheme = resolveAppTheme(settings);
-  const customThemePreview = resolveAppTheme({ ...settings, themePreset: 'custom' });
-  const customNotificationAudioFile = readFileNameFromPath(settings.notificationAudioCustomPath);
-  const activeNotificationAudioLabel =
-    settings.notificationAudioMode === 'off'
-      ? 'Silent'
-      : settings.notificationAudioMode === 'custom'
-        ? customNotificationAudioFile ?? 'Custom file'
-        : NOTIFICATION_AUDIO_SOUND_CARDS.find(sound => sound.id === settings.notificationAudioDefaultSound)?.label ?? 'Built-in sound';
-  const canPreviewNotification = settings.notificationAudioMode !== 'custom' || Boolean(customNotificationAudioFile);
+  const customThemePreview = resolveAppTheme({
+    ...settings,
+    themePreset: "custom",
+  });
+  const notificationAudioProfiles: NotificationAudioProfileCard[] = [
+    {
+      tone: "success",
+      title: "Success Notifications",
+      description:
+        "Play a distinct sound when miniOG or other Watchtower work finishes successfully.",
+      previewCopy:
+        "Preview the success path using the current in-form settings before you save.",
+    },
+    {
+      tone: "failure",
+      title: "Failure Notifications",
+      description:
+        "Play a separate alert when workflows fail, the sidecar crashes, or launch intake is blocked.",
+      previewCopy:
+        "Preview the failure path using the current in-form settings before you save.",
+    },
+  ];
   const themeCards: ThemeCard[] = [
-    ...THEME_PRESETS.map(preset => ({
+    ...THEME_PRESETS.map((preset) => ({
       accentColor: preset.accentColor,
       backgroundColor: preset.backgroundColor,
       description: preset.description,
@@ -161,51 +257,72 @@ export function SettingsPage({
     {
       accentColor: customThemePreview.accentColor,
       backgroundColor: customThemePreview.backgroundColor,
-      description: 'Manual background, foreground, accent, and font selection.',
+      description: "Manual background, foreground, accent, and font selection.",
       fontLabel: customThemePreview.font.label,
       foregroundColor: customThemePreview.foregroundColor,
-      id: 'custom',
-      label: 'Custom',
+      id: "custom",
+      label: "Custom",
     },
   ];
   const themePreviewStyle = buildThemePreviewStyle(activeTheme);
 
-  const handleNotificationAudioFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) {
-      return;
-    }
+  const handleNotificationAudioFileChange =
+    (tone: NotificationAudioTone) =>
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) {
+        return;
+      }
 
-    await onImportNotificationAudio(file);
-  };
+      await onImportNotificationAudio(tone, file);
+    };
 
   const sections: SectionSummary[] = [
     {
-      label: 'Slack Auth',
-      complete: [settings.slackBotToken, settings.slackAppToken, settings.botUserId].filter(value => value.trim()).length,
+      label: "Slack Auth",
+      complete: [
+        settings.slackBotToken,
+        settings.slackAppToken,
+        settings.botUserId,
+      ].filter((value) => value.trim()).length,
       items: 3,
-      ready: Boolean(settings.slackBotToken.trim() && settings.slackAppToken.trim() && settings.botUserId.trim()),
+      ready: Boolean(
+        settings.slackBotToken.trim() &&
+        settings.slackAppToken.trim() &&
+        settings.botUserId.trim(),
+      ),
     },
     {
-      label: 'Ownership / Channels',
-      complete: [hasCommaList(settings.ownerSlackUserIds), hasCommaList(settings.bugsAndUpdatesChannelId)].filter(Boolean).length,
+      label: "Ownership / Channels",
+      complete: [
+        hasCommaList(settings.ownerSlackUserIds),
+        hasCommaList(settings.bugsAndUpdatesChannelId),
+      ].filter(Boolean).length,
       items: 2,
-      ready: hasCommaList(settings.ownerSlackUserIds) && hasCommaList(settings.bugsAndUpdatesChannelId),
+      ready:
+        hasCommaList(settings.ownerSlackUserIds) &&
+        hasCommaList(settings.bugsAndUpdatesChannelId),
     },
     {
-      label: 'Repo Paths',
-      complete: [isAbsolutePath(settings.newtonWebPath), isAbsolutePath(settings.newtonApiPath)].filter(Boolean).length,
+      label: "Repo Paths",
+      complete: [
+        isAbsolutePath(settings.newtonWebPath),
+        isAbsolutePath(settings.newtonApiPath),
+      ].filter(Boolean).length,
       items: 2,
-      ready: isAbsolutePath(settings.newtonWebPath) && isAbsolutePath(settings.newtonApiPath),
+      ready:
+        isAbsolutePath(settings.newtonWebPath) &&
+        isAbsolutePath(settings.newtonApiPath),
     },
     {
-      label: 'Runtime Limits',
+      label: "Runtime Limits",
       complete: [
         settings.maxConcurrentJobs >= 1 && settings.maxConcurrentJobs <= 10,
         settings.prReviewTimeoutMs > 0,
         settings.bugFixTimeoutMs > 0,
-        settings.repoClassifierThreshold >= 0 && settings.repoClassifierThreshold <= 1,
+        settings.repoClassifierThreshold >= 0 &&
+          settings.repoClassifierThreshold <= 1,
       ].filter(Boolean).length,
       items: 4,
       ready:
@@ -218,7 +335,7 @@ export function SettingsPage({
     },
   ];
 
-  const completeSections = sections.filter(section => section.ready).length;
+  const completeSections = sections.filter((section) => section.ready).length;
 
   return (
     <div className="page-stack settings-page">
@@ -228,8 +345,8 @@ export function SettingsPage({
         description="Slack auth, ownership rules, repo boundaries, execution limits, desktop appearance, and notification audio all live in one polished configuration surface."
         actions={
           <StatusBadge
-            label={settingsConfigured ? 'Runtime Ready' : 'Action Needed'}
-            tone={settingsConfigured ? 'success' : 'warn'}
+            label={settingsConfigured ? "Runtime Ready" : "Action Needed"}
+            tone={settingsConfigured ? "success" : "warn"}
           />
         }
       />
@@ -241,14 +358,29 @@ export function SettingsPage({
           count={`${completeSections}/${sections.length}`}
         >
           <div className="settings-summary-grid">
-            <MetricCard label="Sections Ready" value={`${completeSections}/${sections.length}`} tone={settingsConfigured ? 'success' : 'warning'} />
-            <MetricCard label="Runtime Status" value={settingsConfigured ? 'Ready' : 'Incomplete'} tone={settingsConfigured ? 'success' : 'danger'} />
-            <MetricCard label="Active Theme" value={activeTheme.label} tone="accent" />
-            {sections.map(section => (
+            <MetricCard
+              label="Sections Ready"
+              value={`${completeSections}/${sections.length}`}
+              tone={settingsConfigured ? "success" : "warning"}
+            />
+            <MetricCard
+              label="Runtime Status"
+              value={settingsConfigured ? "Ready" : "Incomplete"}
+              tone={settingsConfigured ? "success" : "danger"}
+            />
+            <MetricCard
+              label="Active Theme"
+              value={activeTheme.label}
+              tone="accent"
+            />
+            {sections.map((section) => (
               <article className="settings-summary-card" key={section.label}>
                 <div className="settings-summary-top">
                   <strong>{section.label}</strong>
-                  <StatusBadge label={section.ready ? 'Ready' : 'Pending'} tone={section.ready ? 'success' : 'warn'} />
+                  <StatusBadge
+                    label={section.ready ? "Ready" : "Pending"}
+                    tone={section.ready ? "success" : "warn"}
+                  />
                 </div>
                 <p>
                   {section.complete}/{section.items} checks complete
@@ -259,16 +391,23 @@ export function SettingsPage({
         </SectionCard>
 
         <div className="settings-sections">
-          <SectionCard title="Theme" subtitle="Presets repaint background, foreground, accent, and typography across the desktop shell. Select Custom to unlock manual pickers.">
+          <SectionCard
+            title="Theme"
+            subtitle="Presets repaint background, foreground, accent, and typography across the desktop shell. Select Custom to unlock manual pickers."
+          >
             <div className="theme-section-layout">
               <div className="theme-presets-grid">
-                {themeCards.map(card => {
+                {themeCards.map((card) => {
                   const selected = settings.themePreset === card.id;
 
                   return (
                     <button
                       key={card.id}
-                      className={selected ? 'theme-preset-card active' : 'theme-preset-card'}
+                      className={
+                        selected
+                          ? "theme-preset-card active"
+                          : "theme-preset-card"
+                      }
                       type="button"
                       onClick={() => updateSettings({ themePreset: card.id })}
                     >
@@ -277,12 +416,25 @@ export function SettingsPage({
                           <strong>{card.label}</strong>
                           <p>{card.description}</p>
                         </div>
-                        <StatusBadge label={selected ? 'Active' : card.id === 'custom' ? 'Manual' : 'Preset'} tone={selected ? 'success' : 'info'} />
+                        <StatusBadge
+                          label={
+                            selected
+                              ? "Active"
+                              : card.id === "custom"
+                                ? "Manual"
+                                : "Preset"
+                          }
+                          tone={selected ? "success" : "info"}
+                        />
                       </div>
 
                       <div className="theme-swatch-strip" aria-hidden="true">
-                        <span style={{ backgroundColor: card.backgroundColor }} />
-                        <span style={{ backgroundColor: card.foregroundColor }} />
+                        <span
+                          style={{ backgroundColor: card.backgroundColor }}
+                        />
+                        <span
+                          style={{ backgroundColor: card.foregroundColor }}
+                        />
                         <span style={{ backgroundColor: card.accentColor }} />
                       </div>
 
@@ -301,7 +453,10 @@ export function SettingsPage({
                     <p className="theme-preview-kicker">Live Preview</p>
                     <h3>{activeTheme.label}</h3>
                   </div>
-                  <StatusBadge label={activeTheme.isCustom ? 'Custom' : 'Preset'} tone="info" />
+                  <StatusBadge
+                    label={activeTheme.isCustom ? "Custom" : "Preset"}
+                    tone="info"
+                  />
                 </div>
 
                 <p className="theme-preview-copy">{activeTheme.description}</p>
@@ -312,7 +467,10 @@ export function SettingsPage({
                     <span>{activeTheme.font.label}</span>
                   </div>
                   <strong>Sidecar healthy. Queue under control.</strong>
-                  <p>Background, foreground, accent, and type update live while you edit settings.</p>
+                  <p>
+                    Background, foreground, accent, and type update live while
+                    you edit settings.
+                  </p>
                   <div className="theme-preview-actions">
                     <button type="button">Primary Action</button>
                     <span>{activeTheme.accentColor}</span>
@@ -321,7 +479,7 @@ export function SettingsPage({
               </article>
             </div>
 
-            {settings.themePreset === 'custom' ? (
+            {settings.themePreset === "custom" ? (
               <div className="settings-fields two-column theme-custom-grid">
                 <label className="field">
                   <span>Background Color</span>
@@ -329,9 +487,16 @@ export function SettingsPage({
                     <input
                       type="color"
                       value={settings.themeBackgroundColor}
-                      onChange={event => updateSettings({ themeBackgroundColor: event.target.value.toUpperCase() })}
+                      onChange={(event) =>
+                        updateSettings({
+                          themeBackgroundColor:
+                            event.target.value.toUpperCase(),
+                        })
+                      }
                     />
-                    <strong>{settings.themeBackgroundColor.toUpperCase()}</strong>
+                    <strong>
+                      {settings.themeBackgroundColor.toUpperCase()}
+                    </strong>
                   </div>
                 </label>
 
@@ -341,9 +506,16 @@ export function SettingsPage({
                     <input
                       type="color"
                       value={settings.themeForegroundColor}
-                      onChange={event => updateSettings({ themeForegroundColor: event.target.value.toUpperCase() })}
+                      onChange={(event) =>
+                        updateSettings({
+                          themeForegroundColor:
+                            event.target.value.toUpperCase(),
+                        })
+                      }
                     />
-                    <strong>{settings.themeForegroundColor.toUpperCase()}</strong>
+                    <strong>
+                      {settings.themeForegroundColor.toUpperCase()}
+                    </strong>
                   </div>
                 </label>
 
@@ -353,7 +525,11 @@ export function SettingsPage({
                     <input
                       type="color"
                       value={settings.themeAccentColor}
-                      onChange={event => updateSettings({ themeAccentColor: event.target.value.toUpperCase() })}
+                      onChange={(event) =>
+                        updateSettings({
+                          themeAccentColor: event.target.value.toUpperCase(),
+                        })
+                      }
                     />
                     <strong>{settings.themeAccentColor.toUpperCase()}</strong>
                   </div>
@@ -363,143 +539,261 @@ export function SettingsPage({
                   <span>Font Family</span>
                   <select
                     value={settings.themeFontFamily}
-                    onChange={event =>
+                    onChange={(event) =>
                       updateSettings({
-                        themeFontFamily: event.target.value as AppSettings['themeFontFamily'],
+                        themeFontFamily: event.target
+                          .value as AppSettings["themeFontFamily"],
                       })
                     }
                   >
-                    {THEME_FONT_OPTIONS.map(option => (
+                    {THEME_FONT_OPTIONS.map((option) => (
                       <option key={option.id} value={option.id}>
                         {option.label} - {option.note}
                       </option>
                     ))}
                   </select>
-                  <small className="field-hint">Custom values preview instantly and save with the rest of your local app settings.</small>
+                  <small className="field-hint">
+                    Custom values preview instantly and save with the rest of
+                    your local app settings.
+                  </small>
                 </label>
               </div>
             ) : (
-              <p className="muted theme-custom-hint">Switch to Custom if you want to pick the exact colors and font family yourself.</p>
+              <p className="muted theme-custom-hint">
+                Switch to Custom if you want to pick the exact colors and font
+                family yourself.
+              </p>
             )}
           </SectionCard>
 
           <SectionCard
             title="Notification Audio"
-            subtitle="Choose a built-in macOS alert or import your own audio file. Preview uses the current in-form selection before you save."
+            subtitle="Configure distinct success and failure sounds. Each profile can stay silent, use a built-in macOS alert, or import a custom file."
           >
-            <div className="audio-mode-grid">
-              {NOTIFICATION_AUDIO_MODE_CARDS.map(card => {
-                const selected = settings.notificationAudioMode === card.id;
+            <div className="audio-profile-grid">
+              {notificationAudioProfiles.map((profile) => {
+                const profileSettings = readNotificationAudioProfile(
+                  settings,
+                  profile.tone,
+                );
+                const customNotificationAudioFile = readFileNameFromPath(
+                  profileSettings.customPath,
+                );
+                const activeNotificationAudioLabel =
+                  profileSettings.mode === "off"
+                    ? "Silent"
+                    : profileSettings.mode === "custom"
+                      ? (customNotificationAudioFile ?? "Custom file")
+                      : (NOTIFICATION_AUDIO_SOUND_CARDS.find(
+                          (sound) => sound.id === profileSettings.defaultSound,
+                        )?.label ?? "Built-in sound");
+                const canPreviewNotification =
+                  profileSettings.mode !== "custom" ||
+                  Boolean(customNotificationAudioFile);
+                const inputRef =
+                  profile.tone === "success"
+                    ? successNotificationAudioInputRef
+                    : failureNotificationAudioInputRef;
+                const isUploading =
+                  uploadingNotificationAudioTone === profile.tone;
+                const isPreviewing =
+                  previewingNotificationTone === profile.tone;
+                const toneLabel =
+                  profile.tone === "success" ? "Success" : "Failure";
 
                 return (
-                  <button
-                    key={card.id}
-                    className={selected ? 'settings-choice-card active' : 'settings-choice-card'}
-                    type="button"
-                    onClick={() => updateSettings({ notificationAudioMode: card.id })}
-                  >
+                  <article className="audio-profile-card" key={profile.tone}>
                     <div className="settings-choice-top">
-                      <strong>{card.label}</strong>
-                      <StatusBadge label={selected ? 'Selected' : 'Available'} tone={selected ? 'success' : 'info'} />
+                      <div>
+                        <strong>{profile.title}</strong>
+                        <p>{profile.description}</p>
+                      </div>
+                      <StatusBadge
+                        label={toneLabel}
+                        tone={profile.tone === "success" ? "success" : "warn"}
+                      />
                     </div>
-                    <p>{card.description}</p>
-                  </button>
+
+                    <div className="audio-mode-grid">
+                      {NOTIFICATION_AUDIO_MODE_CARDS.map((card) => {
+                        const selected = profileSettings.mode === card.id;
+
+                        return (
+                          <button
+                            key={card.id}
+                            className={
+                              selected
+                                ? "settings-choice-card active"
+                                : "settings-choice-card"
+                            }
+                            type="button"
+                            onClick={() =>
+                              updateSettings(
+                                buildNotificationAudioProfilePatch(
+                                  profile.tone,
+                                  { mode: card.id },
+                                ),
+                              )
+                            }
+                          >
+                            <div className="settings-choice-top">
+                              <strong>{card.label}</strong>
+                              <StatusBadge
+                                label={selected ? "Selected" : "Available"}
+                                tone={selected ? "success" : "info"}
+                              />
+                            </div>
+                            <p>{card.description}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {profileSettings.mode === "default" ? (
+                      <div className="audio-sound-grid">
+                        {NOTIFICATION_AUDIO_SOUND_CARDS.map((sound) => {
+                          const selected =
+                            profileSettings.defaultSound === sound.id;
+
+                          return (
+                            <button
+                              key={sound.id}
+                              className={
+                                selected
+                                  ? "settings-choice-card active"
+                                  : "settings-choice-card"
+                              }
+                              type="button"
+                              onClick={() =>
+                                updateSettings(
+                                  buildNotificationAudioProfilePatch(
+                                    profile.tone,
+                                    { defaultSound: sound.id },
+                                  ),
+                                )
+                              }
+                            >
+                              <div className="settings-choice-top">
+                                <strong>{sound.label}</strong>
+                                <StatusBadge
+                                  label={selected ? "Active" : "Sound"}
+                                  tone={selected ? "success" : "info"}
+                                />
+                              </div>
+                              <p>{sound.description}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+
+                    {profileSettings.mode === "custom" ? (
+                      <div className="audio-custom-card">
+                        <div>
+                          <p className="theme-preview-kicker">Imported File</p>
+                          <strong>
+                            {customNotificationAudioFile ??
+                              "No custom audio selected yet"}
+                          </strong>
+                          <p className="theme-preview-copy">
+                            Supported formats: `.aiff`, `.aif`, `.wav`, `.mp3`,
+                            `.m4a`, `.caf`. Watchtower copies the file into
+                            local app storage and reuses it for future
+                            notifications.
+                          </p>
+                        </div>
+
+                        <div className="audio-custom-actions">
+                          <input
+                            ref={inputRef}
+                            type="file"
+                            accept=".aiff,.aif,.wav,.mp3,.m4a,.caf,audio/*"
+                            onChange={handleNotificationAudioFileChange(
+                              profile.tone,
+                            )}
+                            hidden
+                          />
+
+                          <button
+                            className="ghost-button"
+                            type="button"
+                            onClick={() => inputRef.current?.click()}
+                            disabled={uploadingNotificationAudioTone !== null}
+                          >
+                            {isUploading
+                              ? "Importing..."
+                              : customNotificationAudioFile
+                                ? "Replace Audio File"
+                                : "Choose Audio File"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="notification-preview-strip">
+                      <div>
+                        <p className="theme-preview-kicker">
+                          {toneLabel} Preview
+                        </p>
+                        <strong>
+                          {profileSettings.mode === "off"
+                            ? `${toneLabel} notifications stay silent.`
+                            : `Current sound: ${activeNotificationAudioLabel}`}
+                        </strong>
+                        <p className="theme-preview-copy">
+                          {profile.previewCopy} Uses the same Tauri event path
+                          as a real sidecar notification so you can inspect the
+                          in-app toast styling and hear the selected alert
+                          sound.
+                        </p>
+                      </div>
+
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => onPreviewNotification(profile.tone)}
+                        disabled={
+                          previewingNotificationTone !== null ||
+                          uploadingNotificationAudioTone !== null ||
+                          !canPreviewNotification
+                        }
+                      >
+                        {isPreviewing
+                          ? "Playing Preview..."
+                          : `Preview ${toneLabel}`}
+                      </button>
+                    </div>
+
+                    {profileSettings.mode === "custom" &&
+                    !customNotificationAudioFile ? (
+                      <p className="error">
+                        Pick a file before saving custom mode.
+                      </p>
+                    ) : (
+                      <p className="field-hint">
+                        Built-in sounds use `/System/Library/Sounds`. Custom
+                        uploads stay local to this Mac.
+                      </p>
+                    )}
+                  </article>
                 );
               })}
             </div>
-
-            {settings.notificationAudioMode === 'default' ? (
-              <div className="audio-sound-grid">
-                {NOTIFICATION_AUDIO_SOUND_CARDS.map(sound => {
-                  const selected = settings.notificationAudioDefaultSound === sound.id;
-
-                  return (
-                    <button
-                      key={sound.id}
-                      className={selected ? 'settings-choice-card active' : 'settings-choice-card'}
-                      type="button"
-                      onClick={() => updateSettings({ notificationAudioDefaultSound: sound.id })}
-                    >
-                      <div className="settings-choice-top">
-                        <strong>{sound.label}</strong>
-                        <StatusBadge label={selected ? 'Active' : 'Sound'} tone={selected ? 'success' : 'info'} />
-                      </div>
-                      <p>{sound.description}</p>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-
-            {settings.notificationAudioMode === 'custom' ? (
-              <div className="audio-custom-card">
-                <div>
-                  <p className="theme-preview-kicker">Imported File</p>
-                  <strong>{customNotificationAudioFile ?? 'No custom audio selected yet'}</strong>
-                  <p className="theme-preview-copy">
-                    Supported formats: `.aiff`, `.aif`, `.wav`, `.mp3`, `.m4a`, `.caf`. Watchtower copies the file into local app storage and reuses it for future notifications.
-                  </p>
-                </div>
-
-                <div className="audio-custom-actions">
-                  <input
-                    ref={notificationAudioInputRef}
-                    type="file"
-                    accept=".aiff,.aif,.wav,.mp3,.m4a,.caf,audio/*"
-                    onChange={handleNotificationAudioFileChange}
-                    hidden
-                  />
-
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => notificationAudioInputRef.current?.click()}
-                    disabled={uploadingNotificationAudio}
-                  >
-                    {uploadingNotificationAudio
-                      ? 'Importing...'
-                      : customNotificationAudioFile
-                        ? 'Replace Audio File'
-                        : 'Choose Audio File'}
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="notification-preview-strip">
-              <div>
-                <p className="theme-preview-kicker">Notification Preview</p>
-                <strong>{settings.notificationAudioMode === 'off' ? 'Preview stays silent.' : `Current sound: ${activeNotificationAudioLabel}`}</strong>
-                <p className="theme-preview-copy">
-                  Uses the same Tauri event path as a real sidecar notification so you can inspect the in-app toast styling and hear the selected alert sound.
-                </p>
-              </div>
-
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={onPreviewNotification}
-                disabled={previewingNotification || uploadingNotificationAudio || !canPreviewNotification}
-              >
-                {previewingNotification ? 'Playing Preview...' : 'Preview Notification'}
-              </button>
-            </div>
-
-            {settings.notificationAudioMode === 'custom' && !customNotificationAudioFile ? (
-              <p className="error">Pick a file before saving custom mode.</p>
-            ) : (
-              <p className="field-hint">Built-in sounds use `/System/Library/Sounds`. Custom uploads stay local to this Mac.</p>
-            )}
           </SectionCard>
 
-          <SectionCard title="Slack Auth" subtitle="Tokens and bot identity used to establish the Slack socket connection.">
+          <SectionCard
+            title="Slack Auth"
+            subtitle="Tokens and bot identity used to establish the Slack socket connection."
+          >
             <div className="settings-fields two-column">
               <label className="field">
                 <span>Slack Bot Token</span>
                 <input
                   type="password"
                   value={settings.slackBotToken}
-                  onChange={event => updateSettings({ slackBotToken: event.target.value })}
+                  onChange={(event) =>
+                    updateSettings({ slackBotToken: event.target.value })
+                  }
                   placeholder="xoxb-..."
                 />
               </label>
@@ -509,7 +803,9 @@ export function SettingsPage({
                 <input
                   type="password"
                   value={settings.slackAppToken}
-                  onChange={event => updateSettings({ slackAppToken: event.target.value })}
+                  onChange={(event) =>
+                    updateSettings({ slackAppToken: event.target.value })
+                  }
                   placeholder="xapp-..."
                 />
               </label>
@@ -519,21 +815,28 @@ export function SettingsPage({
                 <input
                   type="text"
                   value={settings.botUserId}
-                  onChange={event => updateSettings({ botUserId: event.target.value })}
+                  onChange={(event) =>
+                    updateSettings({ botUserId: event.target.value })
+                  }
                   placeholder="U0BOTUSER"
                 />
               </label>
             </div>
           </SectionCard>
 
-          <SectionCard title="Ownership / Channels" subtitle="Who owns Watchtower and where bug-fix workflows are allowed to auto-run.">
+          <SectionCard
+            title="Ownership / Channels"
+            subtitle="Who owns Watchtower and where bug-fix workflows are allowed to auto-run."
+          >
             <div className="settings-fields two-column">
               <label className="field">
                 <span>Owner Slack User IDs</span>
                 <input
                   type="text"
                   value={settings.ownerSlackUserIds}
-                  onChange={event => updateSettings({ ownerSlackUserIds: event.target.value })}
+                  onChange={(event) =>
+                    updateSettings({ ownerSlackUserIds: event.target.value })
+                  }
                   placeholder="U01234567,U07654321"
                 />
               </label>
@@ -543,24 +846,34 @@ export function SettingsPage({
                 <input
                   type="text"
                   value={settings.bugsAndUpdatesChannelId}
-                  onChange={event => updateSettings({ bugsAndUpdatesChannelId: event.target.value })}
+                  onChange={(event) =>
+                    updateSettings({
+                      bugsAndUpdatesChannelId: event.target.value,
+                    })
+                  }
                   placeholder="C01H25RNLJH,C02XXXXXXX"
                 />
                 <small className="field-hint">
-                  Mentions are processed anywhere the bot is present. This list only governs bug-fix auto-runs.
+                  Mentions are processed anywhere the bot is present. This list
+                  only governs bug-fix auto-runs.
                 </small>
               </label>
             </div>
           </SectionCard>
 
-          <SectionCard title="Repo Paths" subtitle="Absolute local directories that Watchtower is allowed to operate against.">
+          <SectionCard
+            title="Repo Paths"
+            subtitle="Absolute local directories that Watchtower is allowed to operate against."
+          >
             <div className="settings-fields two-column">
               <label className="field">
                 <span>newton-web Path</span>
                 <input
                   type="text"
                   value={settings.newtonWebPath}
-                  onChange={event => updateSettings({ newtonWebPath: event.target.value })}
+                  onChange={(event) =>
+                    updateSettings({ newtonWebPath: event.target.value })
+                  }
                   placeholder="/Users/you/code/newton-web"
                 />
               </label>
@@ -570,15 +883,23 @@ export function SettingsPage({
                 <input
                   type="text"
                   value={settings.newtonApiPath}
-                  onChange={event => updateSettings({ newtonApiPath: event.target.value })}
+                  onChange={(event) =>
+                    updateSettings({ newtonApiPath: event.target.value })
+                  }
                   placeholder="/Users/you/code/newton-api"
                 />
-                <small className="field-hint">Save-time validation requires absolute paths that already exist on disk.</small>
+                <small className="field-hint">
+                  Save-time validation requires absolute paths that already
+                  exist on disk.
+                </small>
               </label>
             </div>
           </SectionCard>
 
-          <SectionCard title="Runtime Limits / Timeouts" subtitle="Concurrency, execution windows, and repo classification sensitivity.">
+          <SectionCard
+            title="Runtime Limits / Timeouts"
+            subtitle="Concurrency, execution windows, and repo classification sensitivity."
+          >
             <div className="settings-fields two-column">
               <label className="field">
                 <span>Max Concurrent Jobs</span>
@@ -587,7 +908,11 @@ export function SettingsPage({
                   min={1}
                   max={10}
                   value={settings.maxConcurrentJobs}
-                  onChange={event => updateSettings({ maxConcurrentJobs: Number(event.target.value) || 1 })}
+                  onChange={(event) =>
+                    updateSettings({
+                      maxConcurrentJobs: Number(event.target.value) || 1,
+                    })
+                  }
                 />
               </label>
 
@@ -597,7 +922,11 @@ export function SettingsPage({
                   type="number"
                   min={1}
                   value={settings.prReviewTimeoutMs}
-                  onChange={event => updateSettings({ prReviewTimeoutMs: Number(event.target.value) || 1 })}
+                  onChange={(event) =>
+                    updateSettings({
+                      prReviewTimeoutMs: Number(event.target.value) || 1,
+                    })
+                  }
                 />
               </label>
 
@@ -607,7 +936,11 @@ export function SettingsPage({
                   type="number"
                   min={1}
                   value={settings.bugFixTimeoutMs}
-                  onChange={event => updateSettings({ bugFixTimeoutMs: Number(event.target.value) || 1 })}
+                  onChange={(event) =>
+                    updateSettings({
+                      bugFixTimeoutMs: Number(event.target.value) || 1,
+                    })
+                  }
                 />
               </label>
 
@@ -619,7 +952,11 @@ export function SettingsPage({
                   max={1}
                   step={0.01}
                   value={settings.repoClassifierThreshold}
-                  onChange={event => updateSettings({ repoClassifierThreshold: Number(event.target.value) })}
+                  onChange={(event) =>
+                    updateSettings({
+                      repoClassifierThreshold: Number(event.target.value),
+                    })
+                  }
                 />
               </label>
             </div>
@@ -628,16 +965,33 @@ export function SettingsPage({
 
         <div className="settings-sticky-bar">
           <div className="settings-sticky-copy">
-            <strong>{settingsConfigured ? 'Runtime configuration is complete.' : 'Finish the required settings before the sidecar can boot.'}</strong>
+            <strong>
+              {settingsConfigured
+                ? "Runtime configuration is complete."
+                : "Finish the required settings before the sidecar can boot."}
+            </strong>
             {settingsMessage ? (
-              <p className={settingsMessage.startsWith('Failed') ? 'error' : 'success'}>{settingsMessage}</p>
+              <p
+                className={
+                  settingsMessage.startsWith("Failed") ? "error" : "success"
+                }
+              >
+                {settingsMessage}
+              </p>
             ) : (
-              <p className="muted">Theme changes preview live. Save persists both runtime fields and appearance choices to the local database.</p>
+              <p className="muted">
+                Theme changes preview live. Save persists both runtime fields
+                and appearance choices to the local database.
+              </p>
             )}
           </div>
 
-          <button className="primary-button" type="submit" disabled={savingSettings}>
-            {savingSettings ? 'Saving...' : 'Save Settings'}
+          <button
+            className="primary-button"
+            type="submit"
+            disabled={savingSettings}
+          >
+            {savingSettings ? "Saving..." : "Save Settings"}
           </button>
         </div>
       </form>

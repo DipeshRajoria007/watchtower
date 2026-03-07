@@ -1,25 +1,42 @@
-export type AppView = 'overview' | 'launchpad' | 'runs' | 'intelligence' | 'settings';
+export type AppView =
+  | "overview"
+  | "launchpad"
+  | "runs"
+  | "intelligence"
+  | "settings";
 
-export type RunsSubView = 'active' | 'failures' | 'recent' | 'diagnostics';
+export type RunsSubView = "active" | "failures" | "recent" | "diagnostics";
 
-export type SlackCommandTarget = 'miniog' | 'watchtower';
+export type SlackCommandTarget = "miniog" | "watchtower";
 
-export type ThemePresetId = 'watchtower-midnight' | 'signal-paper' | 'ember-terminal' | 'harbor-mint' | 'custom';
+export type ThemePresetId =
+  | "watchtower-midnight"
+  | "signal-paper"
+  | "ember-terminal"
+  | "harbor-mint"
+  | "custom";
 
-export type ThemeFontFamilyId = 'ibm-plex' | 'sf-pro' | 'avenir-next' | 'georgia' | 'menlo';
+export type ThemeFontFamilyId =
+  | "ibm-plex"
+  | "sf-pro"
+  | "avenir-next"
+  | "georgia"
+  | "menlo";
 
-export type NotificationAudioMode = 'off' | 'default' | 'custom';
+export type NotificationAudioMode = "off" | "default" | "custom";
+
+export type NotificationAudioTone = "success" | "failure";
 
 export type NotificationAudioDefaultSoundId =
-  | 'basso'
-  | 'glass'
-  | 'hero'
-  | 'ping'
-  | 'pop'
-  | 'purr'
-  | 'sosumi'
-  | 'submarine'
-  | 'tink';
+  | "basso"
+  | "glass"
+  | "hero"
+  | "ping"
+  | "pop"
+  | "purr"
+  | "sosumi"
+  | "submarine"
+  | "tink";
 
 export type RunSummary = {
   id: string;
@@ -46,7 +63,7 @@ export type DashboardMetrics = {
 
 export type DashboardRecommendation = {
   id: string;
-  priority: 'HIGH' | 'MEDIUM' | 'LOW' | string;
+  priority: "HIGH" | "MEDIUM" | "LOW" | string;
   title: string;
   detail: string;
 };
@@ -88,7 +105,7 @@ export type DashboardData = {
 export type JobLogEntry = {
   id: number;
   jobId: string;
-  level: 'INFO' | 'WARN' | 'ERROR' | string;
+  level: "INFO" | "WARN" | "ERROR" | string;
   stage: string;
   message: string;
   dataJson: string | null;
@@ -112,9 +129,12 @@ export type AppSettings = {
   themeForegroundColor: string;
   themeAccentColor: string;
   themeFontFamily: ThemeFontFamilyId;
-  notificationAudioMode: NotificationAudioMode;
-  notificationAudioDefaultSound: NotificationAudioDefaultSoundId;
-  notificationAudioCustomPath: string;
+  successNotificationAudioMode: NotificationAudioMode;
+  successNotificationAudioDefaultSound: NotificationAudioDefaultSoundId;
+  successNotificationAudioCustomPath: string;
+  failureNotificationAudioMode: NotificationAudioMode;
+  failureNotificationAudioDefaultSound: NotificationAudioDefaultSoundId;
+  failureNotificationAudioCustomPath: string;
 };
 
 export type SaveSettingsResponse = {
@@ -133,4 +153,5 @@ export type LaunchpadSubmitResponse = {
 export type AppNotificationPayload = {
   title: string;
   body: string;
+  tone: NotificationAudioTone;
 };
