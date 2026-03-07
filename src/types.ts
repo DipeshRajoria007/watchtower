@@ -8,6 +8,19 @@ export type ThemePresetId = 'watchtower-midnight' | 'signal-paper' | 'ember-term
 
 export type ThemeFontFamilyId = 'ibm-plex' | 'sf-pro' | 'avenir-next' | 'georgia' | 'menlo';
 
+export type NotificationAudioMode = 'off' | 'default' | 'custom';
+
+export type NotificationAudioDefaultSoundId =
+  | 'basso'
+  | 'glass'
+  | 'hero'
+  | 'ping'
+  | 'pop'
+  | 'purr'
+  | 'sosumi'
+  | 'submarine'
+  | 'tink';
+
 export type RunSummary = {
   id: string;
   workflow: string;
@@ -99,10 +112,18 @@ export type AppSettings = {
   themeForegroundColor: string;
   themeAccentColor: string;
   themeFontFamily: ThemeFontFamilyId;
+  notificationAudioMode: NotificationAudioMode;
+  notificationAudioDefaultSound: NotificationAudioDefaultSoundId;
+  notificationAudioCustomPath: string;
 };
 
 export type SaveSettingsResponse = {
   configured: boolean;
+};
+
+export type ImportNotificationAudioResponse = {
+  fileName: string;
+  path: string;
 };
 
 export type AppNotificationPayload = {

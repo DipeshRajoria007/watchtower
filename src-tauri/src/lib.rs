@@ -10,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base64::Engine as _;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -25,9 +26,25 @@ use tokio::{
     process::Command,
     sync::RwLock,
 };
+use uuid::Uuid;
 
 const TRAY_ID: &str = "watchtower-tray";
 const TRAY_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const NOTIFICATION_AUDIO_DIR: &str = "notification-audio";
+const NOTIFICATION_AUDIO_MAX_BYTES: usize = 10 * 1024 * 1024;
+const DEFAULT_NOTIFICATION_AUDIO_SOUND: &str = "glass";
+const NOTIFICATION_AUDIO_EXTENSIONS: &[&str] = &["aiff", "aif", "wav", "mp3", "m4a", "caf"];
+const BUILTIN_NOTIFICATION_SOUNDS: &[(&str, &str)] = &[
+    ("basso", "Basso.aiff"),
+    ("glass", "Glass.aiff"),
+    ("hero", "Hero.aiff"),
+    ("ping", "Ping.aiff"),
+    ("pop", "Pop.aiff"),
+    ("purr", "Purr.aiff"),
+    ("sosumi", "Sosumi.aiff"),
+    ("submarine", "Submarine.aiff"),
+    ("tink", "Tink.aiff"),
+];
 
 #[derive(Clone, Default)]
 struct SupervisorStatus {
@@ -242,12 +259,22 @@ struct AppSettings {
     theme_foreground_color: String,
     theme_accent_color: String,
     theme_font_family: String,
+    notification_audio_mode: String,
+    notification_audio_default_sound: String,
+    notification_audio_custom_path: String,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SaveSettingsResponse {
     configured: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NotificationAudioUploadResponse {
+    file_name: String,
+    path: String,
 }
 
 impl Default for AppSettings {
@@ -269,6 +296,9 @@ impl Default for AppSettings {
             theme_foreground_color: "#F2F7FB".to_string(),
             theme_accent_color: "#53D2FF".to_string(),
             theme_font_family: "ibm-plex".to_string(),
+            notification_audio_mode: "off".to_string(),
+            notification_audio_default_sound: DEFAULT_NOTIFICATION_AUDIO_SOUND.to_string(),
+            notification_audio_custom_path: String::new(),
         }
     }
 }
@@ -340,6 +370,7 @@ pub fn run() {
             get_job_logs,
             get_app_settings,
             save_app_settings,
+            import_notification_audio,
             emit_preview_notification
         ])
         .build(tauri::generate_context!())
@@ -455,12 +486,64 @@ async fn save_app_settings(
 }
 
 #[tauri::command]
-fn emit_preview_notification(app: AppHandle) {
-    emit_notification(
+async fn import_notification_audio(
+    file_name: String,
+    data_base64: String,
+    state: State<'_, AppState>,
+) -> Result<NotificationAudioUploadResponse, String> {
+    let cleaned_file_name = sanitize_uploaded_notification_audio_file_name(&file_name)?;
+    let extension = notification_audio_extension_from_name(&cleaned_file_name)?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.trim())
+        .map_err(|err| format!("notification audio decode failed: {err}"))?;
+
+    if bytes.is_empty() {
+        return Err("notificationAudio file must not be empty".to_string());
+    }
+
+    if bytes.len() > NOTIFICATION_AUDIO_MAX_BYTES {
+        return Err("notificationAudio file must be 10MB or smaller".to_string());
+    }
+
+    let app_data_dir = state
+        .db_path
+        .parent()
+        .ok_or_else(|| "failed to resolve app data dir".to_string())?;
+    let audio_dir = app_data_dir.join(NOTIFICATION_AUDIO_DIR);
+    fs::create_dir_all(&audio_dir)
+        .map_err(|err| format!("failed to prepare notification audio dir: {err}"))?;
+
+    let stem = Path::new(&cleaned_file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("notification-audio");
+    let stored_file_name = format!(
+        "{}-{}.{}",
+        sanitize_notification_audio_file_stem(stem),
+        Uuid::new_v4().simple(),
+        extension
+    );
+    let stored_path = audio_dir.join(stored_file_name);
+
+    fs::write(&stored_path, bytes)
+        .map_err(|err| format!("failed to store notification audio file: {err}"))?;
+
+    Ok(NotificationAudioUploadResponse {
+        file_name: cleaned_file_name,
+        path: stored_path.to_string_lossy().into_owned(),
+    })
+}
+
+#[tauri::command]
+async fn emit_preview_notification(settings: AppSettings, app: AppHandle) -> Result<(), String> {
+    validate_notification_audio_settings(&settings)?;
+    emit_notification_with_settings(
         &app,
         "Watchtower preview",
-        "Synthetic notification for validating the in-app toast and native desktop alert.",
+        "Synthetic notification for validating the in-app toast, native desktop alert, and notification sound.",
+        Some(&settings),
     );
+    Ok(())
 }
 
 fn query_runs(connection: &Connection, sql: &str) -> Result<Vec<RunSummary>, String> {
@@ -1336,6 +1419,9 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
               theme_foreground_color TEXT NOT NULL DEFAULT '#F2F7FB',
               theme_accent_color TEXT NOT NULL DEFAULT '#53D2FF',
               theme_font_family TEXT NOT NULL DEFAULT 'ibm-plex',
+              notification_audio_mode TEXT NOT NULL DEFAULT 'off',
+              notification_audio_default_sound TEXT NOT NULL DEFAULT 'glass',
+              notification_audio_custom_path TEXT NOT NULL DEFAULT '',
               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             INSERT OR IGNORE INTO app_settings(id) VALUES(1);
@@ -1367,6 +1453,21 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
         &connection,
         "theme_font_family",
         "TEXT NOT NULL DEFAULT 'ibm-plex'",
+    )?;
+    ensure_app_settings_column(
+        &connection,
+        "notification_audio_mode",
+        "TEXT NOT NULL DEFAULT 'off'",
+    )?;
+    ensure_app_settings_column(
+        &connection,
+        "notification_audio_default_sound",
+        "TEXT NOT NULL DEFAULT 'glass'",
+    )?;
+    ensure_app_settings_column(
+        &connection,
+        "notification_audio_custom_path",
+        "TEXT NOT NULL DEFAULT ''",
     )?;
 
     Ok(())
@@ -1419,7 +1520,10 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
               theme_background_color,
               theme_foreground_color,
               theme_accent_color,
-              theme_font_family
+              theme_font_family,
+              notification_audio_mode,
+              notification_audio_default_sound,
+              notification_audio_custom_path
              FROM app_settings
              WHERE id = 1
              LIMIT 1",
@@ -1445,6 +1549,9 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
                 theme_foreground_color: row.get(13)?,
                 theme_accent_color: row.get(14)?,
                 theme_font_family: row.get(15)?,
+                notification_audio_mode: row.get(16)?,
+                notification_audio_default_sound: row.get(17)?,
+                notification_audio_custom_path: row.get(18)?,
             })
         })
         .optional()
@@ -1475,8 +1582,11 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               theme_foreground_color,
               theme_accent_color,
               theme_font_family,
+              notification_audio_mode,
+              notification_audio_default_sound,
+              notification_audio_custom_path,
               updated_at
-             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
               slack_bot_token=excluded.slack_bot_token,
               slack_app_token=excluded.slack_app_token,
@@ -1494,6 +1604,9 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               theme_foreground_color=excluded.theme_foreground_color,
               theme_accent_color=excluded.theme_accent_color,
               theme_font_family=excluded.theme_font_family,
+              notification_audio_mode=excluded.notification_audio_mode,
+              notification_audio_default_sound=excluded.notification_audio_default_sound,
+              notification_audio_custom_path=excluded.notification_audio_custom_path,
               updated_at=excluded.updated_at",
             params![
                 settings.slack_bot_token.trim(),
@@ -1512,6 +1625,9 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
                 settings.theme_foreground_color.trim(),
                 settings.theme_accent_color.trim(),
                 settings.theme_font_family.trim(),
+                settings.notification_audio_mode.trim(),
+                settings.notification_audio_default_sound.trim(),
+                settings.notification_audio_custom_path.trim(),
                 Utc::now().to_rfc3339(),
             ],
         )
@@ -1544,6 +1660,7 @@ fn validate_settings_for_save(settings: &AppSettings) -> Result<(), String> {
     validate_hex_color(&settings.theme_background_color, "themeBackgroundColor")?;
     validate_hex_color(&settings.theme_foreground_color, "themeForegroundColor")?;
     validate_hex_color(&settings.theme_accent_color, "themeAccentColor")?;
+    validate_notification_audio_settings(settings)?;
 
     Ok(())
 }
@@ -1566,12 +1683,117 @@ fn validate_optional_path(path_value: &str, field_name: &str) -> Result<(), Stri
     Ok(())
 }
 
+fn validate_existing_file(path_value: &str, field_name: &str) -> Result<(), String> {
+    let trimmed = path_value.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{field_name} must not be empty"));
+    }
+
+    let path = Path::new(trimmed);
+    if !path.is_absolute() {
+        return Err(format!("{field_name} must be an absolute path"));
+    }
+
+    if !path.is_file() {
+        return Err(format!("{field_name} must point to an existing file"));
+    }
+
+    Ok(())
+}
+
 fn validate_theme_setting(value: &str, field_name: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         return Err(format!("{field_name} must not be empty"));
     }
 
     Ok(())
+}
+
+fn validate_notification_audio_settings(settings: &AppSettings) -> Result<(), String> {
+    match settings.notification_audio_mode.trim() {
+        "off" => Ok(()),
+        "default" => {
+            if builtin_notification_sound_file_name(&settings.notification_audio_default_sound)
+                .is_none()
+            {
+                Err("notificationAudioDefaultSound is not supported".to_string())
+            } else {
+                Ok(())
+            }
+        }
+        "custom" => validate_existing_file(
+            &settings.notification_audio_custom_path,
+            "notificationAudioCustomPath",
+        ),
+        _ => Err("notificationAudioMode must be one of off, default, or custom".to_string()),
+    }
+}
+
+fn sanitize_uploaded_notification_audio_file_name(file_name: &str) -> Result<String, String> {
+    let trimmed = file_name.trim();
+    let base_name = Path::new(trimmed)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "notificationAudio file name is invalid".to_string())?;
+
+    Ok(base_name.to_string())
+}
+
+fn notification_audio_extension_from_name(file_name: &str) -> Result<String, String> {
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .ok_or_else(|| "notificationAudio file extension is required".to_string())?;
+
+    if NOTIFICATION_AUDIO_EXTENSIONS.contains(&extension.as_str()) {
+        Ok(extension)
+    } else {
+        Err("notificationAudio must be .aiff, .aif, .wav, .mp3, .m4a, or .caf".to_string())
+    }
+}
+
+fn sanitize_notification_audio_file_stem(stem: &str) -> String {
+    let cleaned: String = stem
+        .chars()
+        .map(|value| {
+            if value.is_ascii_alphanumeric() {
+                value.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+
+    let trimmed = cleaned.trim_matches('-');
+    if trimmed.is_empty() {
+        "notification-audio".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn builtin_notification_sound_file_name(sound_id: &str) -> Option<&'static str> {
+    BUILTIN_NOTIFICATION_SOUNDS
+        .iter()
+        .find_map(|(id, file_name)| (*id == sound_id.trim()).then_some(*file_name))
+}
+
+fn resolve_notification_audio_path(settings: &AppSettings) -> Option<PathBuf> {
+    match settings.notification_audio_mode.trim() {
+        "off" => None,
+        "default" => {
+            builtin_notification_sound_file_name(&settings.notification_audio_default_sound)
+                .map(|file_name| PathBuf::from("/System/Library/Sounds").join(file_name))
+        }
+        "custom" => {
+            let path = PathBuf::from(settings.notification_audio_custom_path.trim());
+            (path.is_absolute() && path.is_file()).then_some(path)
+        }
+        _ => None,
+    }
 }
 
 fn validate_hex_color(value: &str, field_name: &str) -> Result<(), String> {
@@ -2040,6 +2262,15 @@ fn handle_sidecar_line(app: &AppHandle, line: &str) {
 }
 
 fn emit_notification(app: &AppHandle, title: &str, body: &str) {
+    emit_notification_with_settings(app, title, body, None);
+}
+
+fn emit_notification_with_settings(
+    app: &AppHandle,
+    title: &str,
+    body: &str,
+    settings_override: Option<&AppSettings>,
+) {
     use tauri_plugin_notification::NotificationExt;
     let _ = app.emit(
         "watchtower-notification",
@@ -2049,4 +2280,31 @@ fn emit_notification(app: &AppHandle, title: &str, body: &str) {
         },
     );
     let _ = app.notification().builder().title(title).body(body).show();
+    play_notification_audio(app, settings_override);
+}
+
+fn play_notification_audio(app: &AppHandle, settings_override: Option<&AppSettings>) {
+    let resolved_path = if let Some(settings) = settings_override {
+        resolve_notification_audio_path(settings)
+    } else {
+        load_notification_audio_settings(app)
+            .ok()
+            .and_then(|settings| resolve_notification_audio_path(&settings))
+    };
+    let Some(path) = resolved_path else {
+        return;
+    };
+
+    let _ = std::process::Command::new("afplay")
+        .arg(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+}
+
+fn load_notification_audio_settings(app: &AppHandle) -> Result<AppSettings, String> {
+    let state = app.state::<AppState>();
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    read_app_settings(&connection)
 }
