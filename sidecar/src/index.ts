@@ -4,6 +4,12 @@ import type { WebClient } from '@slack/web-api';
 import { loadConfigFromDb } from './config.js';
 import { diagnoseFailure } from './learning/failureDoctor.js';
 import { applyLearning } from './learning/selfLearning.js';
+import {
+  failLaunchpadWorkflow,
+  finalizeLaunchpadWorkflowResult,
+  markLaunchpadJobCreated,
+} from './launchpad/launchpadLifecycle.js';
+import { startLaunchpadRequestPoller } from './launchpad/launchpadIntake.js';
 import { logger } from './logging/logger.js';
 import { notifyDesktop } from './notify/desktopNotifier.js';
 import { assertMacOS } from './platform.js';
@@ -421,7 +427,11 @@ function startIncidentCommanderFeed(client: WebClient): void {
   }, INCIDENT_TICK_MS);
 }
 
-async function enqueueSlackEvent(event: SlackEventEnvelope, client: WebClient, source: 'socket' | 'catchup'): Promise<void> {
+async function enqueueSlackEvent(
+  event: SlackEventEnvelope,
+  client: WebClient,
+  source: 'socket' | 'catchup' | 'launchpad'
+): Promise<void> {
   queue.push({ event, client });
   logger.info({ queueDepth: queue.length, eventId: event.eventId, source }, 'event queued for processing');
   await processNext();
@@ -536,6 +546,8 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       personalityMode: learning.personalityMode,
       learningNotes: learning.notes,
       eventTs: event.eventTs,
+      ingestSource: event.ingestSource ?? 'socket',
+      launchpadRequestId: event.launchpadRequestId ?? null,
     },
   });
 
@@ -599,7 +611,16 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       personalityMode: learning.personalityMode,
       learningNotes: learning.notes,
       threadMessages: threadMessages.length,
+      ingestSource: event.ingestSource ?? 'socket',
+      launchpadRequestId: event.launchpadRequestId ?? null,
     },
+  });
+
+  markLaunchpadJobCreated({
+    event,
+    jobId,
+    store,
+    logStep,
   });
 
   try {
@@ -698,6 +719,14 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
           });
         }
 
+        await finalizeLaunchpadWorkflowResult({
+          event,
+          result,
+          slack: eventClient,
+          store,
+          logStep,
+        });
+
         return;
       } catch (error) {
         lastError = error;
@@ -778,6 +807,12 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
     });
 
     notifyDesktop('Watchtower workflow failed', errorMessage);
+    failLaunchpadWorkflow({
+      event,
+      errorMessage,
+      store,
+      logStep,
+    });
     store.markJob(jobId, 'FAILED', { errorMessage });
     try {
       store.recordLearningSignal({
@@ -821,6 +856,12 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
 
     logger.error({ jobId, eventId: event.eventId, error: errorMessage }, 'unexpected processEvent failure');
     notifyDesktop('Watchtower job failure', errorMessage);
+    failLaunchpadWorkflow({
+      event,
+      errorMessage,
+      store,
+      logStep,
+    });
     store.markJob(jobId, 'FAILED', { errorMessage });
     try {
       store.recordLearningSignal({
@@ -874,6 +915,15 @@ async function main(): Promise<void> {
     config,
     store,
     enqueue: enqueueSlackEvent,
+  });
+
+  startLaunchpadRequestPoller({
+    webClient: client.webClient,
+    config,
+    store,
+    enqueue: async (event, webClient) => {
+      await enqueueSlackEvent(event, webClient, 'launchpad');
+    },
   });
 }
 

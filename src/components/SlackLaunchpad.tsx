@@ -43,7 +43,10 @@ type SlackLaunchpadProps = {
   draft: string;
   focusToken: number;
   onDraftChange: (value: string) => void;
+  onSubmit: () => void | Promise<void>;
   onTargetChange: (value: SlackCommandTarget) => void;
+  settingsRequired: boolean;
+  submitting: boolean;
   target: SlackCommandTarget;
   variant?: 'default' | 'minimal';
 };
@@ -52,20 +55,26 @@ export function SlackLaunchpad({
   draft,
   focusToken,
   onDraftChange,
+  onSubmit,
   onTargetChange,
+  settingsRequired,
+  submitting,
   target,
   variant = 'default',
 }: SlackLaunchpadProps) {
   const [feedback, setFeedback] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const isMinimal = variant === 'minimal';
+  const isMiniOg = target === 'miniog';
+  const trimmedDraft = draft.trim();
+  const canRunMiniOg = isMiniOg && trimmedDraft.length > 0 && !submitting && !settingsRequired;
 
   const selectedTarget = useMemo(() => {
     return SLACK_TARGETS.find(item => item.value === target) ?? SLACK_TARGETS[0];
   }, [target]);
 
-  const commandPreview = draft.trim()
-    ? `${selectedTarget.command} ${draft.trim()}`
+  const commandPreview = trimmedDraft
+    ? `${selectedTarget.command} ${trimmedDraft}`
     : `${selectedTarget.command} <task>`;
 
   useEffect(() => {
@@ -109,6 +118,13 @@ export function SlackLaunchpad({
     window.open('slack://open', '_blank', 'noopener,noreferrer');
   };
 
+  const submitMiniOg = () => {
+    if (!canRunMiniOg) {
+      return;
+    }
+    void onSubmit();
+  };
+
   return (
     <div className={isMinimal ? 'slack-launchpad minimal' : 'slack-launchpad'}>
       <h2 className="launchpad-title">What should we ship?</h2>
@@ -119,6 +135,12 @@ export function SlackLaunchpad({
             value={draft}
             aria-label="Task prompt"
             onChange={event => onDraftChange(event.target.value)}
+            onKeyDown={event => {
+              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && isMiniOg) {
+                event.preventDefault();
+                submitMiniOg();
+              }
+            }}
             placeholder="Describe the review, bug, handoff, or next action you want ready for Slack."
             rows={4}
           />
@@ -157,8 +179,18 @@ export function SlackLaunchpad({
           </div>
 
           <div className="slack-launchpad-actions">
+            {isMiniOg ? (
+              <button
+                className="primary-button"
+                type="button"
+                onClick={submitMiniOg}
+                disabled={!canRunMiniOg}
+              >
+                {submitting ? 'Queueing...' : 'Run miniOG'}
+              </button>
+            ) : null}
             <button
-              className="primary-button"
+              className={isMiniOg ? 'ghost-button' : 'primary-button'}
               type="button"
               onClick={() => copyText(commandPreview, `${selectedTarget.command} copied`)}
             >
@@ -191,7 +223,17 @@ export function SlackLaunchpad({
 
       <div className="slack-launchpad-footer">
         <span>{selectedTarget.description}</span>
-        {feedback ? <strong>{feedback}</strong> : <span>{selectedTarget.command} stays ready while you move through the app.</span>}
+        {feedback ? (
+          <strong>{feedback}</strong>
+        ) : isMiniOg ? (
+          <span>
+            {settingsRequired
+              ? 'Finish Settings before running miniOG from Launchpad.'
+              : 'Completion lands in the bot DM and as an in-app/macOS notification. Use Cmd/Ctrl+Enter to queue it.'}
+          </span>
+        ) : (
+          <span>/wt stays compose-only in this version. Copy the command, then run it in Slack.</span>
+        )}
       </div>
     </div>
   );
