@@ -16,7 +16,9 @@ import {
 
 type SettingsPageProps = {
   onSettingsChange: (settings: AppSettings) => void;
+  onPreviewNotification: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  previewingNotification: boolean;
   savingSettings: boolean;
   settings: AppSettings | null;
   settingsConfigured: boolean;
@@ -51,7 +53,9 @@ function buildThemePreviewStyle(theme: ReturnType<typeof resolveAppTheme>): CSSP
 
 export function SettingsPage({
   onSettingsChange,
+  onPreviewNotification,
   onSubmit,
+  previewingNotification,
   savingSettings,
   settings,
   settingsConfigured,
@@ -236,6 +240,20 @@ export function SettingsPage({
                     <button type="button">Primary Action</button>
                     <span>{activeTheme.accentColor}</span>
                   </div>
+                </div>
+
+                <div className="notification-preview-strip">
+                  <div>
+                    <p className="theme-preview-kicker">Notification Preview</p>
+                    <strong>Trigger a fake Watchtower notification.</strong>
+                    <p className="theme-preview-copy">
+                      Uses the same Tauri event path as a real sidecar notification so you can inspect the in-app toast styling.
+                    </p>
+                  </div>
+
+                  <button className="ghost-button" type="button" onClick={onPreviewNotification} disabled={previewingNotification}>
+                    {previewingNotification ? 'Showing...' : 'Show sample notification'}
+                  </button>
                 </div>
               </article>
             </div>

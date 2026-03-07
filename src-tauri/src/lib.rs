@@ -339,7 +339,8 @@ pub fn run() {
             get_dashboard_data,
             get_job_logs,
             get_app_settings,
-            save_app_settings
+            save_app_settings,
+            emit_preview_notification
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -451,6 +452,15 @@ async fn save_app_settings(
     Ok(SaveSettingsResponse {
         configured: is_settings_complete(&settings),
     })
+}
+
+#[tauri::command]
+fn emit_preview_notification(app: AppHandle) {
+    emit_notification(
+        &app,
+        "Watchtower preview",
+        "Synthetic notification for validating the in-app toast and native desktop alert.",
+    );
 }
 
 fn query_runs(connection: &Connection, sql: &str) -> Result<Vec<RunSummary>, String> {

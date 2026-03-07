@@ -61,6 +61,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [previewingNotification, setPreviewingNotification] = useState(false);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [slackComposerDraft, setSlackComposerDraft] = useState('');
   const [slackCommandTarget, setSlackCommandTarget] = useState<SlackCommandTarget>('miniog');
@@ -358,6 +359,20 @@ function App() {
     setNavDrawerOpen(false);
   };
 
+  const previewNotification = async () => {
+    setPreviewingNotification(true);
+
+    try {
+      await invoke('emit_preview_notification');
+    } catch (err) {
+      toast.error('Preview notification failed', {
+        description: String(err),
+      });
+    } finally {
+      setPreviewingNotification(false);
+    }
+  };
+
   if (error && !data && !settings) {
     return (
       <main className="error-view">
@@ -420,7 +435,9 @@ function App() {
       {view === 'settings' ? (
         <SettingsPage
           onSettingsChange={nextSettings => setSettings(nextSettings)}
+          onPreviewNotification={previewNotification}
           onSubmit={saveSettings}
+          previewingNotification={previewingNotification}
           savingSettings={savingSettings}
           settings={settings}
           settingsConfigured={data?.settingsConfigured ?? false}
