@@ -230,6 +230,11 @@ struct AppSettings {
     pr_review_timeout_ms: i64,
     bug_fix_timeout_ms: i64,
     repo_classifier_threshold: f64,
+    theme_preset: String,
+    theme_background_color: String,
+    theme_foreground_color: String,
+    theme_accent_color: String,
+    theme_font_family: String,
 }
 
 #[derive(Serialize)]
@@ -252,6 +257,11 @@ impl Default for AppSettings {
             pr_review_timeout_ms: 720_000,
             bug_fix_timeout_ms: 2_700_000,
             repo_classifier_threshold: 0.75,
+            theme_preset: "watchtower-midnight".to_string(),
+            theme_background_color: "#06090C".to_string(),
+            theme_foreground_color: "#F2F7FB".to_string(),
+            theme_accent_color: "#53D2FF".to_string(),
+            theme_font_family: "ibm-plex".to_string(),
         }
     }
 }
@@ -1304,12 +1314,71 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
               pr_review_timeout_ms INTEGER NOT NULL DEFAULT 720000,
               bug_fix_timeout_ms INTEGER NOT NULL DEFAULT 2700000,
               repo_classifier_threshold REAL NOT NULL DEFAULT 0.75,
+              theme_preset TEXT NOT NULL DEFAULT 'watchtower-midnight',
+              theme_background_color TEXT NOT NULL DEFAULT '#06090C',
+              theme_foreground_color TEXT NOT NULL DEFAULT '#F2F7FB',
+              theme_accent_color TEXT NOT NULL DEFAULT '#53D2FF',
+              theme_font_family TEXT NOT NULL DEFAULT 'ibm-plex',
               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             INSERT OR IGNORE INTO app_settings(id) VALUES(1);
           ",
         )
         .map_err(|err| format!("db migration failed: {err}"))?;
+
+    ensure_app_settings_column(
+        &connection,
+        "theme_preset",
+        "TEXT NOT NULL DEFAULT 'watchtower-midnight'",
+    )?;
+    ensure_app_settings_column(
+        &connection,
+        "theme_background_color",
+        "TEXT NOT NULL DEFAULT '#06090C'",
+    )?;
+    ensure_app_settings_column(
+        &connection,
+        "theme_foreground_color",
+        "TEXT NOT NULL DEFAULT '#F2F7FB'",
+    )?;
+    ensure_app_settings_column(
+        &connection,
+        "theme_accent_color",
+        "TEXT NOT NULL DEFAULT '#53D2FF'",
+    )?;
+    ensure_app_settings_column(
+        &connection,
+        "theme_font_family",
+        "TEXT NOT NULL DEFAULT 'ibm-plex'",
+    )?;
+
+    Ok(())
+}
+
+fn ensure_app_settings_column(
+    connection: &Connection,
+    column_name: &str,
+    column_definition: &str,
+) -> Result<(), String> {
+    let mut stmt = connection
+        .prepare("PRAGMA table_info(app_settings)")
+        .map_err(|err| format!("db inspect settings schema failed: {err}"))?;
+
+    let mut columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|err| format!("db inspect settings columns failed: {err}"))?;
+
+    let has_column = columns.any(|column| matches!(column, Ok(ref name) if name == column_name));
+    if has_column {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            &format!("ALTER TABLE app_settings ADD COLUMN {column_name} {column_definition}"),
+            [],
+        )
+        .map_err(|err| format!("db add settings column {column_name} failed: {err}"))?;
 
     Ok(())
 }
@@ -1328,7 +1397,12 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
               max_concurrent_jobs,
               pr_review_timeout_ms,
               bug_fix_timeout_ms,
-              repo_classifier_threshold
+              repo_classifier_threshold,
+              theme_preset,
+              theme_background_color,
+              theme_foreground_color,
+              theme_accent_color,
+              theme_font_family
              FROM app_settings
              WHERE id = 1
              LIMIT 1",
@@ -1349,6 +1423,11 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
                 pr_review_timeout_ms: row.get(8)?,
                 bug_fix_timeout_ms: row.get(9)?,
                 repo_classifier_threshold: row.get(10)?,
+                theme_preset: row.get(11)?,
+                theme_background_color: row.get(12)?,
+                theme_foreground_color: row.get(13)?,
+                theme_accent_color: row.get(14)?,
+                theme_font_family: row.get(15)?,
             })
         })
         .optional()
@@ -1374,8 +1453,13 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               pr_review_timeout_ms,
               bug_fix_timeout_ms,
               repo_classifier_threshold,
+              theme_preset,
+              theme_background_color,
+              theme_foreground_color,
+              theme_accent_color,
+              theme_font_family,
               updated_at
-             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
               slack_bot_token=excluded.slack_bot_token,
               slack_app_token=excluded.slack_app_token,
@@ -1388,6 +1472,11 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               pr_review_timeout_ms=excluded.pr_review_timeout_ms,
               bug_fix_timeout_ms=excluded.bug_fix_timeout_ms,
               repo_classifier_threshold=excluded.repo_classifier_threshold,
+              theme_preset=excluded.theme_preset,
+              theme_background_color=excluded.theme_background_color,
+              theme_foreground_color=excluded.theme_foreground_color,
+              theme_accent_color=excluded.theme_accent_color,
+              theme_font_family=excluded.theme_font_family,
               updated_at=excluded.updated_at",
             params![
                 settings.slack_bot_token.trim(),
@@ -1401,6 +1490,11 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
                 settings.pr_review_timeout_ms,
                 settings.bug_fix_timeout_ms,
                 settings.repo_classifier_threshold,
+                settings.theme_preset.trim(),
+                settings.theme_background_color.trim(),
+                settings.theme_foreground_color.trim(),
+                settings.theme_accent_color.trim(),
+                settings.theme_font_family.trim(),
                 Utc::now().to_rfc3339(),
             ],
         )
@@ -1428,6 +1522,11 @@ fn validate_settings_for_save(settings: &AppSettings) -> Result<(), String> {
 
     validate_optional_path(&settings.newton_web_path, "newtonWebPath")?;
     validate_optional_path(&settings.newton_api_path, "newtonApiPath")?;
+    validate_theme_setting(&settings.theme_preset, "themePreset")?;
+    validate_theme_setting(&settings.theme_font_family, "themeFontFamily")?;
+    validate_hex_color(&settings.theme_background_color, "themeBackgroundColor")?;
+    validate_hex_color(&settings.theme_foreground_color, "themeForegroundColor")?;
+    validate_hex_color(&settings.theme_accent_color, "themeAccentColor")?;
 
     Ok(())
 }
@@ -1445,6 +1544,29 @@ fn validate_optional_path(path_value: &str, field_name: &str) -> Result<(), Stri
 
     if !path.is_dir() {
         return Err(format!("{field_name} must point to an existing directory"));
+    }
+
+    Ok(())
+}
+
+fn validate_theme_setting(value: &str, field_name: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{field_name} must not be empty"));
+    }
+
+    Ok(())
+}
+
+fn validate_hex_color(value: &str, field_name: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    let bytes = trimmed.as_bytes();
+
+    if bytes.len() != 7 || bytes.first() != Some(&b'#') {
+        return Err(format!("{field_name} must be a hex color like #RRGGBB"));
+    }
+
+    if !bytes[1..].iter().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("{field_name} must be a hex color like #RRGGBB"));
     }
 
     Ok(())

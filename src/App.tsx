@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AppShell } from './components/AppShell';
+import { applyAppTheme } from './lib/theme';
 import { formatSidecarLine } from './lib/formatters';
 import { IntelligencePage } from './pages/IntelligencePage';
 import { LaunchpadPage } from './pages/LaunchpadPage';
@@ -155,6 +156,10 @@ function App() {
     window.localStorage.removeItem(PENDING_SHORTCUT_VIEW_KEY);
     window.localStorage.removeItem(PENDING_SHORTCUT_TARGET_KEY);
   }, []);
+
+  useEffect(() => {
+    applyAppTheme(settings);
+  }, [settings]);
 
   const openLaunchpad = (target: SlackCommandTarget = 'miniog') => {
     if (typeof window !== 'undefined') {
