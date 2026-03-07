@@ -9,7 +9,6 @@ import {
   OverviewIcon,
   RunsIcon,
   SettingsIcon,
-  WatchtowerIcon,
 } from './icons';
 
 type AppShellProps = {
@@ -26,7 +25,6 @@ type AppShellProps = {
 type NavItem = {
   view: AppView;
   label: string;
-  helper: string;
   icon: ReactNode;
   badge?: string | number | null;
   badgeTone?: 'danger' | 'warning' | 'info';
@@ -43,36 +41,19 @@ export function AppShell({
   sidecarStatus,
 }: AppShellProps) {
   const navItems: NavItem[] = [
-    {
-      view: 'launchpad',
-      label: 'Launchpad',
-      helper: 'Draft the Slack command and choose the assistant that should run it.',
-      icon: <LaunchpadIcon />,
-    },
-    {
-      view: 'overview',
-      label: 'Overview',
-      helper: 'Sidecar status, queue pressure, and what needs attention next.',
-      icon: <OverviewIcon />,
-    },
+    { view: 'launchpad', label: 'Launchpad', icon: <LaunchpadIcon /> },
+    { view: 'overview', label: 'Overview', icon: <OverviewIcon /> },
     {
       view: 'runs',
       label: 'Runs',
-      helper: 'Inspect active jobs, failures, recent work, and live diagnostics.',
       icon: <RunsIcon />,
       badge: failuresCount > 0 ? failuresCount : null,
       badgeTone: failuresCount > 0 ? 'danger' : 'info',
     },
-    {
-      view: 'intelligence',
-      label: 'Intelligence',
-      helper: 'Recommendations, adaptive signals, and channel heat.',
-      icon: <IntelligenceIcon />,
-    },
+    { view: 'intelligence', label: 'Intelligence', icon: <IntelligenceIcon /> },
     {
       view: 'settings',
       label: 'Settings',
-      helper: 'Slack auth, repo boundaries, runtime limits, and appearance.',
       icon: <SettingsIcon />,
       badge: settingsRequired ? 'Required' : null,
       badgeTone: settingsRequired ? 'warning' : 'info',
@@ -84,11 +65,6 @@ export function AppShell({
   const renderNav = (variant: 'rail' | 'drawer') => (
       <div className={variant === 'drawer' ? 'sidebar-frame expanded' : 'sidebar-frame'}>
         <div className="sidebar-brand">
-          <div className="brand-mark">
-            <WatchtowerIcon />
-          </div>
-        <div className="brand-copy">
-          <span className="eyebrow brand-eyebrow">Developer Automation Console</span>
           <div className="brand-title-row">
             <strong>Watchtower</strong>
             <div
@@ -99,7 +75,6 @@ export function AppShell({
               <span className="sidebar-status-dot" />
             </div>
           </div>
-        </div>
 
         <button
           className="icon-button sidebar-menu-trigger"
@@ -127,15 +102,10 @@ export function AppShell({
             }}
           >
             <span className="nav-icon">{item.icon}</span>
-            <span className="nav-copy">
-              <span className="nav-row">
-                <span className="nav-label">{item.label}</span>
-                {item.badge ? (
-                  <span className={`nav-badge nav-badge-${item.badgeTone ?? 'info'}`}>{item.badge}</span>
-                ) : null}
-              </span>
-              <span className="nav-helper">{item.helper}</span>
-            </span>
+            <span className="nav-label">{item.label}</span>
+            {item.badge ? (
+              <span className={`nav-badge nav-badge-${item.badgeTone ?? 'info'}`}>{item.badge}</span>
+            ) : null}
           </button>
         ))}
         </nav>
