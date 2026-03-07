@@ -1,5 +1,11 @@
-import type { FormEvent } from 'react';
-import type { AppSettings } from '../types';
+import type { CSSProperties, FormEvent } from 'react';
+import {
+  THEME_FONT_OPTIONS,
+  THEME_PRESETS,
+  resolveAppTheme,
+  resolveThemeFont,
+} from '../lib/theme';
+import type { AppSettings, ThemePresetId } from '../types';
 import {
   EmptyState,
   MetricCard,
@@ -24,6 +30,25 @@ type SectionSummary = {
   ready: boolean;
 };
 
+type ThemeCard = {
+  accentColor: string;
+  backgroundColor: string;
+  description: string;
+  fontLabel: string;
+  foregroundColor: string;
+  id: ThemePresetId;
+  label: string;
+};
+
+function buildThemePreviewStyle(theme: ReturnType<typeof resolveAppTheme>): CSSProperties {
+  return {
+    '--theme-preview-accent': theme.accentColor,
+    '--theme-preview-bg': theme.backgroundColor,
+    '--theme-preview-font': theme.font.stack,
+    '--theme-preview-fg': theme.foregroundColor,
+  } as CSSProperties;
+}
+
 export function SettingsPage({
   onSettingsChange,
   onSubmit,
@@ -36,11 +61,11 @@ export function SettingsPage({
     return (
       <div className="page-stack">
         <PageIntro
-          eyebrow="Runtime Configuration"
+          eyebrow="Runtime + Appearance"
           title="Settings"
-          description="Slack authentication, ownership, repo path, and runtime limits all live here now."
+          description="Slack authentication, ownership, repo path, runtime limits, and desktop appearance all live here."
         />
-        <SectionCard title="Loading Settings" subtitle="Pulling runtime configuration from the local database.">
+        <SectionCard title="Loading Settings" subtitle="Pulling runtime configuration and theme state from the local database.">
           <EmptyState>Loading settings.</EmptyState>
         </SectionCard>
       </div>
@@ -49,6 +74,30 @@ export function SettingsPage({
 
   const isAbsolutePath = (value: string) => value.trim().startsWith('/');
   const hasCommaList = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean).length > 0;
+  const updateSettings = (patch: Partial<AppSettings>) => onSettingsChange({ ...settings, ...patch });
+  const activeTheme = resolveAppTheme(settings);
+  const customThemePreview = resolveAppTheme({ ...settings, themePreset: 'custom' });
+  const themeCards: ThemeCard[] = [
+    ...THEME_PRESETS.map(preset => ({
+      accentColor: preset.accentColor,
+      backgroundColor: preset.backgroundColor,
+      description: preset.description,
+      fontLabel: resolveThemeFont(preset.fontFamily).label,
+      foregroundColor: preset.foregroundColor,
+      id: preset.id,
+      label: preset.label,
+    })),
+    {
+      accentColor: customThemePreview.accentColor,
+      backgroundColor: customThemePreview.backgroundColor,
+      description: 'Manual background, foreground, accent, and font selection.',
+      fontLabel: customThemePreview.font.label,
+      foregroundColor: customThemePreview.foregroundColor,
+      id: 'custom',
+      label: 'Custom',
+    },
+  ];
+  const themePreviewStyle = buildThemePreviewStyle(activeTheme);
 
   const sections: SectionSummary[] = [
     {
@@ -93,9 +142,9 @@ export function SettingsPage({
   return (
     <div className="page-stack settings-page">
       <PageIntro
-        eyebrow="Runtime Configuration"
+        eyebrow="Runtime + Appearance"
         title="Settings"
-        description="The dedicated configuration page for Slack auth, ownership and channels, allowed repo paths, and execution limits. This is now the only place to edit runtime config."
+        description="Slack auth, ownership, repo controls, execution limits, and the desktop theme all live here. Appearance changes preview immediately and persist with the rest of the app settings."
         actions={
           <StatusBadge
             label={settingsConfigured ? 'Runtime Ready' : 'Action Needed'}
@@ -107,13 +156,13 @@ export function SettingsPage({
       <form className="settings-form-page" onSubmit={onSubmit}>
         <SectionCard
           title="Completeness Summary"
-          subtitle="Page-level status mirrors the existing backend contract. Saving still validates repo directories against disk."
+          subtitle="Runtime readiness still mirrors the backend contract. Theme choices are optional and save alongside the required runtime fields."
           count={`${completeSections}/${sections.length}`}
         >
           <div className="settings-summary-grid">
             <MetricCard label="Sections Ready" value={`${completeSections}/${sections.length}`} tone={settingsConfigured ? 'success' : 'warning'} />
             <MetricCard label="Runtime Status" value={settingsConfigured ? 'Ready' : 'Incomplete'} tone={settingsConfigured ? 'success' : 'danger'} />
-            <MetricCard label="Save Validation" value="Enabled" tone="accent" />
+            <MetricCard label="Active Theme" value={activeTheme.label} tone="accent" />
             {sections.map(section => (
               <article className="settings-summary-card" key={section.label}>
                 <div className="settings-summary-top">
@@ -129,6 +178,130 @@ export function SettingsPage({
         </SectionCard>
 
         <div className="settings-sections">
+          <SectionCard title="Theme" subtitle="Presets repaint background, foreground, accent, and typography across the desktop shell. Select Custom to unlock manual pickers.">
+            <div className="theme-section-layout">
+              <div className="theme-presets-grid">
+                {themeCards.map(card => {
+                  const selected = settings.themePreset === card.id;
+
+                  return (
+                    <button
+                      key={card.id}
+                      className={selected ? 'theme-preset-card active' : 'theme-preset-card'}
+                      type="button"
+                      onClick={() => updateSettings({ themePreset: card.id })}
+                    >
+                      <div className="theme-preset-top">
+                        <div>
+                          <strong>{card.label}</strong>
+                          <p>{card.description}</p>
+                        </div>
+                        <StatusBadge label={selected ? 'Active' : card.id === 'custom' ? 'Manual' : 'Preset'} tone={selected ? 'success' : 'info'} />
+                      </div>
+
+                      <div className="theme-swatch-strip" aria-hidden="true">
+                        <span style={{ backgroundColor: card.backgroundColor }} />
+                        <span style={{ backgroundColor: card.foregroundColor }} />
+                        <span style={{ backgroundColor: card.accentColor }} />
+                      </div>
+
+                      <div className="theme-preset-meta">
+                        <span>{card.fontLabel}</span>
+                        <span>{card.accentColor}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <article className="theme-preview-card" style={themePreviewStyle}>
+                <div className="theme-preview-top">
+                  <div>
+                    <p className="theme-preview-kicker">Live Preview</p>
+                    <h3>{activeTheme.label}</h3>
+                  </div>
+                  <StatusBadge label={activeTheme.isCustom ? 'Custom' : 'Preset'} tone="info" />
+                </div>
+
+                <p className="theme-preview-copy">{activeTheme.description}</p>
+
+                <div className="theme-preview-surface">
+                  <div className="theme-preview-line">
+                    <span>Watchtower</span>
+                    <span>{activeTheme.font.label}</span>
+                  </div>
+                  <strong>Sidecar healthy. Queue under control.</strong>
+                  <p>Background, foreground, accent, and type update live while you edit settings.</p>
+                  <div className="theme-preview-actions">
+                    <button type="button">Primary Action</button>
+                    <span>{activeTheme.accentColor}</span>
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            {settings.themePreset === 'custom' ? (
+              <div className="settings-fields two-column theme-custom-grid">
+                <label className="field">
+                  <span>Background Color</span>
+                  <div className="theme-color-control">
+                    <input
+                      type="color"
+                      value={settings.themeBackgroundColor}
+                      onChange={event => updateSettings({ themeBackgroundColor: event.target.value.toUpperCase() })}
+                    />
+                    <strong>{settings.themeBackgroundColor.toUpperCase()}</strong>
+                  </div>
+                </label>
+
+                <label className="field">
+                  <span>Foreground Color</span>
+                  <div className="theme-color-control">
+                    <input
+                      type="color"
+                      value={settings.themeForegroundColor}
+                      onChange={event => updateSettings({ themeForegroundColor: event.target.value.toUpperCase() })}
+                    />
+                    <strong>{settings.themeForegroundColor.toUpperCase()}</strong>
+                  </div>
+                </label>
+
+                <label className="field">
+                  <span>Accent Color</span>
+                  <div className="theme-color-control">
+                    <input
+                      type="color"
+                      value={settings.themeAccentColor}
+                      onChange={event => updateSettings({ themeAccentColor: event.target.value.toUpperCase() })}
+                    />
+                    <strong>{settings.themeAccentColor.toUpperCase()}</strong>
+                  </div>
+                </label>
+
+                <label className="field">
+                  <span>Font Family</span>
+                  <select
+                    value={settings.themeFontFamily}
+                    onChange={event =>
+                      updateSettings({
+                        themeFontFamily: event.target.value as AppSettings['themeFontFamily'],
+                      })
+                    }
+                  >
+                    {THEME_FONT_OPTIONS.map(option => (
+                      <option key={option.id} value={option.id}>
+                        {option.label} - {option.note}
+                      </option>
+                    ))}
+                  </select>
+                  <small className="field-hint">Custom values preview instantly and save with the rest of your local app settings.</small>
+                </label>
+              </div>
+            ) : (
+              <p className="muted theme-custom-hint">Switch to Custom if you want to pick the exact colors and font family yourself.</p>
+            )}
+          </SectionCard>
+
           <SectionCard title="Slack Auth" subtitle="Tokens and bot identity used to establish the Slack socket connection.">
             <div className="settings-fields two-column">
               <label className="field">
@@ -136,7 +309,7 @@ export function SettingsPage({
                 <input
                   type="password"
                   value={settings.slackBotToken}
-                  onChange={event => onSettingsChange({ ...settings, slackBotToken: event.target.value })}
+                  onChange={event => updateSettings({ slackBotToken: event.target.value })}
                   placeholder="xoxb-..."
                 />
               </label>
@@ -146,7 +319,7 @@ export function SettingsPage({
                 <input
                   type="password"
                   value={settings.slackAppToken}
-                  onChange={event => onSettingsChange({ ...settings, slackAppToken: event.target.value })}
+                  onChange={event => updateSettings({ slackAppToken: event.target.value })}
                   placeholder="xapp-..."
                 />
               </label>
@@ -156,7 +329,7 @@ export function SettingsPage({
                 <input
                   type="text"
                   value={settings.botUserId}
-                  onChange={event => onSettingsChange({ ...settings, botUserId: event.target.value })}
+                  onChange={event => updateSettings({ botUserId: event.target.value })}
                   placeholder="U0BOTUSER"
                 />
               </label>
@@ -170,7 +343,7 @@ export function SettingsPage({
                 <input
                   type="text"
                   value={settings.ownerSlackUserIds}
-                  onChange={event => onSettingsChange({ ...settings, ownerSlackUserIds: event.target.value })}
+                  onChange={event => updateSettings({ ownerSlackUserIds: event.target.value })}
                   placeholder="U01234567,U07654321"
                 />
               </label>
@@ -180,7 +353,7 @@ export function SettingsPage({
                 <input
                   type="text"
                   value={settings.bugsAndUpdatesChannelId}
-                  onChange={event => onSettingsChange({ ...settings, bugsAndUpdatesChannelId: event.target.value })}
+                  onChange={event => updateSettings({ bugsAndUpdatesChannelId: event.target.value })}
                   placeholder="C01H25RNLJH,C02XXXXXXX"
                 />
                 <small className="field-hint">
@@ -197,7 +370,7 @@ export function SettingsPage({
                 <input
                   type="text"
                   value={settings.newtonWebPath}
-                  onChange={event => onSettingsChange({ ...settings, newtonWebPath: event.target.value })}
+                  onChange={event => updateSettings({ newtonWebPath: event.target.value })}
                   placeholder="/Users/you/code/newton-web"
                 />
               </label>
@@ -207,7 +380,7 @@ export function SettingsPage({
                 <input
                   type="text"
                   value={settings.newtonApiPath}
-                  onChange={event => onSettingsChange({ ...settings, newtonApiPath: event.target.value })}
+                  onChange={event => updateSettings({ newtonApiPath: event.target.value })}
                   placeholder="/Users/you/code/newton-api"
                 />
                 <small className="field-hint">Save-time validation requires absolute paths that already exist on disk.</small>
@@ -224,12 +397,7 @@ export function SettingsPage({
                   min={1}
                   max={10}
                   value={settings.maxConcurrentJobs}
-                  onChange={event =>
-                    onSettingsChange({
-                      ...settings,
-                      maxConcurrentJobs: Number(event.target.value) || 1,
-                    })
-                  }
+                  onChange={event => updateSettings({ maxConcurrentJobs: Number(event.target.value) || 1 })}
                 />
               </label>
 
@@ -239,12 +407,7 @@ export function SettingsPage({
                   type="number"
                   min={1}
                   value={settings.prReviewTimeoutMs}
-                  onChange={event =>
-                    onSettingsChange({
-                      ...settings,
-                      prReviewTimeoutMs: Number(event.target.value) || 1,
-                    })
-                  }
+                  onChange={event => updateSettings({ prReviewTimeoutMs: Number(event.target.value) || 1 })}
                 />
               </label>
 
@@ -254,12 +417,7 @@ export function SettingsPage({
                   type="number"
                   min={1}
                   value={settings.bugFixTimeoutMs}
-                  onChange={event =>
-                    onSettingsChange({
-                      ...settings,
-                      bugFixTimeoutMs: Number(event.target.value) || 1,
-                    })
-                  }
+                  onChange={event => updateSettings({ bugFixTimeoutMs: Number(event.target.value) || 1 })}
                 />
               </label>
 
@@ -271,12 +429,7 @@ export function SettingsPage({
                   max={1}
                   step={0.01}
                   value={settings.repoClassifierThreshold}
-                  onChange={event =>
-                    onSettingsChange({
-                      ...settings,
-                      repoClassifierThreshold: Number(event.target.value),
-                    })
-                  }
+                  onChange={event => updateSettings({ repoClassifierThreshold: Number(event.target.value) })}
                 />
               </label>
             </div>
@@ -289,7 +442,7 @@ export function SettingsPage({
             {settingsMessage ? (
               <p className={settingsMessage.startsWith('Failed') ? 'error' : 'success'}>{settingsMessage}</p>
             ) : (
-              <p className="muted">Saving uses the existing Tauri command and does not change backend schema or contracts.</p>
+              <p className="muted">Theme changes preview live. Save persists both runtime fields and appearance choices to the local database.</p>
             )}
           </div>
 

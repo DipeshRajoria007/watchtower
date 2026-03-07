@@ -1,10 +1,36 @@
 :root {
+  --font-sans: "IBM Plex Sans", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", monospace;
   --bg-canvas: #06090c;
   --bg-shell: rgba(8, 13, 18, 0.9);
   --bg-panel: rgba(15, 21, 27, 0.9);
   --bg-panel-strong: rgba(20, 27, 34, 0.98);
   --bg-panel-soft: rgba(18, 24, 30, 0.72);
   --bg-input: rgba(10, 15, 20, 0.9);
+  --body-gradient-start: #091017;
+  --body-gradient-end: #05080b;
+  --body-radial-primary: rgba(83, 210, 255, 0.1);
+  --body-radial-secondary: rgba(255, 201, 120, 0.08);
+  --shell-gradient-top: rgba(11, 17, 23, 0.98);
+  --shell-gradient-bottom: rgba(7, 11, 15, 0.98);
+  --content-gradient-top: rgba(11, 16, 20, 0.78);
+  --content-gradient-bottom: rgba(5, 7, 10, 0.92);
+  --brand-gradient-top: rgba(16, 28, 37, 0.82);
+  --brand-gradient-bottom: rgba(8, 13, 18, 0.94);
+  --panel-gradient-top: rgba(21, 29, 37, 0.96);
+  --panel-gradient-bottom: rgba(10, 15, 20, 0.96);
+  --raised-gradient-top: rgba(23, 31, 39, 0.95);
+  --raised-gradient-bottom: rgba(12, 18, 24, 0.95);
+  --selected-gradient-top: rgba(24, 43, 56, 0.98);
+  --selected-gradient-bottom: rgba(11, 19, 24, 0.98);
+  --button-gradient-top: rgba(40, 110, 138, 0.95);
+  --button-gradient-bottom: rgba(17, 82, 108, 0.96);
+  --sticky-gradient-top: rgba(13, 20, 26, 0.97);
+  --sticky-gradient-bottom: rgba(8, 12, 16, 0.98);
+  --composer-gradient-top: rgba(31, 34, 40, 0.96);
+  --composer-gradient-bottom: rgba(19, 21, 26, 0.98);
+  --console-bg: rgba(5, 10, 14, 0.96);
+  --console-fg: #d5e1eb;
   --line: rgba(118, 145, 168, 0.22);
   --line-strong: rgba(118, 145, 168, 0.38);
   --text-strong: #f2f7fb;
@@ -12,10 +38,15 @@
   --text-soft: #c7d1dc;
   --text-label: #9fb5c7;
   --accent: #53d2ff;
+  --accent-rgb: 83, 210, 255;
+  --accent-contrast: #ffffff;
   --accent-soft: rgba(83, 210, 255, 0.16);
   --success: #78f3bd;
+  --success-rgb: 120, 243, 189;
   --warning: #ffc978;
+  --warning-rgb: 255, 201, 120;
   --danger: #ff8d8d;
+  --danger-rgb: 255, 141, 141;
   --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
 }
 
@@ -35,16 +66,16 @@ body {
   background:
     radial-gradient(
       circle at top left,
-      rgba(83, 210, 255, 0.1),
+      var(--body-radial-primary),
       transparent 28%
     ),
     radial-gradient(
       circle at 80% 20%,
-      rgba(255, 201, 120, 0.08),
+      var(--body-radial-secondary),
       transparent 24%
     ),
-    linear-gradient(180deg, #091017 0%, #05080b 100%);
-  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+    linear-gradient(180deg, var(--body-gradient-start) 0%, var(--body-gradient-end) 100%);
+  font-family: var(--font-sans);
 }
 
 button,
@@ -71,7 +102,7 @@ button {
   padding: 18px;
   border-right: 1px solid var(--line);
   background:
-    linear-gradient(180deg, rgba(11, 17, 23, 0.98), rgba(7, 11, 15, 0.98)),
+    linear-gradient(180deg, var(--shell-gradient-top), var(--shell-gradient-bottom)),
     var(--bg-shell);
   backdrop-filter: blur(18px);
 }
@@ -97,12 +128,8 @@ button {
   align-items: center;
   justify-content: center;
   border-radius: 15px;
-  border: 1px solid rgba(83, 210, 255, 0.22);
-  background: linear-gradient(
-    160deg,
-    rgba(16, 28, 37, 0.82),
-    rgba(8, 13, 18, 0.94)
-  );
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
+  background: linear-gradient(160deg, var(--brand-gradient-top), var(--brand-gradient-bottom));
   color: var(--accent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
@@ -130,7 +157,7 @@ button {
 .eyebrow {
   margin: 0;
   color: var(--accent);
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 0.73rem;
   letter-spacing: 0.075em;
   text-transform: uppercase;
@@ -208,27 +235,23 @@ button {
 
 .nav-button:hover {
   transform: translateY(-1px);
-  border-color: rgba(83, 210, 255, 0.18);
-  background: rgba(83, 210, 255, 0.06);
+  border-color: rgba(var(--accent-rgb), 0.18);
+  background: rgba(var(--accent-rgb), 0.06);
 }
 
 .nav-button.active {
   background: linear-gradient(
     160deg,
-    rgba(83, 210, 255, 0.14),
-    rgba(83, 210, 255, 0.04)
+    rgba(var(--accent-rgb), 0.14),
+    rgba(var(--accent-rgb), 0.04)
   );
-  border-color: rgba(83, 210, 255, 0.28);
+  border-color: rgba(var(--accent-rgb), 0.28);
   color: var(--text-strong);
 }
 
 .nav-button.active .nav-icon {
-  background: linear-gradient(
-    180deg,
-    rgba(24, 54, 70, 0.92),
-    rgba(12, 28, 38, 0.96)
-  );
-  border-color: rgba(83, 210, 255, 0.18);
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.24), rgba(var(--accent-rgb), 0.08));
+  border-color: rgba(var(--accent-rgb), 0.18);
   color: var(--text-strong);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.07),
@@ -283,7 +306,7 @@ button {
   border-radius: 999px;
   font-size: 0.76rem;
   font-weight: 700;
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.05);
   color: var(--text-strong);
@@ -294,14 +317,14 @@ button {
 }
 
 .nav-badge-danger {
-  border-color: rgba(255, 141, 141, 0.4);
-  background: rgba(255, 141, 141, 0.15);
+  border-color: rgba(var(--danger-rgb), 0.4);
+  background: rgba(var(--danger-rgb), 0.15);
   color: var(--danger);
 }
 
 .nav-badge-warning {
-  border-color: rgba(255, 201, 120, 0.35);
-  background: rgba(255, 201, 120, 0.12);
+  border-color: rgba(var(--warning-rgb), 0.35);
+  background: rgba(var(--warning-rgb), 0.12);
   color: var(--warning);
 }
 
@@ -337,7 +360,7 @@ button {
   height: 100vh;
   overflow: hidden;
   background:
-    linear-gradient(180deg, rgba(11, 16, 20, 0.78), rgba(5, 7, 10, 0.92)),
+    linear-gradient(180deg, var(--content-gradient-top), var(--content-gradient-bottom)),
     var(--bg-canvas);
 }
 
@@ -362,11 +385,11 @@ button {
   margin-bottom: 18px;
   padding: 16px 18px;
   border-radius: 18px;
-  border: 1px solid rgba(255, 201, 120, 0.26);
+  border: 1px solid rgba(var(--warning-rgb), 0.26);
   background: linear-gradient(
     120deg,
-    rgba(255, 201, 120, 0.12),
-    rgba(255, 201, 120, 0.05)
+    rgba(var(--warning-rgb), 0.12),
+    rgba(var(--warning-rgb), 0.05)
   );
   color: #ffe4b3;
 }
@@ -415,13 +438,9 @@ button {
 
 .global-banner button,
 .primary-button {
-  border: 1px solid rgba(83, 210, 255, 0.32);
-  background: linear-gradient(
-    160deg,
-    rgba(40, 110, 138, 0.95),
-    rgba(17, 82, 108, 0.96)
-  );
-  color: white;
+  border: 1px solid rgba(var(--accent-rgb), 0.32);
+  background: linear-gradient(160deg, var(--button-gradient-top), var(--button-gradient-bottom));
+  color: var(--accent-contrast);
 }
 
 .ghost-button {
@@ -431,7 +450,7 @@ button {
 }
 
 .ghost-button:hover {
-  border-color: rgba(83, 210, 255, 0.3);
+  border-color: rgba(var(--accent-rgb), 0.3);
   color: var(--text-strong);
 }
 
@@ -511,13 +530,13 @@ button {
   transform: rotate(45deg);
   background: conic-gradient(
     from 220deg,
-    #57d4ff,
-    #6ff0be,
-    #ffd16b,
-    #ff8ea5,
-    #57d4ff
+    var(--accent),
+    var(--success),
+    var(--warning),
+    var(--danger),
+    var(--accent)
   );
-  box-shadow: 0 0 20px rgba(87, 212, 255, 0.32);
+  box-shadow: 0 0 20px rgba(var(--accent-rgb), 0.32);
 }
 
 .launchpad-title {
@@ -620,9 +639,7 @@ h2 {
 .metric-card {
   border-radius: 22px;
   border: 1px solid var(--line);
-  background:
-    linear-gradient(160deg, rgba(21, 29, 37, 0.96), rgba(10, 15, 20, 0.96)),
-    var(--bg-panel);
+  background: linear-gradient(160deg, var(--panel-gradient-top), var(--panel-gradient-bottom)), var(--bg-panel);
   box-shadow: var(--shadow);
 }
 
@@ -639,7 +656,7 @@ h2 {
 .metric-card span {
   color: var(--text-label);
   font-size: 0.75rem;
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
@@ -740,53 +757,53 @@ h2 {
 
 .status-badge.running {
   color: #ffda99;
-  background: rgba(255, 201, 120, 0.14);
-  border-color: rgba(255, 201, 120, 0.32);
+  background: rgba(var(--warning-rgb), 0.14);
+  border-color: rgba(var(--warning-rgb), 0.32);
 }
 
 .status-badge.success {
   color: var(--success);
-  background: rgba(120, 243, 189, 0.12);
-  border-color: rgba(120, 243, 189, 0.3);
+  background: rgba(var(--success-rgb), 0.12);
+  border-color: rgba(var(--success-rgb), 0.3);
 }
 
 .status-badge.failed,
 .status-badge.error {
   color: var(--danger);
-  background: rgba(255, 141, 141, 0.12);
-  border-color: rgba(255, 141, 141, 0.3);
+  background: rgba(var(--danger-rgb), 0.12);
+  border-color: rgba(var(--danger-rgb), 0.3);
 }
 
 .status-badge.paused,
 .status-badge.skipped,
 .status-badge.warn {
   color: var(--warning);
-  background: rgba(255, 201, 120, 0.12);
-  border-color: rgba(255, 201, 120, 0.28);
+  background: rgba(var(--warning-rgb), 0.12);
+  border-color: rgba(var(--warning-rgb), 0.28);
 }
 
 .status-badge.info {
   color: var(--accent);
-  background: rgba(83, 210, 255, 0.12);
-  border-color: rgba(83, 210, 255, 0.28);
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: rgba(var(--accent-rgb), 0.28);
 }
 
 .status-badge.priority-high {
   color: var(--danger);
-  background: rgba(255, 141, 141, 0.12);
-  border-color: rgba(255, 141, 141, 0.3);
+  background: rgba(var(--danger-rgb), 0.12);
+  border-color: rgba(var(--danger-rgb), 0.3);
 }
 
 .status-badge.priority-medium {
   color: var(--warning);
-  background: rgba(255, 201, 120, 0.14);
-  border-color: rgba(255, 201, 120, 0.3);
+  background: rgba(var(--warning-rgb), 0.14);
+  border-color: rgba(var(--warning-rgb), 0.3);
 }
 
 .status-badge.priority-low {
   color: var(--success);
-  background: rgba(120, 243, 189, 0.12);
-  border-color: rgba(120, 243, 189, 0.3);
+  background: rgba(var(--success-rgb), 0.12);
+  border-color: rgba(var(--success-rgb), 0.3);
 }
 
 .run-list,
@@ -805,11 +822,7 @@ h2 {
   padding: 14px 16px;
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  background: linear-gradient(
-    155deg,
-    rgba(23, 31, 39, 0.95),
-    rgba(12, 18, 24, 0.95)
-  );
+  background: linear-gradient(155deg, var(--raised-gradient-top), var(--raised-gradient-bottom));
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -821,16 +834,12 @@ h2 {
 
 .run-card:hover {
   transform: translateY(-1px);
-  border-color: rgba(83, 210, 255, 0.24);
+  border-color: rgba(var(--accent-rgb), 0.24);
 }
 
 .run-card.selected {
-  border-color: rgba(83, 210, 255, 0.4);
-  background: linear-gradient(
-    155deg,
-    rgba(24, 43, 56, 0.98),
-    rgba(11, 19, 24, 0.98)
-  );
+  border-color: rgba(var(--accent-rgb), 0.4);
+  background: linear-gradient(155deg, var(--selected-gradient-top), var(--selected-gradient-bottom));
 }
 
 .run-card-copy {
@@ -842,7 +851,7 @@ h2 {
 .run-card-workflow {
   color: var(--text-label);
   font-size: 0.72rem;
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -871,7 +880,7 @@ h2 {
 
 .run-card-meta {
   margin-top: 10px;
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
 }
 
 .run-card-error {
@@ -911,7 +920,7 @@ h2 {
   font-size: 0.74rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
 }
 
 .detail-grid strong {
@@ -949,7 +958,7 @@ h2 {
 
 .trace-stage,
 .trace-time {
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
 }
 
 .trace-message {
@@ -962,13 +971,13 @@ h2 {
   margin: 10px 0 0;
   padding: 12px;
   border-radius: 14px;
-  border: 1px solid rgba(83, 210, 255, 0.15);
-  background: rgba(7, 12, 17, 0.86);
-  color: #bce6f8;
+  border: 1px solid rgba(var(--accent-rgb), 0.15);
+  background: var(--console-bg);
+  color: var(--console-fg);
   overflow: auto;
   font-size: 0.78rem;
   line-height: 1.55;
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
 }
 
 .live-log-console {
@@ -978,12 +987,12 @@ h2 {
   padding: 16px;
   overflow: auto;
   border-radius: 18px;
-  border: 1px solid rgba(83, 210, 255, 0.16);
-  background: rgba(5, 10, 14, 0.96);
-  color: #d5e1eb;
+  border: 1px solid rgba(var(--accent-rgb), 0.16);
+  background: var(--console-bg);
+  color: var(--console-fg);
   font-size: 0.78rem;
   line-height: 1.6;
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1025,7 +1034,7 @@ h2 {
 .channel-id {
   display: block;
   color: var(--text-strong);
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 0.88rem;
   min-width: 0;
   overflow: hidden;
@@ -1034,7 +1043,7 @@ h2 {
 
 .channel-runs {
   white-space: nowrap;
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
 }
 
 .learning-metrics,
@@ -1059,7 +1068,7 @@ h2 {
 .section-label {
   color: var(--text-label);
   font-size: 0.74rem;
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
@@ -1130,7 +1139,7 @@ h2 {
 
 .tab-button.active {
   color: var(--text-strong);
-  background: rgba(83, 210, 255, 0.14);
+  background: rgba(var(--accent-rgb), 0.14);
 }
 
 .composer-field {
@@ -1140,7 +1149,7 @@ h2 {
 
 .composer-field span {
   color: var(--text-label);
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 0.74rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1160,8 +1169,8 @@ h2 {
 
 .composer-field textarea:focus {
   outline: none;
-  border-color: rgba(83, 210, 255, 0.4);
-  box-shadow: 0 0 0 3px rgba(83, 210, 255, 0.08);
+  border-color: rgba(var(--accent-rgb), 0.4);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.08);
 }
 
 .slack-launchpad {
@@ -1187,7 +1196,7 @@ h2 {
       rgba(255, 255, 255, 0.04),
       transparent 38%
     ),
-    linear-gradient(180deg, rgba(31, 34, 40, 0.96), rgba(19, 21, 26, 0.98));
+    linear-gradient(180deg, var(--composer-gradient-top), var(--composer-gradient-bottom));
   box-shadow:
     0 28px 90px rgba(0, 0, 0, 0.44),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
@@ -1198,7 +1207,7 @@ h2 {
   border-color: rgba(255, 255, 255, 0.14);
   box-shadow:
     0 28px 90px rgba(0, 0, 0, 0.44),
-    0 0 0 1px rgba(83, 210, 255, 0.14),
+    0 0 0 1px rgba(var(--accent-rgb), 0.14),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
@@ -1287,7 +1296,7 @@ h2 {
 
 .slack-segment-command {
   color: rgba(159, 181, 199, 0.7);
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 0.72rem;
 }
 
@@ -1316,11 +1325,11 @@ h2 {
 }
 
 .slack-launchpad .primary-button {
-  border-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(var(--accent-rgb), 0.24);
   background: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.14),
-    rgba(255, 255, 255, 0.08)
+    rgba(var(--accent-rgb), 0.28),
+    rgba(var(--accent-rgb), 0.14)
   );
   color: var(--text-strong);
 }
@@ -1348,7 +1357,7 @@ h2 {
 
 .slack-preview span {
   color: rgba(159, 181, 199, 0.72);
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 0.68rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1388,7 +1397,7 @@ h2 {
   color: rgba(242, 247, 251, 0.82);
   font-size: 0.94rem;
   line-height: 1.5;
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -1449,6 +1458,159 @@ h2 {
   padding: 16px;
 }
 
+.theme-section-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.95fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.theme-presets-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.theme-preset-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: linear-gradient(155deg, var(--raised-gradient-top), var(--raised-gradient-bottom));
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.theme-preset-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.24);
+}
+
+.theme-preset-card.active {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(var(--accent-rgb), 0.08);
+}
+
+.theme-preset-top,
+.theme-preview-top,
+.theme-preview-line,
+.theme-preview-actions,
+.theme-preset-meta,
+.theme-color-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.theme-preset-top {
+  align-items: flex-start;
+}
+
+.theme-preset-top strong,
+.theme-preview-top h3 {
+  display: block;
+  margin: 0;
+}
+
+.theme-preset-top p,
+.theme-preview-copy {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+  font-size: 0.92rem;
+}
+
+.theme-swatch-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.theme-swatch-strip span {
+  display: block;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.theme-preset-meta,
+.theme-preview-kicker,
+.theme-color-control strong {
+  color: var(--text-label);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.theme-preview-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(var(--accent-rgb), 0.16);
+  background: linear-gradient(160deg, var(--panel-gradient-top), var(--panel-gradient-bottom));
+}
+
+.theme-preview-kicker {
+  margin: 0 0 8px;
+}
+
+.theme-preview-surface {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid var(--theme-preview-accent);
+  background: var(--theme-preview-bg);
+  color: var(--theme-preview-fg);
+  font-family: var(--theme-preview-font);
+}
+
+.theme-preview-line {
+  color: inherit;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.theme-preview-surface strong {
+  font-size: 1.4rem;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.theme-preview-surface p {
+  margin: 0;
+  max-width: 34ch;
+  line-height: 1.55;
+  opacity: 0.84;
+}
+
+.theme-preview-actions button {
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--theme-preview-accent);
+  background: transparent;
+  color: var(--theme-preview-accent);
+}
+
+.theme-preview-actions span {
+  color: var(--theme-preview-accent);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
 .settings-sections {
   display: grid;
   gap: 18px;
@@ -1470,13 +1632,14 @@ h2 {
 
 .field span {
   color: var(--text-label);
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 0.74rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
-.field input {
+.field input,
+.field select {
   width: 100%;
   padding: 12px 14px;
   border-radius: 14px;
@@ -1485,10 +1648,37 @@ h2 {
   color: var(--text-strong);
 }
 
-.field input:focus {
+.field input:focus,
+.field select:focus {
   outline: none;
-  border-color: rgba(83, 210, 255, 0.4);
-  box-shadow: 0 0 0 3px rgba(83, 210, 255, 0.08);
+  border-color: rgba(var(--accent-rgb), 0.4);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.08);
+}
+
+.theme-custom-grid {
+  margin-top: 16px;
+}
+
+.theme-color-control {
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--bg-input);
+}
+
+.theme-color-control input[type="color"] {
+  width: 52px;
+  min-width: 52px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.theme-custom-hint {
+  margin-top: 16px;
 }
 
 .settings-sticky-bar {
@@ -1501,11 +1691,7 @@ h2 {
   padding: 16px 18px;
   border-radius: 20px;
   border: 1px solid var(--line);
-  background: linear-gradient(
-    160deg,
-    rgba(13, 20, 26, 0.97),
-    rgba(8, 12, 16, 0.98)
-  );
+  background: linear-gradient(160deg, var(--sticky-gradient-top), var(--sticky-gradient-bottom));
   box-shadow: 0 -18px 45px rgba(0, 0, 0, 0.24);
   backdrop-filter: blur(18px);
 }
@@ -1535,7 +1721,7 @@ h2 {
   border: 1px dashed rgba(118, 145, 168, 0.35);
   background: rgba(255, 255, 255, 0.02);
   color: var(--text-muted);
-  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  font-family: var(--font-mono);
   line-height: 1.6;
 }
 
@@ -1552,11 +1738,11 @@ h2 {
 
 .inline-error-banner {
   color: var(--danger);
-  border-color: rgba(255, 141, 141, 0.28);
+  border-color: rgba(var(--danger-rgb), 0.28);
   background: linear-gradient(
     120deg,
-    rgba(255, 141, 141, 0.12),
-    rgba(255, 141, 141, 0.05)
+    rgba(var(--danger-rgb), 0.12),
+    rgba(var(--danger-rgb), 0.05)
   );
 }
 
@@ -1584,11 +1770,7 @@ h2 {
   padding: 18px;
   border-radius: 24px;
   border: 1px solid var(--line);
-  background: linear-gradient(
-    180deg,
-    rgba(11, 17, 23, 0.99),
-    rgba(7, 11, 15, 0.99)
-  );
+  background: linear-gradient(180deg, var(--shell-gradient-top), var(--shell-gradient-bottom));
   box-shadow: var(--shadow);
   transform: translateX(-108%);
   transition: transform 180ms ease;
@@ -1682,7 +1864,7 @@ h2 {
     border-radius: 28px;
     background: radial-gradient(
       circle at top,
-      rgba(83, 210, 255, 0.14),
+      rgba(var(--accent-rgb), 0.14),
       transparent 72%
     );
     transform: scale(0.92);
@@ -1696,10 +1878,10 @@ h2 {
     border-radius: 999px;
     background: linear-gradient(
       180deg,
-      rgba(83, 210, 255, 0.98),
-      rgba(111, 240, 190, 0.85)
+      rgba(var(--accent-rgb), 0.98),
+      rgba(var(--success-rgb), 0.85)
     );
-    box-shadow: 0 0 18px rgba(83, 210, 255, 0.45);
+    box-shadow: 0 0 18px rgba(var(--accent-rgb), 0.45);
     transform: translateY(-50%);
   }
 
@@ -1745,11 +1927,7 @@ h2 {
     width: 64px;
     height: 64px;
     border-radius: 22px;
-    background: linear-gradient(
-      180deg,
-      rgba(17, 23, 31, 0.94),
-      rgba(10, 15, 21, 0.98)
-    );
+    background: linear-gradient(180deg, var(--raised-gradient-top), var(--raised-gradient-bottom));
     border: 1px solid rgba(255, 255, 255, 0.06);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.04),
@@ -1762,23 +1940,19 @@ h2 {
   }
 
   .shell-sidebar .nav-button:hover .nav-icon {
-    border-color: rgba(83, 210, 255, 0.14);
+    border-color: rgba(var(--accent-rgb), 0.14);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.05),
       0 12px 24px rgba(0, 0, 0, 0.24);
   }
 
   .shell-sidebar .nav-button.active .nav-icon {
-    background: linear-gradient(
-      180deg,
-      rgba(20, 48, 62, 0.95),
-      rgba(9, 24, 34, 0.98)
-    );
-    border-color: rgba(83, 210, 255, 0.28);
+    background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.28), rgba(var(--accent-rgb), 0.1));
+    border-color: rgba(var(--accent-rgb), 0.28);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.08),
       0 18px 30px rgba(0, 13, 24, 0.34),
-      0 0 0 1px rgba(83, 210, 255, 0.08);
+      0 0 0 1px rgba(var(--accent-rgb), 0.08);
     transform: translateX(2px);
   }
 
@@ -1805,6 +1979,8 @@ h2 {
   .runs-workspace,
   .diagnostics-grid,
   .settings-summary-grid,
+  .theme-section-layout,
+  .theme-presets-grid,
   .settings-fields.two-column,
   .detail-grid,
   .mode-heat-grid,

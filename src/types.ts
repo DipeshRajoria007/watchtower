@@ -4,6 +4,10 @@ export type RunsSubView = 'active' | 'failures' | 'recent' | 'diagnostics';
 
 export type SlackCommandTarget = 'miniog' | 'watchtower';
 
+export type ThemePresetId = 'watchtower-midnight' | 'signal-paper' | 'ember-terminal' | 'harbor-mint' | 'custom';
+
+export type ThemeFontFamilyId = 'ibm-plex' | 'sf-pro' | 'avenir-next' | 'georgia' | 'menlo';
+
 export type RunSummary = {
   id: string;
   workflow: string;
@@ -90,6 +94,11 @@ export type AppSettings = {
   prReviewTimeoutMs: number;
   bugFixTimeoutMs: number;
   repoClassifierThreshold: number;
+  themePreset: ThemePresetId;
+  themeBackgroundColor: string;
+  themeForegroundColor: string;
+  themeAccentColor: string;
+  themeFontFamily: ThemeFontFamilyId;
 };
 
 export type SaveSettingsResponse = {
