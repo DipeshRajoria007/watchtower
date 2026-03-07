@@ -1733,7 +1733,7 @@ h2 {
   margin: 0 auto;
   display: grid;
   align-items: center;
-  justify-items: center;
+  justify-items: stretch;
   gap: 20px;
   animation: fadeInUp 400ms ease-out;
 }
@@ -1796,6 +1796,7 @@ h2 {
 
 .launchpad-title {
   max-width: 16ch;
+  min-width: 100%;
   margin: 0;
   font-size: clamp(1.8rem, 3.5vw, 2.6rem);
   line-height: 1;
@@ -1854,6 +1855,7 @@ h2 {
 .launchpad-shell {
   width: min(100%, 1080px);
   margin: 0 auto;
+  justify-self: stretch;
 }
 
 .composer-field {
@@ -1890,7 +1892,19 @@ h2 {
 }
 
 .slack-launchpad.minimal {
-  gap: 18px;
+  gap: 24px;
+}
+
+.launchpad-title {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  font-weight: 700;
+  color: var(--text-primary);
+  text-align: center;
+  margin: 0;
+  padding: 16px 0 8px;
+  letter-spacing: -0.03em;
+  text-shadow: 0 0 60px rgba(var(--accent-rgb, 100, 200, 220), 0.2);
 }
 
 .slack-composer-card {

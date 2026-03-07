@@ -111,6 +111,7 @@ export function SlackLaunchpad({
 
   return (
     <div className={isMinimal ? 'slack-launchpad minimal' : 'slack-launchpad'}>
+      <h2 className="launchpad-title">What should we ship?</h2>
       <div className="slack-composer-card">
         <label className="composer-field slack-composer-field">
           <textarea
