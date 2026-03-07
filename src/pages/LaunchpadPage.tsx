@@ -33,7 +33,7 @@ export function LaunchpadPage({
     <div className="launchpad-page">
       <section className="launchpad-hero">
         <div className="launchpad-intro">
-          <p className="eyebrow">Slack Command Deck</p>
+          <span className="eyebrow">Slack Command Deck</span>
           <h1 className="launchpad-title">Draft once. Route cleanly. Keep the exact command ready.</h1>
 
           <p className="launchpad-copy">

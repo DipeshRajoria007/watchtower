@@ -39,7 +39,7 @@ export function PageIntro({
   return (
     <header className="page-intro">
       <div className="page-intro-copy">
-        <p className="eyebrow">{eyebrow}</p>
+        <span className="eyebrow">{eyebrow}</span>
         <h1>{title}</h1>
         <p className="page-description">{description}</p>
         {actions ? <div className="page-actions">{actions}</div> : null}
@@ -191,7 +191,7 @@ export function RunInspector({ logs, run }: { logs: JobLogEntry[]; run: RunSumma
       <article className="surface-card detail-card">
         <div className="detail-header">
           <div>
-            <p className="eyebrow">{run.workflow.replaceAll('_', ' ')}</p>
+            <span className="eyebrow">{run.workflow.replaceAll('_', ' ')}</span>
             <h2>{run.taskSummary}</h2>
           </div>
           <StatusBadge label={run.status} tone={getStatusTone(run.status)} />
