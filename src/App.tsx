@@ -16,6 +16,7 @@ import type {
   AppNotificationPayload,
   AppView,
   DashboardData,
+  ImportNotificationAudioResponse,
   JobLogEntry,
   RunSummary,
   RunsSubView,
@@ -24,6 +25,7 @@ import type {
 } from './types';
 
 const POLL_MS = 5000;
+const NOTIFICATION_AUDIO_MAX_BYTES = 10 * 1024 * 1024;
 const PENDING_SHORTCUT_VIEW_KEY = 'watchtower:pending-shortcut-view';
 const PENDING_SHORTCUT_TARGET_KEY = 'watchtower:pending-shortcut-target';
 const APP_NOTIFICATION_EVENT = 'watchtower-notification';
@@ -50,6 +52,33 @@ function readPendingShortcutTarget(): SlackCommandTarget | null {
   return value === 'miniog' || value === 'watchtower' ? value : null;
 }
 
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onerror = () => {
+      reject(new Error(`Unable to read ${file.name}`));
+    };
+
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error(`Unable to encode ${file.name}`));
+        return;
+      }
+
+      const [, base64 = ''] = reader.result.split(',', 2);
+      if (!base64) {
+        reject(new Error(`Unable to encode ${file.name}`));
+        return;
+      }
+
+      resolve(base64);
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
 function App() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -61,6 +90,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [uploadingNotificationAudio, setUploadingNotificationAudio] = useState(false);
   const [previewingNotification, setPreviewingNotification] = useState(false);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [slackComposerDraft, setSlackComposerDraft] = useState('');
@@ -360,16 +390,62 @@ function App() {
   };
 
   const previewNotification = async () => {
+    if (!settings) {
+      return;
+    }
+
     setPreviewingNotification(true);
 
     try {
-      await invoke('emit_preview_notification');
+      await invoke('emit_preview_notification', { settings });
     } catch (err) {
       toast.error('Preview notification failed', {
         description: String(err),
       });
     } finally {
       setPreviewingNotification(false);
+    }
+  };
+
+  const importNotificationAudio = async (file: File) => {
+    if (!settings) {
+      return;
+    }
+
+    if (file.size === 0) {
+      setSettingsMessage('Failed to import notification audio: selected file is empty.');
+      return;
+    }
+
+    if (file.size > NOTIFICATION_AUDIO_MAX_BYTES) {
+      setSettingsMessage('Failed to import notification audio: file must be 10MB or smaller.');
+      return;
+    }
+
+    setUploadingNotificationAudio(true);
+    setSettingsMessage(null);
+
+    try {
+      const dataBase64 = await readFileAsBase64(file);
+      const result = await invoke<ImportNotificationAudioResponse>('import_notification_audio', {
+        fileName: file.name,
+        dataBase64,
+      });
+
+      setSettings(current =>
+        current
+          ? {
+              ...current,
+              notificationAudioMode: 'custom',
+              notificationAudioCustomPath: result.path,
+            }
+          : current
+      );
+      setSettingsMessage(`Imported ${result.fileName}. Save settings to apply it to live notifications.`);
+    } catch (err) {
+      setSettingsMessage(`Failed to import notification audio: ${String(err)}`);
+    } finally {
+      setUploadingNotificationAudio(false);
     }
   };
 
@@ -435,6 +511,7 @@ function App() {
       {view === 'settings' ? (
         <SettingsPage
           onSettingsChange={nextSettings => setSettings(nextSettings)}
+          onImportNotificationAudio={importNotificationAudio}
           onPreviewNotification={previewNotification}
           onSubmit={saveSettings}
           previewingNotification={previewingNotification}
@@ -442,6 +519,7 @@ function App() {
           settings={settings}
           settingsConfigured={data?.settingsConfigured ?? false}
           settingsMessage={settingsMessage}
+          uploadingNotificationAudio={uploadingNotificationAudio}
         />
       ) : null}
     </AppShell>

@@ -1,4 +1,5 @@
-import type { CSSProperties, FormEvent } from 'react';
+import { useRef } from 'react';
+import type { ChangeEvent, CSSProperties, FormEvent } from 'react';
 import {
   THEME_FONT_OPTIONS,
   THEME_PRESETS,
@@ -16,6 +17,7 @@ import {
 
 type SettingsPageProps = {
   onSettingsChange: (settings: AppSettings) => void;
+  onImportNotificationAudio: (file: File) => Promise<void>;
   onPreviewNotification: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   previewingNotification: boolean;
@@ -23,6 +25,7 @@ type SettingsPageProps = {
   settings: AppSettings | null;
   settingsConfigured: boolean;
   settingsMessage: string | null;
+  uploadingNotificationAudio: boolean;
 };
 
 type SectionSummary = {
@@ -42,6 +45,48 @@ type ThemeCard = {
   label: string;
 };
 
+type NotificationAudioModeCard = {
+  description: string;
+  id: AppSettings['notificationAudioMode'];
+  label: string;
+};
+
+type NotificationAudioSoundCard = {
+  description: string;
+  id: AppSettings['notificationAudioDefaultSound'];
+  label: string;
+};
+
+const NOTIFICATION_AUDIO_MODE_CARDS: NotificationAudioModeCard[] = [
+  {
+    description: 'Keep Watchtower desktop notifications silent.',
+    id: 'off',
+    label: 'No Sound',
+  },
+  {
+    description: 'Use a built-in macOS alert sound for every notification.',
+    id: 'default',
+    label: 'Built-in Sounds',
+  },
+  {
+    description: 'Import your own audio file and store it with Watchtower.',
+    id: 'custom',
+    label: 'Custom File',
+  },
+];
+
+const NOTIFICATION_AUDIO_SOUND_CARDS: NotificationAudioSoundCard[] = [
+  { description: 'Low, warm tap', id: 'basso', label: 'Basso' },
+  { description: 'Bright glass chime', id: 'glass', label: 'Glass' },
+  { description: 'Confident upward tone', id: 'hero', label: 'Hero' },
+  { description: 'Classic single ping', id: 'ping', label: 'Ping' },
+  { description: 'Short rounded pop', id: 'pop', label: 'Pop' },
+  { description: 'Soft synthetic pulse', id: 'purr', label: 'Purr' },
+  { description: 'Retro system chirp', id: 'sosumi', label: 'Sosumi' },
+  { description: 'Deep submarine ping', id: 'submarine', label: 'Submarine' },
+  { description: 'Small crystal tick', id: 'tink', label: 'Tink' },
+];
+
 function buildThemePreviewStyle(theme: ReturnType<typeof resolveAppTheme>): CSSProperties {
   return {
     '--theme-preview-accent': theme.accentColor,
@@ -51,8 +96,19 @@ function buildThemePreviewStyle(theme: ReturnType<typeof resolveAppTheme>): CSSP
   } as CSSProperties;
 }
 
+function readFileNameFromPath(pathValue: string): string | null {
+  const trimmed = pathValue.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parts = trimmed.split(/[\\/]/).filter(Boolean);
+  return parts.at(-1) ?? trimmed;
+}
+
 export function SettingsPage({
   onSettingsChange,
+  onImportNotificationAudio,
   onPreviewNotification,
   onSubmit,
   previewingNotification,
@@ -60,7 +116,10 @@ export function SettingsPage({
   settings,
   settingsConfigured,
   settingsMessage,
+  uploadingNotificationAudio,
 }: SettingsPageProps) {
+  const notificationAudioInputRef = useRef<HTMLInputElement | null>(null);
+
   if (!settings) {
     return (
       <div className="page-stack">
@@ -81,6 +140,14 @@ export function SettingsPage({
   const updateSettings = (patch: Partial<AppSettings>) => onSettingsChange({ ...settings, ...patch });
   const activeTheme = resolveAppTheme(settings);
   const customThemePreview = resolveAppTheme({ ...settings, themePreset: 'custom' });
+  const customNotificationAudioFile = readFileNameFromPath(settings.notificationAudioCustomPath);
+  const activeNotificationAudioLabel =
+    settings.notificationAudioMode === 'off'
+      ? 'Silent'
+      : settings.notificationAudioMode === 'custom'
+        ? customNotificationAudioFile ?? 'Custom file'
+        : NOTIFICATION_AUDIO_SOUND_CARDS.find(sound => sound.id === settings.notificationAudioDefaultSound)?.label ?? 'Built-in sound';
+  const canPreviewNotification = settings.notificationAudioMode !== 'custom' || Boolean(customNotificationAudioFile);
   const themeCards: ThemeCard[] = [
     ...THEME_PRESETS.map(preset => ({
       accentColor: preset.accentColor,
@@ -102,6 +169,16 @@ export function SettingsPage({
     },
   ];
   const themePreviewStyle = buildThemePreviewStyle(activeTheme);
+
+  const handleNotificationAudioFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) {
+      return;
+    }
+
+    await onImportNotificationAudio(file);
+  };
 
   const sections: SectionSummary[] = [
     {
@@ -148,7 +225,7 @@ export function SettingsPage({
       <PageIntro
         eyebrow="Runtime + Appearance"
         title="Settings"
-        description="Slack auth, ownership rules, repo boundaries, execution limits, and desktop appearance all live in one polished configuration surface."
+        description="Slack auth, ownership rules, repo boundaries, execution limits, desktop appearance, and notification audio all live in one polished configuration surface."
         actions={
           <StatusBadge
             label={settingsConfigured ? 'Runtime Ready' : 'Action Needed'}
@@ -241,20 +318,6 @@ export function SettingsPage({
                     <span>{activeTheme.accentColor}</span>
                   </div>
                 </div>
-
-                <div className="notification-preview-strip">
-                  <div>
-                    <p className="theme-preview-kicker">Notification Preview</p>
-                    <strong>Trigger a fake Watchtower notification.</strong>
-                    <p className="theme-preview-copy">
-                      Uses the same Tauri event path as a real sidecar notification so you can inspect the in-app toast styling.
-                    </p>
-                  </div>
-
-                  <button className="ghost-button" type="button" onClick={onPreviewNotification} disabled={previewingNotification}>
-                    {previewingNotification ? 'Showing...' : 'Show sample notification'}
-                  </button>
-                </div>
               </article>
             </div>
 
@@ -317,6 +380,115 @@ export function SettingsPage({
               </div>
             ) : (
               <p className="muted theme-custom-hint">Switch to Custom if you want to pick the exact colors and font family yourself.</p>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Notification Audio"
+            subtitle="Choose a built-in macOS alert or import your own audio file. Preview uses the current in-form selection before you save."
+          >
+            <div className="audio-mode-grid">
+              {NOTIFICATION_AUDIO_MODE_CARDS.map(card => {
+                const selected = settings.notificationAudioMode === card.id;
+
+                return (
+                  <button
+                    key={card.id}
+                    className={selected ? 'settings-choice-card active' : 'settings-choice-card'}
+                    type="button"
+                    onClick={() => updateSettings({ notificationAudioMode: card.id })}
+                  >
+                    <div className="settings-choice-top">
+                      <strong>{card.label}</strong>
+                      <StatusBadge label={selected ? 'Selected' : 'Available'} tone={selected ? 'success' : 'info'} />
+                    </div>
+                    <p>{card.description}</p>
+                  </button>
+                );
+              })}
+            </div>
+
+            {settings.notificationAudioMode === 'default' ? (
+              <div className="audio-sound-grid">
+                {NOTIFICATION_AUDIO_SOUND_CARDS.map(sound => {
+                  const selected = settings.notificationAudioDefaultSound === sound.id;
+
+                  return (
+                    <button
+                      key={sound.id}
+                      className={selected ? 'settings-choice-card active' : 'settings-choice-card'}
+                      type="button"
+                      onClick={() => updateSettings({ notificationAudioDefaultSound: sound.id })}
+                    >
+                      <div className="settings-choice-top">
+                        <strong>{sound.label}</strong>
+                        <StatusBadge label={selected ? 'Active' : 'Sound'} tone={selected ? 'success' : 'info'} />
+                      </div>
+                      <p>{sound.description}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {settings.notificationAudioMode === 'custom' ? (
+              <div className="audio-custom-card">
+                <div>
+                  <p className="theme-preview-kicker">Imported File</p>
+                  <strong>{customNotificationAudioFile ?? 'No custom audio selected yet'}</strong>
+                  <p className="theme-preview-copy">
+                    Supported formats: `.aiff`, `.aif`, `.wav`, `.mp3`, `.m4a`, `.caf`. Watchtower copies the file into local app storage and reuses it for future notifications.
+                  </p>
+                </div>
+
+                <div className="audio-custom-actions">
+                  <input
+                    ref={notificationAudioInputRef}
+                    type="file"
+                    accept=".aiff,.aif,.wav,.mp3,.m4a,.caf,audio/*"
+                    onChange={handleNotificationAudioFileChange}
+                    hidden
+                  />
+
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => notificationAudioInputRef.current?.click()}
+                    disabled={uploadingNotificationAudio}
+                  >
+                    {uploadingNotificationAudio
+                      ? 'Importing...'
+                      : customNotificationAudioFile
+                        ? 'Replace Audio File'
+                        : 'Choose Audio File'}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="notification-preview-strip">
+              <div>
+                <p className="theme-preview-kicker">Notification Preview</p>
+                <strong>{settings.notificationAudioMode === 'off' ? 'Preview stays silent.' : `Current sound: ${activeNotificationAudioLabel}`}</strong>
+                <p className="theme-preview-copy">
+                  Uses the same Tauri event path as a real sidecar notification so you can inspect the in-app toast styling and hear the selected alert sound.
+                </p>
+              </div>
+
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={onPreviewNotification}
+                disabled={previewingNotification || uploadingNotificationAudio || !canPreviewNotification}
+              >
+                {previewingNotification ? 'Playing Preview...' : 'Preview Notification'}
+              </button>
+            </div>
+
+            {settings.notificationAudioMode === 'custom' && !customNotificationAudioFile ? (
+              <p className="error">Pick a file before saving custom mode.</p>
+            ) : (
+              <p className="field-hint">Built-in sounds use `/System/Library/Sounds`. Custom uploads stay local to this Mac.</p>
             )}
           </SectionCard>
 
