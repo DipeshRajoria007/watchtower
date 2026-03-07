@@ -69,16 +69,20 @@ export function SectionCard({
     >
       <div className="section-head">
         <div className="section-heading-copy">
-          <h2>{title}</h2>
+          <div className="section-title-row">
+            <h2>{title}</h2>
+            {count !== undefined ? (
+              <span className="section-count">{count}</span>
+            ) : null}
+          </div>
           {subtitle ? <p className="muted">{subtitle}</p> : null}
         </div>
 
-        <div className="section-head-actions">
-          {actions}
-          {count !== undefined ? (
-            <span className="section-count">{count}</span>
-          ) : null}
-        </div>
+        {actions ? (
+          <div className="section-head-actions">
+            {actions}
+          </div>
+        ) : null}
       </div>
       {children}
     </section>
