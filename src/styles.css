@@ -1596,6 +1596,28 @@ h2 {
   background: linear-gradient(160deg, var(--panel-gradient-top), var(--panel-gradient-bottom));
 }
 
+.notification-preview-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(var(--accent-rgb), 0.16);
+  background: rgba(var(--accent-rgb), 0.05);
+}
+
+.notification-preview-strip .ghost-button {
+  white-space: nowrap;
+}
+
+.notification-preview-strip strong {
+  display: block;
+  margin-bottom: 4px;
+  letter-spacing: -0.02em;
+}
+
 .theme-preview-kicker {
   margin: 0 0 8px;
 }
