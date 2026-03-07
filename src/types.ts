@@ -126,6 +126,10 @@ export type ImportNotificationAudioResponse = {
   path: string;
 };
 
+export type LaunchpadSubmitResponse = {
+  requestId: string;
+};
+
 export type AppNotificationPayload = {
   title: string;
   body: string;

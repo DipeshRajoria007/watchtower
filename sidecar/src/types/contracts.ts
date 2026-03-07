@@ -2,6 +2,17 @@ export type WorkflowIntent = 'PR_REVIEW' | 'BUG_FIX' | 'OWNER_AUTOPILOT' | 'DEV_
 export type WorkflowStatus = 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED';
 export type JobLogLevel = 'INFO' | 'WARN' | 'ERROR';
 export type PersonalityMode = 'dark_humor' | 'professional' | 'friendly' | 'chaos';
+export type EventIngestSource = 'socket' | 'catchup' | 'launchpad';
+export type LaunchpadTarget = 'miniog';
+export type LaunchpadRequestStatus =
+  | 'PENDING'
+  | 'CLAIMED'
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'SUCCESS'
+  | 'FAILED'
+  | 'PAUSED'
+  | 'SKIPPED';
 
 export interface AppConfig {
   platformPolicy: 'macos_only';
@@ -38,7 +49,24 @@ export interface SlackEventEnvelope {
   userId: string;
   text: string;
   messageSubtype?: string;
+  ingestSource?: EventIngestSource;
+  launchpadRequestId?: string;
   rawEvent: Record<string, unknown>;
+}
+
+export interface LaunchpadRequestRecord {
+  id: string;
+  target: LaunchpadTarget;
+  prompt: string;
+  ownerUserId: string;
+  status: LaunchpadRequestStatus;
+  jobId?: string;
+  slackChannelId?: string;
+  anchorTs?: string;
+  resultJson?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SlackReactionEvent {

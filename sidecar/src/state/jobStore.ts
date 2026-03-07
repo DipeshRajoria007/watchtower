@@ -3,7 +3,10 @@ import type {
   JobLogLevel,
   JobLogRecord,
   JobRecord,
+  LaunchpadRequestRecord,
+  LaunchpadRequestStatus,
   PersonalityMode,
+  LaunchpadTarget,
   WorkflowIntent,
 } from '../types/contracts.js';
 
@@ -59,6 +62,22 @@ export class JobStore {
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS launchpad_requests (
+        id TEXT PRIMARY KEY,
+        target TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        owner_user_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        job_id TEXT,
+        slack_channel_id TEXT,
+        anchor_ts TEXT,
+        result_json TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_launchpad_requests_status_created_at ON launchpad_requests(status, created_at);
 
       CREATE TABLE IF NOT EXISTS learning_signals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -284,6 +303,203 @@ export class JobStore {
            updated_at = excluded.updated_at`
       )
       .run(key, value, now);
+  }
+
+  createLaunchpadRequest(input: {
+    id: string;
+    target: LaunchpadTarget;
+    prompt: string;
+    ownerUserId: string;
+    status?: Extract<LaunchpadRequestStatus, 'PENDING' | 'CLAIMED' | 'QUEUED' | 'RUNNING'>;
+    slackChannelId?: string;
+    anchorTs?: string;
+  }): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO launchpad_requests(
+           id, target, prompt, owner_user_id, status, slack_channel_id, anchor_ts, created_at, updated_at
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        input.id,
+        input.target,
+        input.prompt,
+        input.ownerUserId,
+        input.status ?? 'PENDING',
+        input.slackChannelId ?? null,
+        input.anchorTs ?? null,
+        now,
+        now,
+      );
+  }
+
+  claimPendingLaunchpadRequests(limit = 10): LaunchpadRequestRecord[] {
+    const safeLimit = Math.min(Math.max(limit, 1), 50);
+    const now = new Date().toISOString();
+    const rows = (
+      this.db.prepare(
+        `SELECT id, target, prompt, owner_user_id, status, job_id, slack_channel_id, anchor_ts,
+                result_json, error_message, created_at, updated_at
+         FROM launchpad_requests
+         WHERE status = 'PENDING'
+         ORDER BY created_at ASC
+         LIMIT ?`
+      ) as unknown as {
+        all: (limitArg: number) => Array<{
+          id: string;
+          target: LaunchpadTarget;
+          prompt: string;
+          owner_user_id: string;
+          status: LaunchpadRequestStatus;
+          job_id?: string | null;
+          slack_channel_id?: string | null;
+          anchor_ts?: string | null;
+          result_json?: string | null;
+          error_message?: string | null;
+          created_at: string;
+          updated_at: string;
+        }>;
+      }
+    ).all(safeLimit);
+
+    const claimed: LaunchpadRequestRecord[] = [];
+    const claimStmt = this.db.prepare(
+      `UPDATE launchpad_requests
+       SET status = 'CLAIMED',
+           error_message = NULL,
+           updated_at = ?
+       WHERE id = ? AND status = 'PENDING'`
+    );
+
+    for (const row of rows) {
+      const result = claimStmt.run(now, row.id);
+      if (result.changes < 1) {
+        continue;
+      }
+      claimed.push({
+        id: row.id,
+        target: row.target,
+        prompt: row.prompt,
+        ownerUserId: row.owner_user_id,
+        status: 'CLAIMED',
+        jobId: row.job_id ?? undefined,
+        slackChannelId: row.slack_channel_id ?? undefined,
+        anchorTs: row.anchor_ts ?? undefined,
+        resultJson: row.result_json ?? undefined,
+        errorMessage: row.error_message ?? undefined,
+        createdAt: row.created_at,
+        updatedAt: now,
+      });
+    }
+
+    return claimed;
+  }
+
+  markLaunchpadRequestQueued(input: {
+    id: string;
+    slackChannelId: string;
+    anchorTs: string;
+  }): void {
+    this.db
+      .prepare(
+        `UPDATE launchpad_requests
+         SET status = 'QUEUED',
+             slack_channel_id = ?,
+             anchor_ts = ?,
+             error_message = NULL,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        input.slackChannelId,
+        input.anchorTs,
+        new Date().toISOString(),
+        input.id,
+      );
+  }
+
+  markLaunchpadRequestRunning(input: { id: string; jobId: string }): void {
+    this.db
+      .prepare(
+        `UPDATE launchpad_requests
+         SET status = 'RUNNING',
+             job_id = ?,
+             error_message = NULL,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(input.jobId, new Date().toISOString(), input.id);
+  }
+
+  markLaunchpadRequestFinished(input: {
+    id: string;
+    status: Extract<LaunchpadRequestStatus, 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED'>;
+    result?: Record<string, unknown>;
+    errorMessage?: string;
+  }): void {
+    this.db
+      .prepare(
+        `UPDATE launchpad_requests
+         SET status = ?,
+             result_json = ?,
+             error_message = ?,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        input.status,
+        input.result ? JSON.stringify(input.result) : null,
+        input.errorMessage ?? null,
+        new Date().toISOString(),
+        input.id,
+      );
+  }
+
+  getLaunchpadRequest(id: string): LaunchpadRequestRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, target, prompt, owner_user_id, status, job_id, slack_channel_id, anchor_ts,
+                result_json, error_message, created_at, updated_at
+         FROM launchpad_requests
+         WHERE id = ?
+         LIMIT 1`
+      )
+      .get(id) as
+      | {
+          id: string;
+          target: LaunchpadTarget;
+          prompt: string;
+          owner_user_id: string;
+          status: LaunchpadRequestStatus;
+          job_id?: string | null;
+          slack_channel_id?: string | null;
+          anchor_ts?: string | null;
+          result_json?: string | null;
+          error_message?: string | null;
+          created_at: string;
+          updated_at: string;
+        }
+      | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      id: row.id,
+      target: row.target,
+      prompt: row.prompt,
+      ownerUserId: row.owner_user_id,
+      status: row.status,
+      jobId: row.job_id ?? undefined,
+      slackChannelId: row.slack_channel_id ?? undefined,
+      anchorTs: row.anchor_ts ?? undefined,
+      resultJson: row.result_json ?? undefined,
+      errorMessage: row.error_message ?? undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
   }
 
   latestJobForThread(channelId: string, threadTs: string): { workflow: WorkflowIntent; status: JobRecord['status']; updatedAt: string } | undefined {

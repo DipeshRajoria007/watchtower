@@ -18,6 +18,7 @@ import type {
   DashboardData,
   ImportNotificationAudioResponse,
   JobLogEntry,
+  LaunchpadSubmitResponse,
   RunSummary,
   RunsSubView,
   SaveSettingsResponse,
@@ -92,6 +93,7 @@ function App() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [uploadingNotificationAudio, setUploadingNotificationAudio] = useState(false);
   const [previewingNotification, setPreviewingNotification] = useState(false);
+  const [submittingLaunchpadTask, setSubmittingLaunchpadTask] = useState(false);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [slackComposerDraft, setSlackComposerDraft] = useState('');
   const [slackCommandTarget, setSlackCommandTarget] = useState<SlackCommandTarget>('miniog');
@@ -389,6 +391,32 @@ function App() {
     setNavDrawerOpen(false);
   };
 
+  const submitLaunchpadTask = async () => {
+    if (slackCommandTarget !== 'miniog') {
+      return;
+    }
+
+    setSubmittingLaunchpadTask(true);
+
+    try {
+      const result = await invoke<LaunchpadSubmitResponse>('submit_launchpad_task', {
+        target: slackCommandTarget,
+        prompt: slackComposerDraft,
+      });
+
+      setSlackComposerDraft('');
+      toast.success('miniOG task queued', {
+        description: `Request ${result.requestId.slice(0, 8)} is queued. Completion will arrive in the bot DM and as a desktop notification.`,
+      });
+    } catch (err) {
+      toast.error('miniOG task failed to queue', {
+        description: String(err),
+      });
+    } finally {
+      setSubmittingLaunchpadTask(false);
+    }
+  };
+
   const previewNotification = async () => {
     if (!settings) {
       return;
@@ -488,7 +516,10 @@ function App() {
           draft={slackComposerDraft}
           focusToken={slackComposerFocusToken}
           onDraftChange={setSlackComposerDraft}
+          onSubmit={submitLaunchpadTask}
           onTargetChange={setSlackCommandTarget}
+          settingsRequired={settingsIncomplete}
+          submitting={submittingLaunchpadTask}
           target={slackCommandTarget}
         />
       ) : null}

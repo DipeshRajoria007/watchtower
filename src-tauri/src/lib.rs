@@ -277,6 +277,12 @@ struct NotificationAudioUploadResponse {
     path: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SubmitLaunchpadTaskResponse {
+    request_id: String,
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -370,6 +376,7 @@ pub fn run() {
             get_job_logs,
             get_app_settings,
             save_app_settings,
+            submit_launchpad_task,
             import_notification_audio,
             emit_preview_notification
         ])
@@ -483,6 +490,17 @@ async fn save_app_settings(
     Ok(SaveSettingsResponse {
         configured: is_settings_complete(&settings),
     })
+}
+
+#[tauri::command]
+async fn submit_launchpad_task(
+    target: String,
+    prompt: String,
+    state: State<'_, AppState>,
+) -> Result<SubmitLaunchpadTaskResponse, String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    submit_launchpad_task_inner(&connection, &target, &prompt)
 }
 
 #[tauri::command]
@@ -1361,6 +1379,22 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
               updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS launchpad_requests (
+              id TEXT PRIMARY KEY,
+              target TEXT NOT NULL,
+              prompt TEXT NOT NULL,
+              owner_user_id TEXT NOT NULL,
+              status TEXT NOT NULL,
+              job_id TEXT,
+              slack_channel_id TEXT,
+              anchor_ts TEXT,
+              result_json TEXT,
+              error_message TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_launchpad_requests_status_created_at ON launchpad_requests(status, created_at);
+
             CREATE TABLE IF NOT EXISTS learning_signals (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               job_id TEXT,
@@ -1636,6 +1670,61 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
     Ok(())
 }
 
+fn submit_launchpad_task_inner(
+    connection: &Connection,
+    target: &str,
+    prompt: &str,
+) -> Result<SubmitLaunchpadTaskResponse, String> {
+    let normalized_target = target.trim().to_ascii_lowercase();
+    if normalized_target != "miniog" {
+        return Err("Only miniOG launchpad execution is supported right now".to_string());
+    }
+
+    let trimmed_prompt = prompt.trim();
+    if trimmed_prompt.is_empty() {
+        return Err("Launchpad prompt must not be empty".to_string());
+    }
+
+    let settings = read_app_settings(connection)?;
+    if !is_settings_complete(&settings) {
+        return Err(
+            "Runtime configuration is incomplete. Finish Settings before running miniOG from Launchpad."
+                .to_string(),
+        );
+    }
+
+    let owner_user_id = parse_owner_ids(&settings.owner_slack_user_ids)
+        .into_iter()
+        .next()
+        .ok_or_else(|| "No owner Slack user IDs are configured".to_string())?;
+
+    let request_id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    connection
+        .execute(
+            "INSERT INTO launchpad_requests(
+              id,
+              target,
+              prompt,
+              owner_user_id,
+              status,
+              created_at,
+              updated_at
+             ) VALUES(?, ?, ?, ?, 'PENDING', ?, ?)",
+            params![
+                request_id,
+                normalized_target,
+                trimmed_prompt,
+                owner_user_id,
+                now,
+                now,
+            ],
+        )
+        .map_err(|err| format!("db insert launchpad request failed: {err}"))?;
+
+    Ok(SubmitLaunchpadTaskResponse { request_id })
+}
+
 fn validate_settings_for_save(settings: &AppSettings) -> Result<(), String> {
     if settings.max_concurrent_jobs < 1 || settings.max_concurrent_jobs > 10 {
         return Err("maxConcurrentJobs must be between 1 and 10".to_string());
@@ -1811,8 +1900,16 @@ fn validate_hex_color(value: &str, field_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn parse_owner_ids(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
 fn has_owner_ids(raw: &str) -> bool {
-    raw.split(',').any(|value| !value.trim().is_empty())
+    !parse_owner_ids(raw).is_empty()
 }
 
 fn has_channel_ids(raw: &str) -> bool {
@@ -2307,4 +2404,98 @@ fn load_notification_audio_settings(app: &AppHandle) -> Result<AppSettings, Stri
     let connection =
         Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
     read_app_settings(&connection)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_db_path() -> PathBuf {
+        std::env::temp_dir().join(format!("watchtower-launchpad-{}.db", Uuid::new_v4()))
+    }
+
+    fn complete_settings() -> AppSettings {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("repo root")
+            .to_path_buf();
+
+        AppSettings {
+            slack_bot_token: "xoxb-test".to_string(),
+            slack_app_token: "xapp-test".to_string(),
+            owner_slack_user_ids: "UOWNER1,UOWNER2".to_string(),
+            bot_user_id: "UBOT1".to_string(),
+            bugs_and_updates_channel_id: "C01H25RNLJH".to_string(),
+            newton_web_path: repo_root.to_string_lossy().into_owned(),
+            newton_api_path: repo_root.to_string_lossy().into_owned(),
+            ..AppSettings::default()
+        }
+    }
+
+    #[test]
+    fn submit_launchpad_task_rejects_blank_prompt() {
+        let db_path = test_db_path();
+        initialize_db(&db_path).expect("initialize db");
+        let connection = Connection::open(&db_path).expect("open db");
+        persist_app_settings(&connection, &complete_settings()).expect("persist settings");
+
+        let err = submit_launchpad_task_inner(&connection, "miniog", "   ")
+            .expect_err("blank prompt should fail");
+
+        assert!(err.contains("must not be empty"));
+
+        drop(connection);
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn submit_launchpad_task_rejects_incomplete_settings() {
+        let db_path = test_db_path();
+        initialize_db(&db_path).expect("initialize db");
+        let connection = Connection::open(&db_path).expect("open db");
+
+        let err = submit_launchpad_task_inner(&connection, "miniog", "Ship the task")
+            .expect_err("incomplete settings should fail");
+
+        assert!(err.contains("Runtime configuration is incomplete"));
+
+        drop(connection);
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn submit_launchpad_task_inserts_pending_request_for_first_owner() {
+        let db_path = test_db_path();
+        initialize_db(&db_path).expect("initialize db");
+        let connection = Connection::open(&db_path).expect("open db");
+        persist_app_settings(&connection, &complete_settings()).expect("persist settings");
+
+        let response = submit_launchpad_task_inner(&connection, "miniog", "Ship the feature")
+            .expect("request should be created");
+
+        let row = connection
+            .query_row(
+                "SELECT target, prompt, owner_user_id, status
+                 FROM launchpad_requests
+                 WHERE id = ?",
+                params![response.request_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .expect("launchpad request row");
+
+        assert_eq!(row.0, "miniog");
+        assert_eq!(row.1, "Ship the feature");
+        assert_eq!(row.2, "UOWNER1");
+        assert_eq!(row.3, "PENDING");
+
+        drop(connection);
+        let _ = fs::remove_file(db_path);
+    }
 }
