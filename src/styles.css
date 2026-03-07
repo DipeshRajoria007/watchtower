@@ -589,6 +589,7 @@ h2 {
   padding: 8px 16px;
   border-radius: 999px;
   font-size: 0.85rem;
+  white-space: nowrap;
 }
 
 .ghost-button {
@@ -1237,6 +1238,12 @@ h2 {
   margin-bottom: 14px;
   padding-bottom: 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.section-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .section-heading-copy {
