@@ -162,6 +162,14 @@ struct RunSummary {
 struct AppNotificationPayload {
     title: String,
     body: String,
+    tone: NotificationAudioTone,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum NotificationAudioTone {
+    Success,
+    Failure,
 }
 
 #[derive(Serialize)]
@@ -259,9 +267,12 @@ struct AppSettings {
     theme_foreground_color: String,
     theme_accent_color: String,
     theme_font_family: String,
-    notification_audio_mode: String,
-    notification_audio_default_sound: String,
-    notification_audio_custom_path: String,
+    success_notification_audio_mode: String,
+    success_notification_audio_default_sound: String,
+    success_notification_audio_custom_path: String,
+    failure_notification_audio_mode: String,
+    failure_notification_audio_default_sound: String,
+    failure_notification_audio_custom_path: String,
 }
 
 #[derive(Serialize)]
@@ -302,9 +313,12 @@ impl Default for AppSettings {
             theme_foreground_color: "#F2F7FB".to_string(),
             theme_accent_color: "#53D2FF".to_string(),
             theme_font_family: "ibm-plex".to_string(),
-            notification_audio_mode: "off".to_string(),
-            notification_audio_default_sound: DEFAULT_NOTIFICATION_AUDIO_SOUND.to_string(),
-            notification_audio_custom_path: String::new(),
+            success_notification_audio_mode: "off".to_string(),
+            success_notification_audio_default_sound: DEFAULT_NOTIFICATION_AUDIO_SOUND.to_string(),
+            success_notification_audio_custom_path: String::new(),
+            failure_notification_audio_mode: "off".to_string(),
+            failure_notification_audio_default_sound: DEFAULT_NOTIFICATION_AUDIO_SOUND.to_string(),
+            failure_notification_audio_custom_path: String::new(),
         }
     }
 }
@@ -553,13 +567,28 @@ async fn import_notification_audio(
 }
 
 #[tauri::command]
-async fn emit_preview_notification(settings: AppSettings, app: AppHandle) -> Result<(), String> {
-    validate_notification_audio_settings(&settings)?;
+async fn emit_preview_notification(
+    settings: AppSettings,
+    tone: NotificationAudioTone,
+    app: AppHandle,
+) -> Result<(), String> {
+    validate_notification_audio_profile(&settings, tone)?;
     emit_notification_with_settings(
         &app,
-        "Watchtower preview",
-        "Synthetic notification for validating the in-app toast, native desktop alert, and notification sound.",
+        match tone {
+            NotificationAudioTone::Success => "Watchtower success preview",
+            NotificationAudioTone::Failure => "Watchtower failure preview",
+        },
+        match tone {
+            NotificationAudioTone::Success => {
+                "Synthetic success notification for validating the in-app toast, native desktop alert, and success sound."
+            }
+            NotificationAudioTone::Failure => {
+                "Synthetic failure notification for validating the in-app toast, native desktop alert, and failure sound."
+            }
+        },
         Some(&settings),
+        tone,
     );
     Ok(())
 }
@@ -1456,6 +1485,12 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
               notification_audio_mode TEXT NOT NULL DEFAULT 'off',
               notification_audio_default_sound TEXT NOT NULL DEFAULT 'glass',
               notification_audio_custom_path TEXT NOT NULL DEFAULT '',
+              success_notification_audio_mode TEXT NOT NULL DEFAULT 'off',
+              success_notification_audio_default_sound TEXT NOT NULL DEFAULT 'glass',
+              success_notification_audio_custom_path TEXT NOT NULL DEFAULT '',
+              failure_notification_audio_mode TEXT NOT NULL DEFAULT 'off',
+              failure_notification_audio_default_sound TEXT NOT NULL DEFAULT 'glass',
+              failure_notification_audio_custom_path TEXT NOT NULL DEFAULT '',
               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             INSERT OR IGNORE INTO app_settings(id) VALUES(1);
@@ -1463,6 +1498,36 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
         )
         .map_err(|err| format!("db migration failed: {err}"))?;
 
+    let success_mode_added = ensure_app_settings_column(
+        &connection,
+        "success_notification_audio_mode",
+        "TEXT NOT NULL DEFAULT 'off'",
+    )?;
+    let success_default_sound_added = ensure_app_settings_column(
+        &connection,
+        "success_notification_audio_default_sound",
+        "TEXT NOT NULL DEFAULT 'glass'",
+    )?;
+    let success_custom_path_added = ensure_app_settings_column(
+        &connection,
+        "success_notification_audio_custom_path",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    let failure_mode_added = ensure_app_settings_column(
+        &connection,
+        "failure_notification_audio_mode",
+        "TEXT NOT NULL DEFAULT 'off'",
+    )?;
+    let failure_default_sound_added = ensure_app_settings_column(
+        &connection,
+        "failure_notification_audio_default_sound",
+        "TEXT NOT NULL DEFAULT 'glass'",
+    )?;
+    let failure_custom_path_added = ensure_app_settings_column(
+        &connection,
+        "failure_notification_audio_custom_path",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
     ensure_app_settings_column(
         &connection,
         "theme_preset",
@@ -1504,6 +1569,16 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
         "TEXT NOT NULL DEFAULT ''",
     )?;
 
+    if success_mode_added
+        || success_default_sound_added
+        || success_custom_path_added
+        || failure_mode_added
+        || failure_default_sound_added
+        || failure_custom_path_added
+    {
+        migrate_legacy_notification_audio_settings(&connection)?;
+    }
+
     Ok(())
 }
 
@@ -1511,7 +1586,7 @@ fn ensure_app_settings_column(
     connection: &Connection,
     column_name: &str,
     column_definition: &str,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let mut stmt = connection
         .prepare("PRAGMA table_info(app_settings)")
         .map_err(|err| format!("db inspect settings schema failed: {err}"))?;
@@ -1522,7 +1597,7 @@ fn ensure_app_settings_column(
 
     let has_column = columns.any(|column| matches!(column, Ok(ref name) if name == column_name));
     if has_column {
-        return Ok(());
+        return Ok(false);
     }
 
     connection
@@ -1531,6 +1606,25 @@ fn ensure_app_settings_column(
             [],
         )
         .map_err(|err| format!("db add settings column {column_name} failed: {err}"))?;
+
+    Ok(true)
+}
+
+fn migrate_legacy_notification_audio_settings(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE app_settings
+             SET
+               success_notification_audio_mode = notification_audio_mode,
+               success_notification_audio_default_sound = notification_audio_default_sound,
+               success_notification_audio_custom_path = notification_audio_custom_path,
+               failure_notification_audio_mode = notification_audio_mode,
+               failure_notification_audio_default_sound = notification_audio_default_sound,
+               failure_notification_audio_custom_path = notification_audio_custom_path
+             WHERE id = 1",
+            [],
+        )
+        .map_err(|err| format!("db migrate notification audio settings failed: {err}"))?;
 
     Ok(())
 }
@@ -1555,9 +1649,12 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
               theme_foreground_color,
               theme_accent_color,
               theme_font_family,
-              notification_audio_mode,
-              notification_audio_default_sound,
-              notification_audio_custom_path
+              success_notification_audio_mode,
+              success_notification_audio_default_sound,
+              success_notification_audio_custom_path,
+              failure_notification_audio_mode,
+              failure_notification_audio_default_sound,
+              failure_notification_audio_custom_path
              FROM app_settings
              WHERE id = 1
              LIMIT 1",
@@ -1583,9 +1680,12 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
                 theme_foreground_color: row.get(13)?,
                 theme_accent_color: row.get(14)?,
                 theme_font_family: row.get(15)?,
-                notification_audio_mode: row.get(16)?,
-                notification_audio_default_sound: row.get(17)?,
-                notification_audio_custom_path: row.get(18)?,
+                success_notification_audio_mode: row.get(16)?,
+                success_notification_audio_default_sound: row.get(17)?,
+                success_notification_audio_custom_path: row.get(18)?,
+                failure_notification_audio_mode: row.get(19)?,
+                failure_notification_audio_default_sound: row.get(20)?,
+                failure_notification_audio_custom_path: row.get(21)?,
             })
         })
         .optional()
@@ -1616,11 +1716,14 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               theme_foreground_color,
               theme_accent_color,
               theme_font_family,
-              notification_audio_mode,
-              notification_audio_default_sound,
-              notification_audio_custom_path,
+              success_notification_audio_mode,
+              success_notification_audio_default_sound,
+              success_notification_audio_custom_path,
+              failure_notification_audio_mode,
+              failure_notification_audio_default_sound,
+              failure_notification_audio_custom_path,
               updated_at
-             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
               slack_bot_token=excluded.slack_bot_token,
               slack_app_token=excluded.slack_app_token,
@@ -1638,9 +1741,12 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               theme_foreground_color=excluded.theme_foreground_color,
               theme_accent_color=excluded.theme_accent_color,
               theme_font_family=excluded.theme_font_family,
-              notification_audio_mode=excluded.notification_audio_mode,
-              notification_audio_default_sound=excluded.notification_audio_default_sound,
-              notification_audio_custom_path=excluded.notification_audio_custom_path,
+              success_notification_audio_mode=excluded.success_notification_audio_mode,
+              success_notification_audio_default_sound=excluded.success_notification_audio_default_sound,
+              success_notification_audio_custom_path=excluded.success_notification_audio_custom_path,
+              failure_notification_audio_mode=excluded.failure_notification_audio_mode,
+              failure_notification_audio_default_sound=excluded.failure_notification_audio_default_sound,
+              failure_notification_audio_custom_path=excluded.failure_notification_audio_custom_path,
               updated_at=excluded.updated_at",
             params![
                 settings.slack_bot_token.trim(),
@@ -1659,9 +1765,12 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
                 settings.theme_foreground_color.trim(),
                 settings.theme_accent_color.trim(),
                 settings.theme_font_family.trim(),
-                settings.notification_audio_mode.trim(),
-                settings.notification_audio_default_sound.trim(),
-                settings.notification_audio_custom_path.trim(),
+                settings.success_notification_audio_mode.trim(),
+                settings.success_notification_audio_default_sound.trim(),
+                settings.success_notification_audio_custom_path.trim(),
+                settings.failure_notification_audio_mode.trim(),
+                settings.failure_notification_audio_default_sound.trim(),
+                settings.failure_notification_audio_custom_path.trim(),
                 Utc::now().to_rfc3339(),
             ],
         )
@@ -1799,22 +1908,31 @@ fn validate_theme_setting(value: &str, field_name: &str) -> Result<(), String> {
 }
 
 fn validate_notification_audio_settings(settings: &AppSettings) -> Result<(), String> {
-    match settings.notification_audio_mode.trim() {
+    validate_notification_audio_profile(settings, NotificationAudioTone::Success)?;
+    validate_notification_audio_profile(settings, NotificationAudioTone::Failure)?;
+    Ok(())
+}
+
+fn validate_notification_audio_profile(
+    settings: &AppSettings,
+    tone: NotificationAudioTone,
+) -> Result<(), String> {
+    let (mode, default_sound, custom_path, field_prefix) =
+        notification_audio_profile(settings, tone);
+
+    match mode.trim() {
         "off" => Ok(()),
         "default" => {
-            if builtin_notification_sound_file_name(&settings.notification_audio_default_sound)
-                .is_none()
-            {
-                Err("notificationAudioDefaultSound is not supported".to_string())
+            if builtin_notification_sound_file_name(default_sound).is_none() {
+                Err(format!("{field_prefix}DefaultSound is not supported"))
             } else {
                 Ok(())
             }
         }
-        "custom" => validate_existing_file(
-            &settings.notification_audio_custom_path,
-            "notificationAudioCustomPath",
-        ),
-        _ => Err("notificationAudioMode must be one of off, default, or custom".to_string()),
+        "custom" => validate_existing_file(custom_path, &format!("{field_prefix}CustomPath")),
+        _ => Err(format!(
+            "{field_prefix}Mode must be one of off, default, or custom"
+        )),
     }
 }
 
@@ -1870,15 +1988,38 @@ fn builtin_notification_sound_file_name(sound_id: &str) -> Option<&'static str> 
         .find_map(|(id, file_name)| (*id == sound_id.trim()).then_some(*file_name))
 }
 
-fn resolve_notification_audio_path(settings: &AppSettings) -> Option<PathBuf> {
-    match settings.notification_audio_mode.trim() {
+fn notification_audio_profile<'a>(
+    settings: &'a AppSettings,
+    tone: NotificationAudioTone,
+) -> (&'a str, &'a str, &'a str, &'static str) {
+    match tone {
+        NotificationAudioTone::Success => (
+            &settings.success_notification_audio_mode,
+            &settings.success_notification_audio_default_sound,
+            &settings.success_notification_audio_custom_path,
+            "successNotificationAudio",
+        ),
+        NotificationAudioTone::Failure => (
+            &settings.failure_notification_audio_mode,
+            &settings.failure_notification_audio_default_sound,
+            &settings.failure_notification_audio_custom_path,
+            "failureNotificationAudio",
+        ),
+    }
+}
+
+fn resolve_notification_audio_path(
+    settings: &AppSettings,
+    tone: NotificationAudioTone,
+) -> Option<PathBuf> {
+    let (mode, default_sound, custom_path, _) = notification_audio_profile(settings, tone);
+
+    match mode.trim() {
         "off" => None,
-        "default" => {
-            builtin_notification_sound_file_name(&settings.notification_audio_default_sound)
-                .map(|file_name| PathBuf::from("/System/Library/Sounds").join(file_name))
-        }
+        "default" => builtin_notification_sound_file_name(default_sound)
+            .map(|file_name| PathBuf::from("/System/Library/Sounds").join(file_name)),
         "custom" => {
-            let path = PathBuf::from(settings.notification_audio_custom_path.trim());
+            let path = PathBuf::from(custom_path.trim());
             (path.is_absolute() && path.is_file()).then_some(path)
         }
         _ => None,
@@ -2061,6 +2202,7 @@ async fn start_sidecar_supervisor(
                     &app,
                     "Watchtower sidecar failed",
                     &format!("Sidecar process error: {err}"),
+                    NotificationAudioTone::Failure,
                 );
             }
         }
@@ -2081,6 +2223,7 @@ async fn start_sidecar_supervisor(
                 &app,
                 "Watchtower crash loop",
                 "Sidecar exited repeatedly (5+ crashes in 5 minutes).",
+                NotificationAudioTone::Failure,
             );
             if sleep_with_shutdown_check(&control, Duration::from_secs(60)).await {
                 status.set("stopped (app shutdown)").await;
@@ -2351,15 +2494,19 @@ fn handle_sidecar_line(app: &AppHandle, line: &str) {
             .get("body")
             .and_then(|v| v.as_str())
             .unwrap_or("Event");
-        emit_notification(app, title, body);
+        let tone = match parsed.get("tone").and_then(|v| v.as_str()) {
+            Some("success") => NotificationAudioTone::Success,
+            _ => NotificationAudioTone::Failure,
+        };
+        emit_notification(app, title, body, tone);
         return;
     }
 
     let _ = app.emit("sidecar-log", line.to_string());
 }
 
-fn emit_notification(app: &AppHandle, title: &str, body: &str) {
-    emit_notification_with_settings(app, title, body, None);
+fn emit_notification(app: &AppHandle, title: &str, body: &str, tone: NotificationAudioTone) {
+    emit_notification_with_settings(app, title, body, None, tone);
 }
 
 fn emit_notification_with_settings(
@@ -2367,6 +2514,7 @@ fn emit_notification_with_settings(
     title: &str,
     body: &str,
     settings_override: Option<&AppSettings>,
+    tone: NotificationAudioTone,
 ) {
     use tauri_plugin_notification::NotificationExt;
     let _ = app.emit(
@@ -2374,19 +2522,24 @@ fn emit_notification_with_settings(
         AppNotificationPayload {
             title: title.to_string(),
             body: body.to_string(),
+            tone,
         },
     );
     let _ = app.notification().builder().title(title).body(body).show();
-    play_notification_audio(app, settings_override);
+    play_notification_audio(app, settings_override, tone);
 }
 
-fn play_notification_audio(app: &AppHandle, settings_override: Option<&AppSettings>) {
+fn play_notification_audio(
+    app: &AppHandle,
+    settings_override: Option<&AppSettings>,
+    tone: NotificationAudioTone,
+) {
     let resolved_path = if let Some(settings) = settings_override {
-        resolve_notification_audio_path(settings)
+        resolve_notification_audio_path(settings, tone)
     } else {
         load_notification_audio_settings(app)
             .ok()
-            .and_then(|settings| resolve_notification_audio_path(&settings))
+            .and_then(|settings| resolve_notification_audio_path(&settings, tone))
     };
     let Some(path) = resolved_path else {
         return;
@@ -2497,5 +2650,40 @@ mod tests {
 
         drop(connection);
         let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn validate_notification_audio_settings_uses_success_and_failure_profiles() {
+        let settings = AppSettings {
+            success_notification_audio_mode: "default".to_string(),
+            success_notification_audio_default_sound: "hero".to_string(),
+            failure_notification_audio_mode: "default".to_string(),
+            failure_notification_audio_default_sound: "submarine".to_string(),
+            ..AppSettings::default()
+        };
+
+        validate_notification_audio_settings(&settings)
+            .expect("tone-specific notification audio settings should validate");
+    }
+
+    #[test]
+    fn resolve_notification_audio_path_reads_tone_specific_profile() {
+        let settings = AppSettings {
+            success_notification_audio_mode: "default".to_string(),
+            success_notification_audio_default_sound: "hero".to_string(),
+            failure_notification_audio_mode: "default".to_string(),
+            failure_notification_audio_default_sound: "submarine".to_string(),
+            ..AppSettings::default()
+        };
+
+        let success_path =
+            resolve_notification_audio_path(&settings, NotificationAudioTone::Success)
+                .expect("success audio path");
+        let failure_path =
+            resolve_notification_audio_path(&settings, NotificationAudioTone::Failure)
+                .expect("failure audio path");
+
+        assert!(success_path.ends_with("Hero.aiff"));
+        assert!(failure_path.ends_with("Submarine.aiff"));
     }
 }

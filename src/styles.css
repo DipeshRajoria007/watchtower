@@ -2340,6 +2340,42 @@ h2 {
   letter-spacing: -0.02em;
 }
 
+.audio-profile-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.audio-profile-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(
+      circle at top,
+      rgba(var(--accent-rgb), 0.08),
+      transparent 52%
+    ),
+    linear-gradient(
+      180deg,
+      var(--raised-gradient-top),
+      var(--raised-gradient-bottom)
+    );
+}
+
+.audio-profile-card > .settings-choice-top p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.audio-profile-card .notification-preview-strip,
+.audio-profile-card .field-hint,
+.audio-profile-card .error {
+  margin: 0;
+}
+
 .audio-mode-grid,
 .audio-sound-grid {
   display: grid;
@@ -2702,6 +2738,7 @@ h2 {
   .settings-summary-grid,
   .theme-section-layout,
   .theme-presets-grid,
+  .audio-profile-grid,
   .audio-mode-grid,
   .audio-sound-grid,
   .settings-fields.two-column,

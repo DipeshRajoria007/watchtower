@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { FormEvent } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { toast } from 'sonner';
-import { AppShell } from './components/AppShell';
-import { applyAppTheme } from './lib/theme';
-import { formatSidecarLine } from './lib/formatters';
-import { IntelligencePage } from './pages/IntelligencePage';
-import { LaunchpadPage } from './pages/LaunchpadPage';
-import { OverviewPage } from './pages/OverviewPage';
-import { RunsPage } from './pages/RunsPage';
-import { SettingsPage } from './pages/SettingsPage';
+import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { toast } from "sonner";
+import { AppShell } from "./components/AppShell";
+import { applyAppTheme } from "./lib/theme";
+import { formatSidecarLine } from "./lib/formatters";
+import { IntelligencePage } from "./pages/IntelligencePage";
+import { LaunchpadPage } from "./pages/LaunchpadPage";
+import { OverviewPage } from "./pages/OverviewPage";
+import { RunsPage } from "./pages/RunsPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import type {
   AppSettings,
   AppNotificationPayload,
@@ -19,38 +19,41 @@ import type {
   ImportNotificationAudioResponse,
   JobLogEntry,
   LaunchpadSubmitResponse,
+  NotificationAudioTone,
   RunSummary,
   RunsSubView,
   SaveSettingsResponse,
   SlackCommandTarget,
-} from './types';
+} from "./types";
 
 const POLL_MS = 5000;
 const NOTIFICATION_AUDIO_MAX_BYTES = 10 * 1024 * 1024;
-const PENDING_SHORTCUT_VIEW_KEY = 'watchtower:pending-shortcut-view';
-const PENDING_SHORTCUT_TARGET_KEY = 'watchtower:pending-shortcut-target';
-const APP_NOTIFICATION_EVENT = 'watchtower-notification';
+const PENDING_SHORTCUT_VIEW_KEY = "watchtower:pending-shortcut-view";
+const PENDING_SHORTCUT_TARGET_KEY = "watchtower:pending-shortcut-target";
+const APP_NOTIFICATION_EVENT = "watchtower-notification";
 
-function toggleSlackCommandTarget(target: SlackCommandTarget): SlackCommandTarget {
-  return target === 'miniog' ? 'watchtower' : 'miniog';
+function toggleSlackCommandTarget(
+  target: SlackCommandTarget,
+): SlackCommandTarget {
+  return target === "miniog" ? "watchtower" : "miniog";
 }
 
 function readPendingShortcutView(): AppView | null {
-  if (typeof window === 'undefined') {
+  if (typeof window === "undefined") {
     return null;
   }
 
   const value = window.localStorage.getItem(PENDING_SHORTCUT_VIEW_KEY);
-  return value === 'launchpad' ? 'launchpad' : null;
+  return value === "launchpad" ? "launchpad" : null;
 }
 
 function readPendingShortcutTarget(): SlackCommandTarget | null {
-  if (typeof window === 'undefined') {
+  if (typeof window === "undefined") {
     return null;
   }
 
   const value = window.localStorage.getItem(PENDING_SHORTCUT_TARGET_KEY);
-  return value === 'miniog' || value === 'watchtower' ? value : null;
+  return value === "miniog" || value === "watchtower" ? value : null;
 }
 
 function readFileAsBase64(file: File): Promise<string> {
@@ -62,12 +65,12 @@ function readFileAsBase64(file: File): Promise<string> {
     };
 
     reader.onload = () => {
-      if (typeof reader.result !== 'string') {
+      if (typeof reader.result !== "string") {
         reject(new Error(`Unable to encode ${file.name}`));
         return;
       }
 
-      const [, base64 = ''] = reader.result.split(',', 2);
+      const [, base64 = ""] = reader.result.split(",", 2);
       if (!base64) {
         reject(new Error(`Unable to encode ${file.name}`));
         return;
@@ -80,23 +83,46 @@ function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
+function applyNotificationAudioImport(
+  current: AppSettings,
+  tone: NotificationAudioTone,
+  path: string,
+): AppSettings {
+  if (tone === "success") {
+    return {
+      ...current,
+      successNotificationAudioMode: "custom",
+      successNotificationAudioCustomPath: path,
+    };
+  }
+
+  return {
+    ...current,
+    failureNotificationAudioMode: "custom",
+    failureNotificationAudioCustomPath: path,
+  };
+}
+
 function App() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [view, setView] = useState<AppView>('launchpad');
-  const [runsSubView, setRunsSubView] = useState<RunsSubView>('active');
+  const [view, setView] = useState<AppView>("launchpad");
+  const [runsSubView, setRunsSubView] = useState<RunsSubView>("active");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRunLogs, setSelectedRunLogs] = useState<JobLogEntry[]>([]);
   const [liveSidecarLogs, setLiveSidecarLogs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
-  const [uploadingNotificationAudio, setUploadingNotificationAudio] = useState(false);
-  const [previewingNotification, setPreviewingNotification] = useState(false);
+  const [uploadingNotificationAudioTone, setUploadingNotificationAudioTone] =
+    useState<NotificationAudioTone | null>(null);
+  const [previewingNotificationTone, setPreviewingNotificationTone] =
+    useState<NotificationAudioTone | null>(null);
   const [submittingLaunchpadTask, setSubmittingLaunchpadTask] = useState(false);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
-  const [slackComposerDraft, setSlackComposerDraft] = useState('');
-  const [slackCommandTarget, setSlackCommandTarget] = useState<SlackCommandTarget>('miniog');
+  const [slackComposerDraft, setSlackComposerDraft] = useState("");
+  const [slackCommandTarget, setSlackCommandTarget] =
+    useState<SlackCommandTarget>("miniog");
   const [slackComposerFocusToken, setSlackComposerFocusToken] = useState(0);
 
   const settingsIncomplete = useMemo(() => {
@@ -117,7 +143,11 @@ function App() {
     }
 
     const map = new Map<string, RunSummary>();
-    for (const run of [...data.activeJobs, ...data.recentRuns, ...data.failures]) {
+    for (const run of [
+      ...data.activeJobs,
+      ...data.recentRuns,
+      ...data.failures,
+    ]) {
       map.set(run.id, run);
     }
     return Array.from(map.values());
@@ -127,17 +157,17 @@ function App() {
     if (!selectedRunId) {
       return null;
     }
-    return allRuns.find(run => run.id === selectedRunId) ?? null;
+    return allRuns.find((run) => run.id === selectedRunId) ?? null;
   }, [allRuns, selectedRunId]);
 
   const loadDashboard = async () => {
-    const result = await invoke<DashboardData>('get_dashboard_data');
+    const result = await invoke<DashboardData>("get_dashboard_data");
     setData(result);
     setError(null);
   };
 
   const loadSettings = async () => {
-    const result = await invoke<AppSettings>('get_app_settings');
+    const result = await invoke<AppSettings>("get_app_settings");
     setSettings(result);
     setError(null);
   };
@@ -148,8 +178,8 @@ function App() {
     const load = async () => {
       try {
         const [dashboard, appSettings] = await Promise.all([
-          invoke<DashboardData>('get_dashboard_data'),
-          invoke<AppSettings>('get_app_settings'),
+          invoke<DashboardData>("get_dashboard_data"),
+          invoke<AppSettings>("get_app_settings"),
         ]);
         if (active) {
           setData(dashboard);
@@ -165,7 +195,7 @@ function App() {
 
     void load();
     const interval = window.setInterval(() => {
-      void loadDashboard().catch(err => {
+      void loadDashboard().catch((err) => {
         if (active) {
           setError(String(err));
         }
@@ -181,11 +211,11 @@ function App() {
   useEffect(() => {
     const pendingView = readPendingShortcutView();
     const pendingTarget = readPendingShortcutTarget();
-    if (pendingView !== 'launchpad') {
+    if (pendingView !== "launchpad") {
       return;
     }
 
-    setView('launchpad');
+    setView("launchpad");
     if (pendingTarget) {
       setSlackCommandTarget(pendingTarget);
     }
@@ -197,35 +227,40 @@ function App() {
     applyAppTheme(settings);
   }, [settings]);
 
-  const openLaunchpad = (target: SlackCommandTarget = 'miniog') => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(PENDING_SHORTCUT_VIEW_KEY, 'launchpad');
+  const openLaunchpad = (target: SlackCommandTarget = "miniog") => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(PENDING_SHORTCUT_VIEW_KEY, "launchpad");
       window.localStorage.setItem(PENDING_SHORTCUT_TARGET_KEY, target);
     }
 
     setSlackCommandTarget(target);
-    setView('launchpad');
+    setView("launchpad");
     setNavDrawerOpen(false);
-    setSlackComposerFocusToken(previous => previous + 1);
+    setSlackComposerFocusToken((previous) => previous + 1);
   };
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.code === 'KeyM') {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.code === "KeyM"
+      ) {
         event.preventDefault();
         event.stopPropagation();
         openLaunchpad(toggleSlackCommandTarget(slackCommandTarget));
         return;
       }
 
-      if (event.key === 'Escape') {
+      if (event.key === "Escape") {
         setNavDrawerOpen(false);
       }
     };
 
-    window.addEventListener('keydown', onKeyDown, { capture: true });
+    window.addEventListener("keydown", onKeyDown, { capture: true });
     return () => {
-      window.removeEventListener('keydown', onKeyDown, { capture: true });
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
     };
   }, [slackCommandTarget]);
 
@@ -234,24 +269,30 @@ function App() {
       return;
     }
 
-    const runExists = selectedRunId ? allRuns.some(run => run.id === selectedRunId) : false;
+    const runExists = selectedRunId
+      ? allRuns.some((run) => run.id === selectedRunId)
+      : false;
     if (runExists) {
       return;
     }
 
-    const preferred = data.activeJobs[0]?.id ?? data.failures[0]?.id ?? data.recentRuns[0]?.id ?? null;
+    const preferred =
+      data.activeJobs[0]?.id ??
+      data.failures[0]?.id ??
+      data.recentRuns[0]?.id ??
+      null;
     setSelectedRunId(preferred);
   }, [allRuns, data, selectedRunId]);
 
   useEffect(() => {
-    if (!data || runsSubView === 'diagnostics') {
+    if (!data || runsSubView === "diagnostics") {
       return;
     }
 
     const viewRuns =
-      runsSubView === 'active'
+      runsSubView === "active"
         ? data.activeJobs
-        : runsSubView === 'failures'
+        : runsSubView === "failures"
           ? data.failures
           : data.recentRuns;
 
@@ -259,7 +300,9 @@ function App() {
       return;
     }
 
-    const existsInView = selectedRunId ? viewRuns.some(run => run.id === selectedRunId) : false;
+    const existsInView = selectedRunId
+      ? viewRuns.some((run) => run.id === selectedRunId)
+      : false;
     if (!existsInView) {
       setSelectedRunId(viewRuns[0].id);
     }
@@ -277,7 +320,10 @@ function App() {
       }
 
       try {
-        const logs = await invoke<JobLogEntry[]>('get_job_logs', { jobId: selectedRunId, limit: 1000 });
+        const logs = await invoke<JobLogEntry[]>("get_job_logs", {
+          jobId: selectedRunId,
+          limit: 1000,
+        });
         if (active) {
           setSelectedRunLogs(logs);
           setError(null);
@@ -304,16 +350,16 @@ function App() {
     let unlisten: (() => void) | undefined;
     let disposed = false;
 
-    void listen<string>('sidecar-log', event => {
+    void listen<string>("sidecar-log", (event) => {
       const line = formatSidecarLine(event.payload);
-      setLiveSidecarLogs(previous => {
+      setLiveSidecarLogs((previous) => {
         const next = [...previous, line];
         if (next.length > 400) {
           return next.slice(next.length - 400);
         }
         return next;
       });
-    }).then(handler => {
+    }).then((handler) => {
       if (disposed) {
         handler();
       } else {
@@ -333,13 +379,15 @@ function App() {
     let unlisten: (() => void) | undefined;
     let disposed = false;
 
-    void listen<AppNotificationPayload>(APP_NOTIFICATION_EVENT, event => {
-      const title = event.payload.title.trim() || 'Watchtower';
+    void listen<AppNotificationPayload>(APP_NOTIFICATION_EVENT, (event) => {
+      const title = event.payload.title.trim() || "Watchtower";
       const description = event.payload.body.trim();
-      toast(title, {
+      const notify =
+        event.payload.tone === "success" ? toast.success : toast.error;
+      notify(title, {
         description: description || undefined,
       });
-    }).then(handler => {
+    }).then((handler) => {
       if (disposed) {
         handler();
       } else {
@@ -365,13 +413,15 @@ function App() {
     setSettingsMessage(null);
 
     try {
-      const result = await invoke<SaveSettingsResponse>('save_app_settings', { settings });
+      const result = await invoke<SaveSettingsResponse>("save_app_settings", {
+        settings,
+      });
       await Promise.all([loadDashboard(), loadSettings()]);
 
       setSettingsMessage(
         result.configured
-          ? 'Settings saved. Runtime config is complete and the sidecar should boot automatically.'
-          : 'Saved, but config is still incomplete. Fill all required fields.'
+          ? "Settings saved. Runtime config is complete and the sidecar should boot automatically."
+          : "Saved, but config is still incomplete. Fill all required fields.",
       );
     } catch (err) {
       setSettingsMessage(`Failed to save settings: ${String(err)}`);
@@ -387,29 +437,32 @@ function App() {
 
   const openRunsWorkspace = (subView: RunsSubView) => {
     setRunsSubView(subView);
-    setView('runs');
+    setView("runs");
     setNavDrawerOpen(false);
   };
 
   const submitLaunchpadTask = async () => {
-    if (slackCommandTarget !== 'miniog') {
+    if (slackCommandTarget !== "miniog") {
       return;
     }
 
     setSubmittingLaunchpadTask(true);
 
     try {
-      const result = await invoke<LaunchpadSubmitResponse>('submit_launchpad_task', {
-        target: slackCommandTarget,
-        prompt: slackComposerDraft,
-      });
+      const result = await invoke<LaunchpadSubmitResponse>(
+        "submit_launchpad_task",
+        {
+          target: slackCommandTarget,
+          prompt: slackComposerDraft,
+        },
+      );
 
-      setSlackComposerDraft('');
-      toast.success('miniOG task queued', {
+      setSlackComposerDraft("");
+      toast.success("miniOG task queued", {
         description: `Request ${result.requestId.slice(0, 8)} is queued. Completion will arrive in the bot DM and as a desktop notification.`,
       });
     } catch (err) {
-      toast.error('miniOG task failed to queue', {
+      toast.error("miniOG task failed to queue", {
         description: String(err),
       });
     } finally {
@@ -417,63 +470,71 @@ function App() {
     }
   };
 
-  const previewNotification = async () => {
+  const previewNotification = async (tone: NotificationAudioTone) => {
     if (!settings) {
       return;
     }
 
-    setPreviewingNotification(true);
+    setPreviewingNotificationTone(tone);
 
     try {
-      await invoke('emit_preview_notification', { settings });
+      await invoke("emit_preview_notification", { settings, tone });
     } catch (err) {
-      toast.error('Preview notification failed', {
+      toast.error("Preview notification failed", {
         description: String(err),
       });
     } finally {
-      setPreviewingNotification(false);
+      setPreviewingNotificationTone(null);
     }
   };
 
-  const importNotificationAudio = async (file: File) => {
+  const importNotificationAudio = async (
+    tone: NotificationAudioTone,
+    file: File,
+  ) => {
     if (!settings) {
       return;
     }
 
     if (file.size === 0) {
-      setSettingsMessage('Failed to import notification audio: selected file is empty.');
+      setSettingsMessage(
+        "Failed to import notification audio: selected file is empty.",
+      );
       return;
     }
 
     if (file.size > NOTIFICATION_AUDIO_MAX_BYTES) {
-      setSettingsMessage('Failed to import notification audio: file must be 10MB or smaller.');
+      setSettingsMessage(
+        "Failed to import notification audio: file must be 10MB or smaller.",
+      );
       return;
     }
 
-    setUploadingNotificationAudio(true);
+    setUploadingNotificationAudioTone(tone);
     setSettingsMessage(null);
 
     try {
       const dataBase64 = await readFileAsBase64(file);
-      const result = await invoke<ImportNotificationAudioResponse>('import_notification_audio', {
-        fileName: file.name,
-        dataBase64,
-      });
-
-      setSettings(current =>
-        current
-          ? {
-              ...current,
-              notificationAudioMode: 'custom',
-              notificationAudioCustomPath: result.path,
-            }
-          : current
+      const result = await invoke<ImportNotificationAudioResponse>(
+        "import_notification_audio",
+        {
+          fileName: file.name,
+          dataBase64,
+        },
       );
-      setSettingsMessage(`Imported ${result.fileName}. Save settings to apply it to live notifications.`);
+
+      setSettings((current) =>
+        current
+          ? applyNotificationAudioImport(current, tone, result.path)
+          : current,
+      );
+      setSettingsMessage(
+        `Imported ${result.fileName} for ${tone} notifications. Save settings to apply it to live notifications.`,
+      );
     } catch (err) {
       setSettingsMessage(`Failed to import notification audio: ${String(err)}`);
     } finally {
-      setUploadingNotificationAudio(false);
+      setUploadingNotificationAudioTone(null);
     }
   };
 
@@ -495,23 +556,23 @@ function App() {
       failuresCount={summary.failures}
       navDrawerOpen={navDrawerOpen}
       onNavigate={navigateToView}
-      onToggleNavDrawer={() => setNavDrawerOpen(open => !open)}
+      onToggleNavDrawer={() => setNavDrawerOpen((open) => !open)}
       settingsRequired={settingsIncomplete}
-      sidecarStatus={data?.sidecarStatus ?? 'starting'}
+      sidecarStatus={data?.sidecarStatus ?? "starting"}
     >
       {error ? <div className="inline-error-banner">{error}</div> : null}
 
-      {view === 'overview' ? (
+      {view === "overview" ? (
         <OverviewPage
           data={data}
-          onOpenIntelligence={() => navigateToView('intelligence')}
+          onOpenIntelligence={() => navigateToView("intelligence")}
           onOpenRuns={openRunsWorkspace}
-          onOpenSettings={() => navigateToView('settings')}
+          onOpenSettings={() => navigateToView("settings")}
           onSelectRun={setSelectedRunId}
         />
       ) : null}
 
-      {view === 'launchpad' ? (
+      {view === "launchpad" ? (
         <LaunchpadPage
           draft={slackComposerDraft}
           focusToken={slackComposerFocusToken}
@@ -524,7 +585,7 @@ function App() {
         />
       ) : null}
 
-      {view === 'runs' ? (
+      {view === "runs" ? (
         <RunsPage
           data={data}
           liveSidecarLogs={liveSidecarLogs}
@@ -537,20 +598,20 @@ function App() {
         />
       ) : null}
 
-      {view === 'intelligence' ? <IntelligencePage data={data} /> : null}
+      {view === "intelligence" ? <IntelligencePage data={data} /> : null}
 
-      {view === 'settings' ? (
+      {view === "settings" ? (
         <SettingsPage
-          onSettingsChange={nextSettings => setSettings(nextSettings)}
+          onSettingsChange={(nextSettings) => setSettings(nextSettings)}
           onImportNotificationAudio={importNotificationAudio}
           onPreviewNotification={previewNotification}
           onSubmit={saveSettings}
-          previewingNotification={previewingNotification}
+          previewingNotificationTone={previewingNotificationTone}
           savingSettings={savingSettings}
           settings={settings}
           settingsConfigured={data?.settingsConfigured ?? false}
           settingsMessage={settingsMessage}
-          uploadingNotificationAudio={uploadingNotificationAudio}
+          uploadingNotificationAudioTone={uploadingNotificationAudioTone}
         />
       ) : null}
     </AppShell>
