@@ -2119,6 +2119,10 @@ h2 {
 .slack-launchpad-footer {
   width: min(100%, 820px);
   margin: 0 auto;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  text-align: center;
 }
 
 .slack-launchpad-footer span {
