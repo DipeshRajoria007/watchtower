@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactNode } from "react";
 import {
   formatDurationSeconds,
   formatTimestamp,
@@ -6,7 +6,7 @@ import {
   getStatusTone,
   humanizeMode,
   prettyJson,
-} from '../lib/formatters';
+} from "../lib/formatters";
 import type {
   ChannelHeat,
   DashboardMetrics,
@@ -14,7 +14,7 @@ import type {
   JobLogEntry,
   LearningInsights,
   RunSummary,
-} from '../types';
+} from "../types";
 
 type SectionCardProps = {
   actions?: ReactNode;
@@ -55,9 +55,18 @@ export function PageIntro({
   );
 }
 
-export function SectionCard({ actions, children, className, count, subtitle, title }: SectionCardProps) {
+export function SectionCard({
+  actions,
+  children,
+  className,
+  count,
+  subtitle,
+  title,
+}: SectionCardProps) {
   return (
-    <section className={className ? `surface-card ${className}` : 'surface-card'}>
+    <section
+      className={className ? `surface-card ${className}` : "surface-card"}
+    >
       <div className="section-head">
         <div className="section-heading-copy">
           <h2>{title}</h2>
@@ -66,7 +75,9 @@ export function SectionCard({ actions, children, className, count, subtitle, tit
 
         <div className="section-head-actions">
           {actions}
-          {count !== undefined ? <span className="section-count">{count}</span> : null}
+          {count !== undefined ? (
+            <span className="section-count">{count}</span>
+          ) : null}
         </div>
       </div>
       {children}
@@ -78,21 +89,27 @@ export function MetricCard({
   className,
   detail,
   label,
-  tone = 'neutral',
+  tone = "neutral",
   value,
   valueTitle,
-  variant = 'default',
+  variant = "default",
 }: {
   className?: string;
   detail?: string;
   label: string;
-  tone?: 'accent' | 'danger' | 'neutral' | 'success' | 'warning';
+  tone?: "accent" | "danger" | "neutral" | "success" | "warning";
   value: ReactNode;
   valueTitle?: string;
-  variant?: 'compact' | 'default';
+  variant?: "compact" | "default";
 }) {
   return (
-    <article className={className ? `metric-card metric-${tone} metric-${variant} ${className}` : `metric-card metric-${tone} metric-${variant}`}>
+    <article
+      className={
+        className
+          ? `metric-card metric-${tone} metric-${variant} ${className}`
+          : `metric-card metric-${tone} metric-${variant}`
+      }
+    >
       <span className="metric-label">{label}</span>
       <strong className="metric-value" title={valueTitle}>
         {value}
@@ -102,7 +119,13 @@ export function MetricCard({
   );
 }
 
-export function StatusBadge({ label, tone = 'info' }: { label: string; tone?: string }) {
+export function StatusBadge({
+  label,
+  tone = "info",
+}: {
+  label: string;
+  tone?: string;
+}) {
   return <span className={`status-badge ${tone}`}>{label}</span>;
 }
 
@@ -121,15 +144,17 @@ export function TabBar<T extends string>({
 }) {
   return (
     <div className="tab-bar" role="tablist">
-      {tabs.map(tab => (
+      {tabs.map((tab) => (
         <button
           key={tab.value}
-          className={tab.value === value ? 'tab-button active' : 'tab-button'}
+          className={tab.value === value ? "tab-button active" : "tab-button"}
           type="button"
           onClick={() => onChange(tab.value)}
         >
           <span>{tab.label}</span>
-          {tab.count !== undefined ? <span className="tab-count">{tab.count}</span> : null}
+          {tab.count !== undefined ? (
+            <span className="tab-count">{tab.count}</span>
+          ) : null}
         </button>
       ))}
     </div>
@@ -153,26 +178,33 @@ export function RunList({
 
   return (
     <ul className="run-list">
-      {runs.map(run => {
+      {runs.map((run) => {
         const selected = run.id === selectedRunId;
         return (
           <li key={run.id}>
             <button
               type="button"
-              className={selected ? 'run-card selected' : 'run-card'}
+              className={selected ? "run-card selected" : "run-card"}
               onClick={() => onSelect?.(run.id)}
             >
               <div className="run-card-top">
                 <div className="run-card-copy">
-                  <span className="run-card-workflow">{run.workflow.replaceAll('_', ' ')}</span>
+                  <span className="run-card-workflow">
+                    {run.workflow.replaceAll("_", " ")}
+                  </span>
                   <span className="run-card-title">{run.taskSummary}</span>
                 </div>
-                <StatusBadge label={run.status} tone={getStatusTone(run.status)} />
+                <StatusBadge
+                  label={run.status}
+                  tone={getStatusTone(run.status)}
+                />
               </div>
               <div className="run-card-meta">
                 <span>Updated {formatTimestamp(run.updatedAt)}</span>
               </div>
-              {run.errorMessage ? <p className="run-card-error">{run.errorMessage}</p> : null}
+              {run.errorMessage ? (
+                <p className="run-card-error">{run.errorMessage}</p>
+              ) : null}
             </button>
           </li>
         );
@@ -181,17 +213,27 @@ export function RunList({
   );
 }
 
-export function RunInspector({ logs, run }: { logs: JobLogEntry[]; run: RunSummary | null }) {
+export function RunInspector({
+  logs,
+  run,
+}: {
+  logs: JobLogEntry[];
+  run: RunSummary | null;
+}) {
   if (!run) {
-    return <EmptyState>Select a run to inspect its metadata and execution trace.</EmptyState>;
+    return (
+      <EmptyState>
+        Select a run to inspect its metadata and execution trace.
+      </EmptyState>
+    );
   }
 
   return (
     <div className="inspector-stack">
       <article className="surface-card detail-card">
         <div className="detail-header">
-          <div>
-            <span className="eyebrow">{run.workflow.replaceAll('_', ' ')}</span>
+          <div className="detail-header-copy">
+            <span className="eyebrow">{run.workflow.replaceAll("_", " ")}</span>
             <h2>{run.taskSummary}</h2>
           </div>
           <StatusBadge label={run.status} tone={getStatusTone(run.status)} />
@@ -224,7 +266,9 @@ export function RunInspector({ logs, run }: { logs: JobLogEntry[]; run: RunSumma
           </div>
         </div>
 
-        {run.errorMessage ? <p className="detail-error">{run.errorMessage}</p> : null}
+        {run.errorMessage ? (
+          <p className="detail-error">{run.errorMessage}</p>
+        ) : null}
       </article>
 
       <SectionCard
@@ -238,18 +282,32 @@ export function RunInspector({ logs, run }: { logs: JobLogEntry[]; run: RunSumma
   );
 }
 
-export function TraceList({ logs, selectedRun }: { logs: JobLogEntry[]; selectedRun: RunSummary | null }) {
+export function TraceList({
+  logs,
+  selectedRun,
+}: {
+  logs: JobLogEntry[];
+  selectedRun: RunSummary | null;
+}) {
   if (!selectedRun) {
-    return <EmptyState>Select a run from the list to inspect detailed step logs.</EmptyState>;
+    return (
+      <EmptyState>
+        Select a run from the list to inspect detailed step logs.
+      </EmptyState>
+    );
   }
 
   if (logs.length === 0) {
-    return <EmptyState>No trace entries have been persisted for this run yet.</EmptyState>;
+    return (
+      <EmptyState>
+        No trace entries have been persisted for this run yet.
+      </EmptyState>
+    );
   }
 
   return (
     <ul className="trace-list">
-      {logs.map(log => (
+      {logs.map((log) => (
         <li key={log.id}>
           <div className="trace-top">
             <StatusBadge label={log.level} tone={getStatusTone(log.level)} />
@@ -257,7 +315,9 @@ export function TraceList({ logs, selectedRun }: { logs: JobLogEntry[]; selected
             <span className="trace-time">{formatTimestamp(log.createdAt)}</span>
           </div>
           <div className="trace-message">{log.message}</div>
-          {log.dataJson ? <pre className="trace-data">{prettyJson(log.dataJson)}</pre> : null}
+          {log.dataJson ? (
+            <pre className="trace-data">{prettyJson(log.dataJson)}</pre>
+          ) : null}
         </li>
       ))}
     </ul>
@@ -289,16 +349,21 @@ export function RecommendationList({
 }) {
   const items = limit ? recommendations.slice(0, limit) : recommendations;
   if (items.length === 0) {
-    return <EmptyState>{empty ?? 'No recommendations generated yet.'}</EmptyState>;
+    return (
+      <EmptyState>{empty ?? "No recommendations generated yet."}</EmptyState>
+    );
   }
 
   return (
     <ul className="recommendation-list">
-      {items.map(item => (
+      {items.map((item) => (
         <li key={item.id}>
           <div className="recommendation-top">
             <strong>{item.title}</strong>
-            <StatusBadge label={item.priority} tone={getPriorityTone(item.priority)} />
+            <StatusBadge
+              label={item.priority}
+              tone={getPriorityTone(item.priority)}
+            />
           </div>
           <p className="recommendation-body">{item.detail}</p>
         </li>
@@ -310,14 +375,48 @@ export function RecommendationList({
 export function PulseMetrics({ metrics }: { metrics: DashboardMetrics }) {
   return (
     <div className="pulse-grid">
-      <MetricCard label="24h Success" value={`${metrics.successRate24h}%`} tone="success" variant="compact" />
+      <MetricCard
+        label="24h Success"
+        value={`${metrics.successRate24h}%`}
+        tone="success"
+        variant="compact"
+      />
       <MetricCard label="24h Runs" value={metrics.runs24h} variant="compact" />
-      <MetricCard label="24h Failures" value={metrics.failedRuns24h} tone="danger" variant="compact" />
-      <MetricCard label="Avg Resolution" value={formatDurationSeconds(metrics.avgResolutionSeconds24h)} variant="compact" />
-      <MetricCard label="Catch-up Wins" value={metrics.catchupRecovered24h} tone={metrics.catchupRecovered24h > 0 ? 'accent' : 'neutral'} variant="compact" />
-      <MetricCard label="Unknown 24h" value={metrics.unknownTasks24h} tone={metrics.unknownTasks24h > 0 ? 'warning' : 'neutral'} variant="compact" />
-      <MetricCard label="Success Streak" value={metrics.successStreak} tone={metrics.successStreak > 0 ? 'success' : 'neutral'} variant="compact" />
-      <MetricCard label="Chaos Index" value={metrics.chaosIndex} tone={metrics.chaosIndex > 0 ? 'warning' : 'neutral'} variant="compact" />
+      <MetricCard
+        label="24h Failures"
+        value={metrics.failedRuns24h}
+        tone="danger"
+        variant="compact"
+      />
+      <MetricCard
+        label="Avg Resolution"
+        value={formatDurationSeconds(metrics.avgResolutionSeconds24h)}
+        variant="compact"
+      />
+      <MetricCard
+        label="Catch-up Wins"
+        value={metrics.catchupRecovered24h}
+        tone={metrics.catchupRecovered24h > 0 ? "accent" : "neutral"}
+        variant="compact"
+      />
+      <MetricCard
+        label="Unknown 24h"
+        value={metrics.unknownTasks24h}
+        tone={metrics.unknownTasks24h > 0 ? "warning" : "neutral"}
+        variant="compact"
+      />
+      <MetricCard
+        label="Success Streak"
+        value={metrics.successStreak}
+        tone={metrics.successStreak > 0 ? "success" : "neutral"}
+        variant="compact"
+      />
+      <MetricCard
+        label="Chaos Index"
+        value={metrics.chaosIndex}
+        tone={metrics.chaosIndex > 0 ? "warning" : "neutral"}
+        variant="compact"
+      />
     </div>
   );
 }
@@ -333,18 +432,18 @@ export function ChannelHeatList({
 }) {
   const items = limit ? channels.slice(0, limit) : channels;
   if (items.length === 0) {
-    return <EmptyState>{empty ?? 'No channel activity yet.'}</EmptyState>;
+    return <EmptyState>{empty ?? "No channel activity yet."}</EmptyState>;
   }
 
   return (
     <ul className="channel-heat-list">
-      {items.map(channel => (
+      {items.map((channel) => (
         <li key={channel.channelId}>
           <strong className="channel-id">{channel.channelId}</strong>
           <div className="channel-runs">{channel.runs} runs</div>
           <StatusBadge
             label={`${channel.failures} failures`}
-            tone={channel.failures > 0 ? 'warn' : 'success'}
+            tone={channel.failures > 0 ? "warn" : "success"}
           />
         </li>
       ))}
@@ -352,28 +451,42 @@ export function ChannelHeatList({
   );
 }
 
-export function LearningInsightsPanel({ learning }: { learning: LearningInsights }) {
+export function LearningInsightsPanel({
+  learning,
+}: {
+  learning: LearningInsights;
+}) {
   const dominantMode = humanizeMode(learning.dominantPersonalityMode);
   const topFailure =
-    learning.topFailureKind === 'none' ? 'None' : `${learning.topFailureKind} (${learning.topFailureCount})`;
+    learning.topFailureKind === "none"
+      ? "None"
+      : `${learning.topFailureKind} (${learning.topFailureCount})`;
 
   return (
     <div className="learning-stack">
       <div className="learning-metrics learning-metrics-primary">
-        <MetricCard label="Signals 24h" value={learning.signals24h} variant="compact" />
+        <MetricCard
+          label="Signals 24h"
+          value={learning.signals24h}
+          variant="compact"
+        />
         <MetricCard
           label="Corrections Learned"
           value={learning.correctionsLearned}
-          tone={learning.correctionsLearned > 0 ? 'accent' : 'neutral'}
+          tone={learning.correctionsLearned > 0 ? "accent" : "neutral"}
           variant="compact"
         />
         <MetricCard
           label="Corrections Applied"
           value={learning.correctionsApplied24h}
-          tone={learning.correctionsApplied24h > 0 ? 'success' : 'neutral'}
+          tone={learning.correctionsApplied24h > 0 ? "success" : "neutral"}
           variant="compact"
         />
-        <MetricCard label="Profiles" value={learning.personalityProfiles} variant="compact" />
+        <MetricCard
+          label="Profiles"
+          value={learning.personalityProfiles}
+          variant="compact"
+        />
       </div>
 
       <div className="learning-highlights">
@@ -387,7 +500,7 @@ export function LearningInsightsPanel({ learning }: { learning: LearningInsights
         <MetricCard
           label="Top Failure Signature"
           value={topFailure}
-          tone={learning.topFailureKind === 'none' ? 'neutral' : 'warning'}
+          tone={learning.topFailureKind === "none" ? "neutral" : "warning"}
           variant="compact"
           className="metric-highlight metric-value-wrap"
           valueTitle={topFailure}
@@ -398,7 +511,7 @@ export function LearningInsightsPanel({ learning }: { learning: LearningInsights
         <div className="learning-mode-section">
           <div className="section-label">Profiles by Mode</div>
           <div className="mode-heat-grid">
-            {learning.profilesByMode.map(mode => (
+            {learning.profilesByMode.map((mode) => (
               <article className="mode-card" key={mode.mode}>
                 <span>{humanizeMode(mode.mode)}</span>
                 <strong>{mode.count}</strong>
