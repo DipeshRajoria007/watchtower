@@ -140,6 +140,13 @@ struct RunSummary {
     error_message: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppNotificationPayload {
+    title: String,
+    body: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct JobLogEntry {
@@ -2024,5 +2031,12 @@ fn handle_sidecar_line(app: &AppHandle, line: &str) {
 
 fn emit_notification(app: &AppHandle, title: &str, body: &str) {
     use tauri_plugin_notification::NotificationExt;
+    let _ = app.emit(
+        "watchtower-notification",
+        AppNotificationPayload {
+            title: title.to_string(),
+            body: body.to_string(),
+        },
+    );
     let _ = app.notification().builder().title(title).body(body).show();
 }
