@@ -14,6 +14,12 @@ export function diagnoseFailure(input: {
   const haystack = `${input.message}\n${input.logs
     .map(entry => `${entry.stage} ${entry.message} ${JSON.stringify(entry.data ?? {})}`)
     .join('\n')}`.toLowerCase();
+  const codexParseFailureCount = input.logs.filter(
+    entry =>
+      entry.stage === 'codex.output.parse_failed' ||
+      entry.stage === 'codex.output.schema_failed' ||
+      entry.stage === 'codex.output.schema_invalid'
+  ).length;
 
   if (haystack.includes('spawn codex enoent') || haystack.includes('codex executable not found')) {
     return {
@@ -39,6 +45,24 @@ export function diagnoseFailure(input: {
     };
   }
 
+  if (
+    codexParseFailureCount >= 2 ||
+    (codexParseFailureCount >= 1 &&
+      (haystack.includes('schema mismatch') ||
+        haystack.includes('output schema') ||
+        haystack.includes('not valid json')))
+  ) {
+    return {
+      errorKind: 'CODEX_OUTPUT_SCHEMA',
+      summary: 'Codex output repeatedly failed JSON/schema parsing.',
+      actions: [
+        'Tighten prompt output instructions to emit strict JSON only.',
+        'Log and inspect the raw final message preview for malformed wrappers.',
+        'Use fallback salvage parsing and retry only when parsed JSON is unavailable.',
+      ],
+    };
+  }
+
   if (haystack.includes('enotfound slack.com') || haystack.includes('could not resolve github.com')) {
     return {
       errorKind: 'NETWORK_DNS',
@@ -51,7 +75,19 @@ export function diagnoseFailure(input: {
     };
   }
 
-  if (haystack.includes('api.github.com') || haystack.includes('github auth') || haystack.includes('token')) {
+  const githubAuthOrApiError =
+    /api\.github\.com[^\n]*(error|failed|forbidden|unauthorized|timed out|unreachable|refused|denied|401|403|404)/.test(
+      haystack
+    ) ||
+    /github(?:\s+auth|\s+authentication)?[^\n]*(failed|failure|error|invalid|denied|forbidden|unauthorized|missing|expired)/.test(
+      haystack
+    ) ||
+    /token[^\n]*(invalid|expired|missing|denied|forbidden|unauthorized|revoked|scope)/.test(haystack) ||
+    haystack.includes('bad credentials') ||
+    haystack.includes('resource not accessible by integration') ||
+    haystack.includes('insufficient scope');
+
+  if (githubAuthOrApiError) {
     return {
       errorKind: 'GITHUB_AUTH_OR_API',
       summary: 'GitHub API/auth failed during workflow execution.',
@@ -99,4 +135,3 @@ export function diagnoseFailure(input: {
 
   return undefined;
 }
-

@@ -38,4 +38,41 @@ describe('failureDoctor', () => {
 
     expect(diagnosis).toBeUndefined();
   });
+
+  it('does not classify github auth as failed for auth-resolved informational logs', () => {
+    const diagnosis = diagnoseFailure({
+      workflow: 'OWNER_AUTOPILOT',
+      message: 'Owner-autopilot workflow failed (exit=1).',
+      logs: [
+        {
+          stage: 'owner_autopilot.github.auth_resolved',
+          message: 'Resolved GitHub auth mode for owner-autopilot Codex execution.',
+          level: 'INFO',
+        },
+      ],
+    });
+
+    expect(diagnosis?.errorKind).not.toBe('GITHUB_AUTH_OR_API');
+  });
+
+  it('diagnoses repeated codex output parse/schema failures', () => {
+    const diagnosis = diagnoseFailure({
+      workflow: 'OWNER_AUTOPILOT',
+      message: 'Owner-autopilot workflow failed (exit=1).',
+      logs: [
+        {
+          stage: 'codex.output.parse_failed',
+          message: 'Codex final output is not valid JSON.',
+          level: 'WARN',
+        },
+        {
+          stage: 'codex.output.parse_failed',
+          message: 'Codex final output is not valid JSON.',
+          level: 'WARN',
+        },
+      ],
+    });
+
+    expect(diagnosis?.errorKind).toBe('CODEX_OUTPUT_SCHEMA');
+  });
 });

@@ -335,6 +335,54 @@ describe('ownerAutopilotWorkflow', () => {
     expect(runCodex).toHaveBeenCalledTimes(1);
   });
 
+  it('does not run relaxed retry when structured output is already parsed', async () => {
+    vi.mocked(runCodex).mockResolvedValue({
+      ok: true,
+      exitCode: 0,
+      timedOut: false,
+      stdout: '',
+      stderr: '',
+      lastMessage:
+        '```json\n{"status":"success","summary":"Applied the requested follow-up.","actions":["posted update"],"prUrl":""}\n```',
+      parsedJson: {
+        status: 'success',
+        summary: 'Applied the requested follow-up.',
+        actions: ['posted update'],
+        prUrl: '',
+      },
+    });
+
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+    };
+
+    const result = await runOwnerAutopilotWorkflow({
+      task: {
+        event: {
+          eventId: 'EvOwnerStructured',
+          channelId: 'C1',
+          threadTs: '111.22',
+          eventTs: '111.22',
+          userId: 'UOWNER1',
+          text: '<@UBOT1> share a follow-up',
+          rawEvent: {},
+        },
+        mentionDetected: true,
+        mentionType: 'bot',
+        isOwnerAuthor: true,
+        intent: 'OWNER_AUTOPILOT',
+      },
+      config,
+      slack: slack as any,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.message).toContain('Applied the requested follow-up');
+    expect(runCodex).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to relaxed plain-text mode when strict JSON output fails', async () => {
     vi.mocked(runCodex)
       .mockResolvedValueOnce({

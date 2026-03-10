@@ -24,6 +24,131 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () =>
   });
 }
 
+type ParsedCodexOutput = {
+  parsedJson?: Record<string, unknown>;
+  strategy?: 'direct' | 'fenced_block' | 'first_object';
+  attempts: Array<'direct' | 'fenced_block' | 'first_object'>;
+  preview: string;
+};
+
+function previewOutput(raw: string, maxChars = 220): string {
+  return raw.replace(/\s+/g, ' ').trim().slice(0, maxChars);
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | undefined {
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return undefined;
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function extractFencedJsonCandidates(raw: string): string[] {
+  const candidates: string[] = [];
+  const fenceRegex = /```(?:json)?\s*([\s\S]*?)```/gi;
+  let match: RegExpExecArray | null = null;
+  while ((match = fenceRegex.exec(raw)) !== null) {
+    const candidate = match[1]?.trim();
+    if (candidate) {
+      candidates.push(candidate);
+    }
+  }
+  return candidates;
+}
+
+function extractFirstTopLevelJsonObject(raw: string): string | undefined {
+  for (let start = 0; start < raw.length; start += 1) {
+    if (raw[start] !== '{') {
+      continue;
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = start; index < raw.length; index += 1) {
+      const char = raw[index];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (char === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+      if (char === '{') {
+        depth += 1;
+        continue;
+      }
+      if (char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          return raw.slice(start, index + 1).trim();
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
+export function parseCodexStructuredOutput(raw: string): ParsedCodexOutput {
+  const attempts: Array<'direct' | 'fenced_block' | 'first_object'> = [];
+  const preview = previewOutput(raw);
+
+  attempts.push('direct');
+  try {
+    const parsedJson = parseJsonObject(raw.trim());
+    if (parsedJson) {
+      return { parsedJson, strategy: 'direct', attempts, preview };
+    }
+  } catch {
+    // fall through to salvage strategies
+  }
+
+  attempts.push('fenced_block');
+  for (const candidate of extractFencedJsonCandidates(raw)) {
+    try {
+      const parsedJson = parseJsonObject(candidate);
+      if (parsedJson) {
+        return { parsedJson, strategy: 'fenced_block', attempts, preview };
+      }
+    } catch {
+      // continue to next candidate
+    }
+  }
+
+  attempts.push('first_object');
+  const firstObjectCandidate = extractFirstTopLevelJsonObject(raw);
+  if (firstObjectCandidate) {
+    try {
+      const parsedJson = parseJsonObject(firstObjectCandidate);
+      if (parsedJson) {
+        return { parsedJson, strategy: 'first_object', attempts, preview };
+      }
+    } catch {
+      // final strategy failed
+    }
+  }
+
+  return {
+    attempts,
+    preview,
+  };
+}
+
 export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult> {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'watchtower-codex-'));
   const outputPath = path.join(tempDir, 'final-message.txt');
@@ -162,19 +287,26 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
       });
     }
 
-    let parsedJson: Record<string, unknown> | undefined;
-    try {
-      parsedJson = JSON.parse(lastMessage) as Record<string, unknown>;
+    const parsedOutput = parseCodexStructuredOutput(lastMessage);
+    const parsedJson = parsedOutput.parsedJson;
+    if (parsedJson) {
       request.onLog?.({
         stage: 'codex.output.parsed',
         message: 'Parsed Codex final output as JSON.',
+        data: {
+          strategy: parsedOutput.strategy,
+          preview: parsedOutput.preview,
+        },
       });
-    } catch {
-      parsedJson = undefined;
+    } else {
       request.onLog?.({
         stage: 'codex.output.parse_failed',
         message: 'Codex final output is not valid JSON.',
         level: 'WARN',
+        data: {
+          attempts: parsedOutput.attempts,
+          preview: parsedOutput.preview,
+        },
       });
     }
 

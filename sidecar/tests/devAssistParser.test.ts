@@ -186,6 +186,33 @@ describe('devAssistParser', () => {
     });
   });
 
+  it('parses natural-language aliases for learn/status/queue/heat/failures', () => {
+    expect(parseDevAssistCommand('<@UBOT1> what did you learn?')).toEqual({
+      type: 'LEARN',
+    });
+    expect(parseDevAssistCommand('<@UBOT1> status')).toEqual({
+      type: 'STATUS',
+    });
+    expect(parseDevAssistCommand('<@UBOT1> my queue')).toEqual({
+      type: 'MY_QUEUE',
+      limit: 5,
+    });
+    expect(parseDevAssistCommand('<@UBOT1> hot channels')).toEqual({
+      type: 'HEAT',
+      limit: 5,
+    });
+    expect(parseDevAssistCommand('<@UBOT1> recent errors')).toEqual({
+      type: 'FAILURES',
+      limit: 5,
+    });
+  });
+
+  it('does not treat arbitrary chat text as a natural-language alias', () => {
+    expect(parseDevAssistCommand('<@UBOT1> status report for the PR')).toBeUndefined();
+    expect(parseDevAssistCommand('<@UBOT1> this queue is cursed today')).toBeUndefined();
+    expect(parseDevAssistCommand('<@UBOT1> failures are expected in chaos mode')).toBeUndefined();
+  });
+
   it('detects dev-assist prefix only when present', () => {
     expect(hasDevAssistCommand('<@UBOT1> wt help')).toBe(true);
     expect(hasDevAssistCommand('1. <@UBOT1> wt help')).toBe(true);

@@ -174,6 +174,38 @@ describe('intentParser', () => {
     expect(task.intent).toBe('DEV_ASSIST');
   });
 
+  it('routes natural-language capability queries to dev-assist workflow', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        userId: 'UOWNER1',
+        text: '<@UBOT1> what did you learn?',
+      },
+      config,
+      [],
+    );
+
+    expect(task.mentionDetected).toBe(true);
+    expect(task.isOwnerAuthor).toBe(true);
+    expect(task.intent).toBe('DEV_ASSIST');
+  });
+
+  it('keeps owner-autopilot routing for owner chatter that is not an alias', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        userId: 'UOWNER1',
+        text: '<@UBOT1> this queue is cursed today',
+      },
+      config,
+      [],
+    );
+
+    expect(task.mentionDetected).toBe(true);
+    expect(task.isOwnerAuthor).toBe(true);
+    expect(task.intent).toBe('OWNER_AUTOPILOT');
+  });
+
   it('routes prefixed unknown wt command to dev-assist instead of owner-autopilot', () => {
     const task = normalizeTask(
       {
