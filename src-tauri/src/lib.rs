@@ -873,6 +873,110 @@ fn sentence_case(input: &str) -> String {
     output
 }
 
+fn is_actionable_unknown_text(input: &str) -> bool {
+    let normalized = input
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if normalized.is_empty() {
+        return false;
+    }
+
+    let has_actionable_signal = [
+        "what did you learn",
+        "what have you learned",
+        "show learning",
+        "learn",
+        "learning",
+        "status",
+        "health",
+        "queue",
+        "channel heat",
+        "hot channels",
+        "heat",
+        "failures",
+        "failure",
+        "errors",
+        "error",
+        "trace",
+        "diagnose",
+        "github mcp",
+        "mcp",
+        "watchtower",
+        "wt",
+    ]
+    .iter()
+    .any(|signal| normalized.contains(signal));
+
+    if !has_actionable_signal {
+        return false;
+    }
+
+    let looks_like_social_chatter = [
+        "you there",
+        "are you up",
+        "retire bro",
+        "feeling sad",
+        "who is your master",
+        "go to sleep",
+        "dialogues",
+        "kaam",
+    ]
+    .iter()
+    .any(|signal| normalized.contains(signal));
+
+    if !looks_like_social_chatter {
+        return true;
+    }
+
+    [
+        "status",
+        "health",
+        "queue",
+        "channel heat",
+        "hot channels",
+        "failures",
+        "errors",
+        "trace",
+        "diagnose",
+        "github",
+        "mcp",
+    ]
+    .iter()
+    .any(|signal| normalized.contains(signal))
+}
+
+fn query_actionable_unknown_tasks_24h(connection: &Connection) -> Result<i64, String> {
+    let mut stmt = connection
+        .prepare(
+            "SELECT payload_json
+             FROM jobs
+             WHERE workflow = 'UNKNOWN'
+               AND julianday(created_at) >= julianday('now', '-1 day')",
+        )
+        .map_err(|err| format!("db prepare unknown_tasks_24h failed: {err}"))?;
+
+    let rows = stmt
+        .query_map([], |row| row.get::<_, Option<String>>(0))
+        .map_err(|err| format!("db query unknown_tasks_24h failed: {err}"))?;
+
+    let mut actionable = 0i64;
+    for row in rows {
+        let payload_json = row.map_err(|err| format!("db row unknown_tasks_24h failed: {err}"))?;
+        let Some(text) = extract_payload_text(payload_json.as_deref()) else {
+            continue;
+        };
+        let cleaned = strip_request_leadin(&clean_slack_text(&text));
+        if is_actionable_unknown_text(&cleaned) {
+            actionable += 1;
+        }
+    }
+
+    Ok(actionable)
+}
+
 fn query_dashboard_metrics(connection: &Connection) -> Result<DashboardMetrics, String> {
     let runs_24h: i64 = connection
         .query_row(
@@ -908,13 +1012,7 @@ fn query_dashboard_metrics(connection: &Connection) -> Result<DashboardMetrics, 
         )
         .map_err(|err| format!("db query avg_resolution_seconds_24h failed: {err}"))?;
 
-    let unknown_tasks_24h: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM jobs WHERE workflow = 'UNKNOWN' AND julianday(created_at) >= julianday('now', '-1 day')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|err| format!("db query unknown_tasks_24h failed: {err}"))?;
+    let unknown_tasks_24h = query_actionable_unknown_tasks_24h(connection)?;
 
     let catchup_recovered_24h: i64 = connection
         .query_row(
@@ -1333,7 +1431,7 @@ fn build_recommendations(
         });
     }
 
-    if let Some(hottest) = channel_heat.first() {
+    if let Some(hottest) = select_failure_hotspot(channel_heat) {
         if hottest.failures >= 3 {
             recommendations.push(DashboardRecommendation {
                 id: "channel-hotspot".to_string(),
@@ -1358,6 +1456,22 @@ fn build_recommendations(
     }
 
     recommendations
+}
+
+fn select_failure_hotspot(channel_heat: &[ChannelHeat]) -> Option<&ChannelHeat> {
+    channel_heat
+        .iter()
+        .filter(|channel| channel.failures > 0)
+        .max_by(|left, right| {
+            left.failures
+                .cmp(&right.failures)
+                .then_with(|| {
+                    let left_runs = left.runs.max(1);
+                    let right_runs = right.runs.max(1);
+                    (left.failures * right_runs).cmp(&(right.failures * left_runs))
+                })
+                .then_with(|| left.runs.cmp(&right.runs))
+        })
 }
 
 fn initialize_db(path: &PathBuf) -> Result<(), String> {
@@ -2685,5 +2799,69 @@ mod tests {
 
         assert!(success_path.ends_with("Hero.aiff"));
         assert!(failure_path.ends_with("Submarine.aiff"));
+    }
+
+    #[test]
+    fn actionable_unknown_predicate_filters_social_chatter() {
+        assert!(is_actionable_unknown_text("what did you learn"));
+        assert!(is_actionable_unknown_text("don't you have access to github mcp"));
+        assert!(!is_actionable_unknown_text("retire bro!! its ok"));
+        assert!(!is_actionable_unknown_text("who is your master"));
+    }
+
+    #[test]
+    fn recommendations_apply_intent_gap_threshold_on_actionable_unknowns() {
+        let mut metrics = DashboardMetrics {
+            runs_24h: 12,
+            success_rate_24h: 91.6,
+            failed_runs_24h: 0,
+            avg_resolution_seconds_24h: 120,
+            unknown_tasks_24h: 3,
+            catchup_recovered_24h: 0,
+            success_streak: 2,
+            chaos_index: 6,
+        };
+
+        let below_threshold = build_recommendations(&metrics, &[]);
+        assert!(!below_threshold.iter().any(|item| item.id == "intent-gap"));
+
+        metrics.unknown_tasks_24h = 4;
+        let at_threshold = build_recommendations(&metrics, &[]);
+        assert!(at_threshold.iter().any(|item| item.id == "intent-gap"));
+    }
+
+    #[test]
+    fn recommendations_choose_hotspot_by_failure_pressure_not_run_volume() {
+        let metrics = DashboardMetrics {
+            runs_24h: 30,
+            success_rate_24h: 90.0,
+            failed_runs_24h: 1,
+            avg_resolution_seconds_24h: 140,
+            unknown_tasks_24h: 0,
+            catchup_recovered_24h: 0,
+            success_streak: 1,
+            chaos_index: 8,
+        };
+        let channel_heat = vec![
+            ChannelHeat {
+                channel_id: "C-HIGH-RUNS".to_string(),
+                runs: 100,
+                failures: 2,
+            },
+            ChannelHeat {
+                channel_id: "C-HIGH-FAILURES".to_string(),
+                runs: 24,
+                failures: 7,
+            },
+        ];
+
+        let recommendations = build_recommendations(&metrics, &channel_heat);
+        let hotspot = recommendations
+            .iter()
+            .find(|item| item.id == "channel-hotspot")
+            .expect("channel hotspot recommendation should exist");
+
+        assert!(hotspot.detail.contains("C-HIGH-FAILURES"));
+        assert!(hotspot.detail.contains("7 failures"));
     }
 }

@@ -285,6 +285,36 @@ export async function runOwnerAutopilotWorkflow(params: {
     },
   });
 
+  const primaryTextFallback =
+    result.ok && !result.parsedJson
+      ? sanitizeOwnerSummary(result.lastMessage || result.stdout)
+      : '';
+
+  if (primaryTextFallback) {
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: primaryTextFallback,
+    });
+
+    logStep?.({
+      stage: 'owner_autopilot.slack.primary_text_fallback_posted',
+      message: 'Posted primary owner-autopilot plain-text response without relaxed retry.',
+      level: 'WARN',
+      data: {
+        bytes: Buffer.byteLength(primaryTextFallback),
+      },
+    });
+
+    return {
+      workflow: 'OWNER_AUTOPILOT',
+      status: 'SUCCESS',
+      message: primaryTextFallback,
+      notifyDesktop: false,
+      slackPosted: true,
+    };
+  }
+
   if (!result.ok || !result.parsedJson) {
     logStep?.({
       stage: 'owner_autopilot.codex.retry_relaxed.start',

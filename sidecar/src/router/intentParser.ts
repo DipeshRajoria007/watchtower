@@ -1,5 +1,5 @@
 import type { AppConfig, NormalizedTask, PrContext, SlackEventEnvelope, WorkflowIntent } from '../types/contracts.js';
-import { hasDevAssistPrefix } from './devAssistParser.js';
+import { hasDevAssistPrefix, hasNaturalDevAssistAlias } from './devAssistParser.js';
 
 const PR_REVIEW_KEYWORDS = [
   /review/i,
@@ -79,6 +79,11 @@ function inferIntent(
 ): WorkflowIntent {
   // Any explicit wt/watchtower prefix is always routed to dev-assist, even for owners.
   if (mention.detected && hasDevAssistPrefix(event.text ?? '')) {
+    return 'DEV_ASSIST';
+  }
+
+  // Natural-language status/capability prompts should route to dev-assist as lightweight aliases.
+  if (mention.detected && hasNaturalDevAssistAlias(event.text ?? '')) {
     return 'DEV_ASSIST';
   }
 

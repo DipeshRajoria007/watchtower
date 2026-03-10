@@ -45,12 +45,60 @@ export function hasDevAssistPrefix(text: string): boolean {
   return stripPrefix(text) !== undefined;
 }
 
-export function parseDevAssistCommand(text: string): DevAssistCommand | undefined {
-  const body = stripPrefix(text);
-  if (body === undefined) {
+function normalizeAliasBody(text: string): string {
+  const cleaned = stripMentions(text);
+  return cleaned
+    .replace(/^([0-9]+[.)]\s+)+/i, '')
+    .replace(/^([-*]\s+)+/i, '')
+    .replace(/[!?.,]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function parseNaturalAliasCommand(text: string): DevAssistCommand | undefined {
+  const normalized = normalizeAliasBody(text);
+  if (!normalized || /^(wt|watchtower)\b/.test(normalized)) {
     return undefined;
   }
 
+  if (/^(learn|learning|what did you learn|what have you learned|show learning)$/.test(normalized)) {
+    return { type: 'LEARN' };
+  }
+
+  if (/^(status|health|health status|system status|watchtower status)$/.test(normalized)) {
+    return { type: 'STATUS' };
+  }
+
+  if (/^(queue|my queue|show queue|what is in my queue|what's in my queue)$/.test(normalized)) {
+    return { type: 'MY_QUEUE', limit: 5 };
+  }
+
+  if (/^(heat|hot channels|channel heat|show heat)$/.test(normalized)) {
+    return { type: 'HEAT', limit: 5 };
+  }
+
+  if (/^(failures|failure|errors|error|recent failures|recent errors)$/.test(normalized)) {
+    return { type: 'FAILURES', limit: 5 };
+  }
+
+  return undefined;
+}
+
+export function hasNaturalDevAssistAlias(text: string): boolean {
+  return Boolean(parseNaturalAliasCommand(text));
+}
+
+export function parseDevAssistCommand(text: string): DevAssistCommand | undefined {
+  const body = stripPrefix(text);
+  if (body !== undefined) {
+    return parsePrefixedDevAssistCommand(body);
+  }
+
+  return parseNaturalAliasCommand(text);
+}
+
+function parsePrefixedDevAssistCommand(body: string): DevAssistCommand | undefined {
   if (!body || /^help\b|^commands\b|^\?$/.test(body.toLowerCase())) {
     return { type: 'HELP' };
   }
