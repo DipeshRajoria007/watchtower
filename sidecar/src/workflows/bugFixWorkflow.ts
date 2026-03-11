@@ -1,6 +1,13 @@
 import path from 'node:path';
 import type { WebClient } from '@slack/web-api';
-import type { AppConfig, CodexRunRequest, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
+import type {
+  AppConfig,
+  CodexRunRequest,
+  NormalizedTask,
+  PersonalityMode,
+  WorkflowResult,
+  WorkflowStepLogger,
+} from '../types/contracts.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
 import { classifyRepo } from '../router/repoClassifier.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
@@ -13,10 +20,11 @@ export async function runBugFixWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
+  personalityMode?: PersonalityMode;
   store?: Pick<JobStore, 'getChannelPolicyPack'>;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, store, logStep } = params;
+  const { task, config, slack, personalityMode, store, logStep } = params;
 
   if (!config.allowedChannelsForBugFix.includes(task.event.channelId)) {
     logStep?.({
@@ -103,7 +111,7 @@ export async function runBugFixWorkflow(params: {
   await slack.chat.postMessage({
     channel: task.event.channelId,
     thread_ts: task.event.threadTs,
-    text: `Working on bug fix in ${classification.selectedRepo}...`,
+    text: `Bug-fix run started in ${classification.selectedRepo}. I am on it.`,
   });
 
   logStep?.({
@@ -128,7 +136,7 @@ export async function runBugFixWorkflow(params: {
     : 'No explicit policy pack assigned for this channel.';
 
   const prompt = `
-${buildMentionSystemPrompt({ task, workflow: 'BUG_FIX' })}
+${buildMentionSystemPrompt({ task, workflow: 'BUG_FIX', personalityMode })}
 
 You are running Watchtower bug-fix automation.
 
@@ -190,7 +198,7 @@ Requirements:
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
-      text: `${errorText} Check desktop notifications for details.`,
+      text: `${errorText} Execution tripped over itself. Check desktop notifications for details.`,
     });
     logStep?.({
       stage: 'bug_fix.slack.failure_posted',
@@ -228,7 +236,7 @@ Requirements:
   await slack.chat.postMessage({
     channel: task.event.channelId,
     thread_ts: task.event.threadTs,
-    text: `Bug fix completed. ${summary}\n${prUrl}`,
+    text: `Bug fix wrapped. ${summary}\n${prUrl}`,
   });
 
   logStep?.({

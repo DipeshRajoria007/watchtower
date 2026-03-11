@@ -24,15 +24,15 @@ export async function routeTask(params: {
   const { task, config, slack, store, personalityMode, logStep } = params;
 
   if (task.intent === 'PR_REVIEW') {
-    return runPrReviewWorkflow({ task, config, slack, store, logStep });
+    return runPrReviewWorkflow({ task, config, slack, store, personalityMode, logStep });
   }
 
   if (task.intent === 'BUG_FIX') {
-    return runBugFixWorkflow({ task, config, slack, store, logStep });
+    return runBugFixWorkflow({ task, config, slack, store, personalityMode, logStep });
   }
 
   if (task.intent === 'OWNER_AUTOPILOT') {
-    return runOwnerAutopilotWorkflow({ task, config, slack, logStep });
+    return runOwnerAutopilotWorkflow({ task, config, slack, personalityMode, logStep });
   }
 
   if (task.intent === 'DEV_ASSIST') {
