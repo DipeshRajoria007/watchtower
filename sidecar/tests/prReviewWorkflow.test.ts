@@ -120,4 +120,102 @@ describe('prReviewWorkflow', () => {
       })
     );
   });
+
+  it('tags requester and skips when PR org is outside allowed scope', async () => {
+    const slack = {
+      conversations: {
+        replies: vi.fn().mockResolvedValue({
+          messages: [{ text: 'review https://github.com/facebook/react/pull/35961/files' }],
+        }),
+      },
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true }),
+      },
+    };
+
+    const task: NormalizedTask = {
+      event: {
+        eventId: 'Ev3',
+        channelId: 'C1',
+        threadTs: '777.88',
+        eventTs: '777.88',
+        userId: 'U_SCOPE',
+        text: '<@UBOT1> review this https://github.com/facebook/react/pull/35961/files',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'PR_REVIEW',
+      prContext: {
+        url: 'https://github.com/facebook/react/pull/35961',
+        owner: 'facebook',
+        repo: 'react',
+        number: 35961,
+      },
+    };
+
+    const result = await runPrReviewWorkflow({
+      task,
+      config,
+      slack: slack as any,
+    });
+
+    expect(result.status).toBe('SKIPPED');
+    expect(result.slackPosted).toBe(true);
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "<@U_SCOPE> i can't review this PR because it is outside my scope. i can only review `Newton-School/newton-web` and `Newton-School/newton-api`.",
+      })
+    );
+  });
+
+  it('tags requester and skips when PR repo is not newton-web/newton-api', async () => {
+    const slack = {
+      conversations: {
+        replies: vi.fn().mockResolvedValue({
+          messages: [{ text: 'review https://github.com/Newton-School/random-repo/pull/11' }],
+        }),
+      },
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true }),
+      },
+    };
+
+    const task: NormalizedTask = {
+      event: {
+        eventId: 'Ev4',
+        channelId: 'C1',
+        threadTs: '666.77',
+        eventTs: '666.77',
+        userId: 'U_SCOPE2',
+        text: '<@UBOT1> review this https://github.com/Newton-School/random-repo/pull/11',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'PR_REVIEW',
+      prContext: {
+        url: 'https://github.com/Newton-School/random-repo/pull/11',
+        owner: 'Newton-School',
+        repo: 'random-repo',
+        number: 11,
+      },
+    };
+
+    const result = await runPrReviewWorkflow({
+      task,
+      config,
+      slack: slack as any,
+    });
+
+    expect(result.status).toBe('SKIPPED');
+    expect(result.slackPosted).toBe(true);
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "<@U_SCOPE2> i can't review this PR because it is outside my scope. i can only review `Newton-School/newton-web` and `Newton-School/newton-api`.",
+      })
+    );
+  });
 });

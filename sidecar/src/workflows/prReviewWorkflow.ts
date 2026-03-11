@@ -16,6 +16,8 @@ import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { runCodex } from '../codex/runCodex.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 
+const SUPPORTED_PR_REPOS = ['newton-web', 'newton-api'] as const;
+
 function mapRepoPath(config: AppConfig, pr: PrContext): string | null {
   if (pr.repo === 'newton-web') {
     return config.repoPaths.newtonWeb;
@@ -77,6 +79,10 @@ async function fetchPrHeadSha(params: {
 
 const NO_NEW_CHANGES_TEXT =
   'there are no new changes to review, i think you forgot to push your changes, you need some coffee';
+
+function buildOutOfScopePrReply(userId: string, allowedPrOrg: string): string {
+  return `<@${userId}> i can't review this PR because it is outside my scope. i can only review \`${allowedPrOrg}/newton-web\` and \`${allowedPrOrg}/newton-api\`.`;
+}
 
 export async function runPrReviewWorkflow(params: {
   task: NormalizedTask;
@@ -140,6 +146,12 @@ export async function runPrReviewWorkflow(params: {
       },
     });
 
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: buildOutOfScopePrReply(task.event.userId, config.allowedPrOrg),
+    });
+
     notifyDesktop(
       'Watchtower PR review skipped',
       `PR org ${prContext.owner} is not allowed. Only ${config.allowedPrOrg} is supported.`
@@ -147,9 +159,40 @@ export async function runPrReviewWorkflow(params: {
     return {
       workflow: 'PR_REVIEW',
       status: 'SKIPPED',
-      message: 'PR org not allowed',
+      message: 'PR org not allowed; informed requester in thread.',
       notifyDesktop: true,
-      slackPosted: false,
+      slackPosted: true,
+    };
+  }
+
+  if (!SUPPORTED_PR_REPOS.includes(prContext.repo as (typeof SUPPORTED_PR_REPOS)[number])) {
+    logStep?.({
+      stage: 'pr_review.guard.repo_out_of_scope',
+      message: 'PR repository is outside of supported review scope.',
+      level: 'WARN',
+      data: {
+        owner: prContext.owner,
+        repo: prContext.repo,
+        supportedRepos: [...SUPPORTED_PR_REPOS],
+      },
+    });
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: buildOutOfScopePrReply(task.event.userId, config.allowedPrOrg),
+    });
+
+    notifyDesktop(
+      'Watchtower PR review skipped',
+      `PR repo ${prContext.owner}/${prContext.repo} is outside supported scope.`
+    );
+    return {
+      workflow: 'PR_REVIEW',
+      status: 'SKIPPED',
+      message: 'PR repo out of scope; informed requester in thread.',
+      notifyDesktop: true,
+      slackPosted: true,
     };
   }
 
