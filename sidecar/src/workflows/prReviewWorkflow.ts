@@ -4,6 +4,7 @@ import type {
   AppConfig,
   CodexRunRequest,
   NormalizedTask,
+  PersonalityMode,
   PrContext,
   WorkflowResult,
   WorkflowStepLogger,
@@ -78,16 +79,17 @@ async function fetchPrHeadSha(params: {
 }
 
 const NO_NEW_CHANGES_TEXT =
-  'there are no new changes to review, i think you forgot to push your changes, you need some coffee';
+  'No new commits since the last review. Same diff, same verdict. Push an update and I will rerun.';
 
 function buildOutOfScopePrReply(userId: string, allowedPrOrg: string): string {
-  return `<@${userId}> i can't review this PR because it is outside my scope. i can only review \`${allowedPrOrg}/newton-web\` and \`${allowedPrOrg}/newton-api\`.`;
+  return `<@${userId}> this PR is outside my review lane right now. i can review \`${allowedPrOrg}/newton-web\` and \`${allowedPrOrg}/newton-api\`.`;
 }
 
 export async function runPrReviewWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
+  personalityMode?: PersonalityMode;
   store?: Pick<JobStore, 'findLatestReviewedPrHeadSha' | 'getChannelPolicyPack'>;
   resolvePrHeadSha?: (input: {
     prContext: PrContext;
@@ -96,7 +98,7 @@ export async function runPrReviewWorkflow(params: {
   }) => Promise<string | undefined>;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, store, resolvePrHeadSha, logStep } = params;
+  const { task, config, slack, personalityMode, store, resolvePrHeadSha, logStep } = params;
 
   logStep?.({
     stage: 'pr_review.context.fetch.start',
@@ -123,7 +125,7 @@ export async function runPrReviewWorkflow(params: {
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
-      text: 'Please include a GitHub PR URL in this thread. Format: `https://github.com/Newton-School/<repo>/pull/<number>`',
+      text: `<@${task.event.userId}> drop the GitHub PR URL in this thread and i will pick it up. Format: \`https://github.com/Newton-School/<repo>/pull/<number>\``,
     });
 
     return {
@@ -287,7 +289,7 @@ export async function runPrReviewWorkflow(params: {
   await slack.chat.postMessage({
     channel: task.event.channelId,
     thread_ts: task.event.threadTs,
-    text: 'Running PR review...',
+    text: 'PR review in progress. I will drop findings here shortly.',
   });
 
   logStep?.({
@@ -305,7 +307,7 @@ export async function runPrReviewWorkflow(params: {
     : 'No explicit policy pack assigned for this channel.';
 
   const prompt = `
-${buildMentionSystemPrompt({ task, workflow: 'PR_REVIEW' })}
+${buildMentionSystemPrompt({ task, workflow: 'PR_REVIEW', personalityMode })}
 
 You are executing Watchtower PR review automation.
 
@@ -363,7 +365,7 @@ Requirements:
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
-      text: `${errorText} Check desktop notifications for details.`,
+      text: `${errorText} I could not close this loop right now. Check desktop notifications for details.`,
     });
 
     logStep?.({
@@ -401,7 +403,7 @@ Requirements:
   await slack.chat.postMessage({
     channel: task.event.channelId,
     thread_ts: task.event.threadTs,
-    text: `PR review completed. ${summary}\n${prUrl}`,
+    text: `PR review done. ${summary}\n${prUrl}`,
   });
 
   logStep?.({

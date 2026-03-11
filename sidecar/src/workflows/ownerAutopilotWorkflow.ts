@@ -1,7 +1,14 @@
 import os from 'node:os';
 import path from 'node:path';
 import type { WebClient } from '@slack/web-api';
-import type { AppConfig, CodexRunRequest, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
+import type {
+  AppConfig,
+  CodexRunRequest,
+  NormalizedTask,
+  PersonalityMode,
+  WorkflowResult,
+  WorkflowStepLogger,
+} from '../types/contracts.js';
 import { runCodex } from '../codex/runCodex.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
@@ -63,9 +70,9 @@ function isPresencePing(text: string): boolean {
 
 function buildPresenceReply(eventTs: string): string {
   const variants = [
-    "Yeah, I'm here. What do you need?",
-    'Online and listening. Tell me what you want done.',
-    'Present. Drop the task and I will handle it.',
+    "Yeah, I'm here. Drop the agenda item.",
+    'Online and listening. Tell me what should move first.',
+    'Present. Send the ask and I will handle the paperwork and the work.',
   ];
 
   let hash = 0;
@@ -114,11 +121,12 @@ function buildOwnerPrimaryPrompt(params: {
   config: AppConfig;
   workspaceRoot: string;
   githubToken?: string;
+  personalityMode?: PersonalityMode;
   threadContext: string;
 }): string {
-  const { task, config, workspaceRoot, githubToken, threadContext } = params;
+  const { task, config, workspaceRoot, githubToken, personalityMode, threadContext } = params;
   return `
-${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT' })}
+${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT', personalityMode })}
 
 You are running Watchtower owner-autopilot mode.
 
@@ -152,11 +160,12 @@ function buildOwnerRelaxedPrompt(params: {
   config: AppConfig;
   workspaceRoot: string;
   githubToken?: string;
+  personalityMode?: PersonalityMode;
   threadContext: string;
 }): string {
-  const { task, config, workspaceRoot, githubToken, threadContext } = params;
+  const { task, config, workspaceRoot, githubToken, personalityMode, threadContext } = params;
   return `
-${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT' })}
+${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT', personalityMode })}
 
 You are running Watchtower owner-autopilot mode in relaxed output mode.
 
@@ -184,9 +193,10 @@ export async function runOwnerAutopilotWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
+  personalityMode?: PersonalityMode;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, logStep } = params;
+  const { task, config, slack, personalityMode, logStep } = params;
 
   logStep?.({
     stage: 'owner_autopilot.context.fetch.start',
@@ -250,6 +260,7 @@ export async function runOwnerAutopilotWorkflow(params: {
     config,
     workspaceRoot,
     githubToken,
+    personalityMode,
     threadContext,
   });
 
@@ -332,6 +343,7 @@ export async function runOwnerAutopilotWorkflow(params: {
       config,
       workspaceRoot,
       githubToken,
+      personalityMode,
       threadContext,
     });
     const relaxedResult = await runCodex({

@@ -37,5 +37,7 @@ describe('mentionSystemPrompt', () => {
       personalityMode: 'dark_humor',
     });
     expect(prompt).toContain('Reply personality mode: dark_humor');
+    expect(prompt).toContain('Use short corporate-style humor when it fits the context.');
+    expect(prompt).toContain('Do not force technical framing for non-technical prompts.');
   });
 });
