@@ -165,7 +165,7 @@ describe('prReviewWorkflow', () => {
     expect(result.slackPosted).toBe(true);
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: '<@U_SCOPE> this PR is outside my review lane right now. i can review `Newton-School/newton-web` and `Newton-School/newton-api`.',
+        text: '<@U_SCOPE> this PR is outside supported review scope. I can review `Newton-School/newton-web` and `Newton-School/newton-api`.',
       })
     );
   });
@@ -214,7 +214,7 @@ describe('prReviewWorkflow', () => {
     expect(result.slackPosted).toBe(true);
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: '<@U_SCOPE2> this PR is outside my review lane right now. i can review `Newton-School/newton-web` and `Newton-School/newton-api`.',
+        text: '<@U_SCOPE2> this PR is outside supported review scope. I can review `Newton-School/newton-web` and `Newton-School/newton-api`.',
       })
     );
   });

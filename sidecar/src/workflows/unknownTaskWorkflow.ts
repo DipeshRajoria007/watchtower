@@ -4,7 +4,6 @@ import type {
   AppConfig,
   CodexRunRequest,
   NormalizedTask,
-  PersonalityMode,
   WorkflowResult,
   WorkflowStepLogger,
 } from '../types/contracts.js';
@@ -17,10 +16,9 @@ type UnknownReply = {
   reply: string;
   reaction: string;
   track: UnknownReplyTrack;
-  seriousContext: boolean;
 };
 
-type UnknownReplyTrack = 'social_banter' | 'task_clarifier';
+type UnknownReplyTrack = 'direct_reply' | 'task_clarifier';
 
 const TECHNICAL_SIGNAL_PATTERNS = [
   /\b(pr|pull request|review|bug|fix|regression|issue|error|exception|stack|trace|log)\b/i,
@@ -33,76 +31,23 @@ const TECHNICAL_SIGNAL_PATTERNS = [
 
 const ACTION_CUE_PATTERN =
   /\b(help|handle|do|build|ship|check|investigate|explain|summarize|draft|write|solve|debug|fix|review|test|look at|prove|proof|show|derive|calculate|compute|answer|respond|create|generate|prepare)\b/i;
-const SOCIAL_CUE_PATTERN =
-  /\b(lol|haha|hehe|better than|worse than|right\?|isn't that right|meme|roast|joke|banter|tea|gossip|vibe|mood)\b/i;
-const SERIOUS_DIRECTIVE_PATTERN = /\b(professional|serious|formal|strict|no jokes?|no humour|no humor)\b/i;
-const SERIOUS_HUMOR_MARKER_PATTERN =
+const HUMOR_MARKER_PATTERN =
   /\b(kpi|layoff|layoffs|budget|committee|boardroom|townhall|scope creep|surprise deliverable|trust issues|self-destruct|entropy|fun column|office-banter|workplace banter|corporate-jokes|natural force|smoke)\b/i;
+const NEUTRAL_REACTIONS = ['eyes', 'memo', 'white_check_mark'] as const;
 
-const FALLBACK_REACTIONS: Record<PersonalityMode, string[]> = {
-  dark_humor: ['skull', 'eyes', 'ghost', 'warning', 'satellite'],
-  professional: ['eyes', 'memo', 'mag', 'spiral_note_pad'],
-  friendly: ['wave', 'thinking_face', 'sparkles', 'eyes'],
-  chaos: ['dizzy_face', 'boom', 'cyclone', 'fire'],
-};
-
-const FALLBACK_REPLIES: Record<PersonalityMode, Record<UnknownReplyTrack, string[]>> = {
-  dark_humor: {
-    social_banter: [
-      'noted. the quarterly banter deck is strong today.',
-      'solid boardroom energy. i support this message in principle.',
-      'approved for hallway gossip tier. carry on.',
-      'i respect the confidence. hr-safe chaos, nicely done.',
-    ],
-    task_clarifier: [
-      'i can run with this, but i need one clear outcome.',
-      'give me the exact deliverable and i will handle execution.',
-      'this is direction-adjacent. name the concrete next step.',
-      'i can action it once the ask is specific.',
-    ],
-  },
-  professional: {
-    social_banter: [
-      'message received.',
-      'noted.',
-      'acknowledged.',
-      'understood.',
-    ],
-    task_clarifier: [
-      'i can take this forward. share the exact outcome you want.',
-      'please specify the single deliverable and owner expectation.',
-      'i need one concrete next step to execute.',
-      'define the target result and i will proceed.',
-    ],
-  },
-  friendly: {
-    social_banter: [
-      'fair point. this is premium office-banter material.',
-      'noted and appreciated. strong team-chat energy.',
-      'haha, logged in the fun column.',
-      'valid vibe. carrying this conversation with a smile.',
-    ],
-    task_clarifier: [
-      'happy to help. tell me the exact outcome you want next.',
-      'i can do this. share one clear deliverable.',
-      'give me the specific next step and i am on it.',
-      'point me at the exact result and i will run with it.',
-    ],
-  },
-  chaos: {
-    social_banter: [
-      'certified corporate chaos. approved by the imaginary steering committee.',
-      'this has startup townhall energy and i respect it.',
-      'excellent entropy, still hr-safe. carry on.',
-      'boardroom turbulence detected. morale remains green.',
-    ],
-    task_clarifier: [
-      'chaos accepted. give me one crisp outcome to execute.',
-      'i can ship this, but i need a specific target.',
-      'high entropy ask. drop one concrete next step.',
-      'send the exact deliverable and i will launch.',
-    ],
-  },
+const FALLBACK_REPLIES: Record<UnknownReplyTrack, string[]> = {
+  direct_reply: [
+    'noted.',
+    'understood.',
+    'message received.',
+    'go ahead.',
+  ],
+  task_clarifier: [
+    'share the exact outcome you want me to handle.',
+    'please specify the single deliverable.',
+    'i need one concrete next step to act on this.',
+    'tell me the exact result you want.',
+  ],
 };
 
 function hashString(input: string): number {
@@ -120,79 +65,45 @@ function classifyUnknownReplyTrack(texts: string[]): UnknownReplyTrack {
     .toLowerCase();
 
   if (!normalized.trim()) {
-    return 'social_banter';
+    return 'direct_reply';
   }
 
   if (TECHNICAL_SIGNAL_PATTERNS.some(pattern => pattern.test(normalized))) {
     return 'task_clarifier';
   }
 
-  if (SOCIAL_CUE_PATTERN.test(normalized)) {
-    return 'social_banter';
-  }
-
   if (ACTION_CUE_PATTERN.test(normalized)) {
     return 'task_clarifier';
   }
 
-  return 'social_banter';
+  return 'direct_reply';
 }
 
-function isSeriousUnknownContext(task: NormalizedTask, texts: string[], track: UnknownReplyTrack): boolean {
-  const normalized = texts
-    .join('\n')
-    .replace(/<@[^>]+>/g, ' ')
-    .toLowerCase();
-
-  if (task.isOwnerAuthor || task.mentionType === 'owner' || task.prContext) {
-    return true;
-  }
-  if (track === 'task_clarifier') {
-    return true;
-  }
-  if (SERIOUS_DIRECTIVE_PATTERN.test(normalized)) {
-    return true;
-  }
-  return TECHNICAL_SIGNAL_PATTERNS.some(pattern => pattern.test(normalized));
-}
-
-function buildFallbackUnknownReply(
-  task: NormalizedTask,
-  personalityMode: PersonalityMode,
-  track: UnknownReplyTrack
-): UnknownReply {
+function buildFallbackUnknownReply(task: NormalizedTask, track: UnknownReplyTrack): UnknownReply {
   const seed = hashString(`${task.event.userId}:${task.event.text}:${task.event.eventTs}`);
-  const replies = FALLBACK_REPLIES[personalityMode][track];
+  const replies = FALLBACK_REPLIES[track];
   const variant = seed % replies.length;
-  const reactions = FALLBACK_REACTIONS[personalityMode];
-  const reaction = reactions[seed % reactions.length];
+  const reaction = NEUTRAL_REACTIONS[seed % NEUTRAL_REACTIONS.length];
 
   return {
     reply: replies[variant],
     reaction,
     track,
-    seriousContext: personalityMode === 'professional',
   };
 }
 
-function sanitizeReaction(reaction: string | undefined, seriousContext = false): string {
+function sanitizeReaction(reaction: string | undefined): string {
   if (!reaction) {
-    return seriousContext ? 'eyes' : 'skull';
-  }
-  const value = reaction.trim().toLowerCase();
-  if (seriousContext) {
-    if (['eyes', 'memo', 'mag', 'spiral_note_pad', 'white_check_mark'].includes(value)) {
-      return value;
-    }
     return 'eyes';
   }
-  if (/^[a-z0-9_+-]+$/.test(value)) {
+  const value = reaction.trim().toLowerCase();
+  if ((NEUTRAL_REACTIONS as readonly string[]).includes(value)) {
     return value;
   }
-  return 'skull';
+  return 'eyes';
 }
 
-function normalizeSeriousReply(reply: string): string {
+function normalizeReply(reply: string): string {
   const collapsed = reply.trim().replace(/\s+/g, ' ');
   if (!collapsed) {
     return '';
@@ -212,14 +123,14 @@ function normalizeSeriousReply(reply: string): string {
     .split(/(?<=[.?!])\s+/)
     .map(sentence => sentence.trim())
     .filter(Boolean)
-    .filter(sentence => !SERIOUS_HUMOR_MARKER_PATTERN.test(sentence));
+    .filter(sentence => !HUMOR_MARKER_PATTERN.test(sentence));
 
   if (plainSentences.length > 0) {
     candidate = plainSentences.join(' ');
   }
 
   const questionMatch = candidate.match(/^[^?]*\?/);
-  if (questionMatch && !SERIOUS_HUMOR_MARKER_PATTERN.test(questionMatch[0])) {
+  if (questionMatch && !HUMOR_MARKER_PATTERN.test(questionMatch[0])) {
     return questionMatch[0].trim();
   }
 
@@ -234,13 +145,8 @@ function normalizeSeriousReply(reply: string): string {
   return fallback;
 }
 
-function sanitizeReply(
-  reply: string | undefined,
-  userId: string,
-  track: UnknownReplyTrack,
-  seriousContext = false
-): string {
-  const trimmed = seriousContext ? normalizeSeriousReply(reply ?? '') : (reply ?? '').trim();
+function sanitizeReply(reply: string | undefined, userId: string, track: UnknownReplyTrack): string {
+  const trimmed = normalizeReply(reply ?? '');
   if (trimmed.length > 0) {
     return `<@${userId}> ${trimmed}`;
   }
@@ -254,36 +160,32 @@ async function generateUnknownReplyWithCodex(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
-  personalityMode: PersonalityMode;
   logStep?: WorkflowStepLogger;
 }): Promise<UnknownReply> {
-  const { task, config, slack, personalityMode, logStep } = params;
+  const { task, config, slack, logStep } = params;
 
   const threadMessages = await fetchThreadContext(slack, task.event.channelId, task.event.threadTs).catch(() => []);
   const threadTexts = [task.event.text, ...threadMessages.map(message => message.text)];
   const track = classifyUnknownReplyTrack(threadTexts);
-  const seriousContext = isSeriousUnknownContext(task, threadTexts, track);
-  const effectivePersonalityMode = seriousContext ? 'professional' : personalityMode;
   const threadContext = threadTexts
     .filter(Boolean)
     .join('\n---\n');
 
   const prompt = `
-${buildMentionSystemPrompt({ task, workflow: 'UNKNOWN', personalityMode: effectivePersonalityMode })}
+${buildMentionSystemPrompt({ task, workflow: 'UNKNOWN' })}
 
 Generate a Slack reply for an unknown/random bot mention.
 
 Rules:
-1. Tone profile: ${toneForPersonalityMode(effectivePersonalityMode)}
+1. Tone: plain, natural, concise, and direct.
 2. Context track: ${track}
-3. Serious context: ${seriousContext ? 'yes' : 'no'}.
-4. If serious context is yes, keep the reply strictly professional. No jokes, sarcasm, banter, or playful asides.
-5. If track is social_banter and serious context is no, keep it brief and natural. Do not invent corporate one-liners.
-6. If track is task_clarifier, ask for one missing detail naturally. Do not repeat boilerplate like "PR/bug/CI pipeline" triads.
-7. Safe: no hate, no abuse, no threats.
-8. Keep reply to max ${seriousContext ? 18 : 24} words.
-9. Reply text must NOT include user mention. Mention is added externally.
-10. Pick one fitting Slack emoji reaction name (without colons). If serious context is yes, use only neutral reactions like eyes, memo, mag, spiral_note_pad.
+3. No jokes, sarcasm, banter, or themed tone.
+4. If track is direct_reply, answer naturally when the request is clear. Do not add filler.
+5. If track is task_clarifier, ask for one missing detail naturally. Do not repeat boilerplate like "PR/bug/CI pipeline" triads.
+6. Safe: no hate, no abuse, no threats.
+7. Keep reply to max 24 words.
+8. Reply text must NOT include user mention. Mention is added externally.
+9. Pick one neutral Slack emoji reaction name (without colons): eyes, memo, or white_check_mark.
 
 Context:
 - Mention text: ${task.event.text}
@@ -310,10 +212,7 @@ Return strict JSON with keys:
     data: {
       timeoutMs: request.timeoutMs,
       threadMessages: threadMessages.length,
-      personalityMode,
-      effectivePersonalityMode,
       track,
-      seriousContext,
     },
   });
 
@@ -328,70 +227,50 @@ Return strict JSON with keys:
       timedOut: result.timedOut,
       exitCode: result.exitCode,
       parsedJson: Boolean(result.parsedJson),
-      seriousContext,
     },
   });
 
   if (!result.ok || !result.parsedJson) {
-    return buildFallbackUnknownReply(task, effectivePersonalityMode, track);
+    return buildFallbackUnknownReply(task, track);
   }
 
   const reply = String(result.parsedJson.reply ?? '').trim();
-  const reaction = sanitizeReaction(String(result.parsedJson.reaction ?? ''), seriousContext);
+  const reaction = sanitizeReaction(String(result.parsedJson.reaction ?? ''));
   if (!reply) {
-    return buildFallbackUnknownReply(task, effectivePersonalityMode, track);
+    return buildFallbackUnknownReply(task, track);
   }
 
-  return { reply, reaction, track, seriousContext };
-}
-
-function toneForPersonalityMode(mode: PersonalityMode): string {
-  if (mode === 'professional') {
-    return 'crisp, workplace-safe, concise, lightly personable';
-  }
-  if (mode === 'friendly') {
-    return 'warm, polite, practical, positive';
-  }
-  if (mode === 'chaos') {
-    return 'playful corporate-chaotic, concise, still safe';
-  }
-  return 'dry dark humor with corporate flavor, witty, short, safe';
+  return { reply, reaction, track };
 }
 
 export async function runUnknownTaskWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
-  personalityMode?: PersonalityMode;
   logStep?: WorkflowStepLogger;
   generateUnknownReply?: (input: {
     task: NormalizedTask;
     config: AppConfig;
     slack: WebClient;
-    personalityMode: PersonalityMode;
     logStep?: WorkflowStepLogger;
   }) => Promise<UnknownReply>;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, personalityMode, logStep, generateUnknownReply } = params;
-  const mode = personalityMode ?? 'dark_humor';
+  const { task, config, slack, logStep, generateUnknownReply } = params;
 
   logStep?.({
     stage: 'unknown.notify.desktop',
-    message: 'No configured workflow matched; generating personality-aware reply with Codex and notifying desktop.',
+    message: 'No configured workflow matched; generating a plain Slack reply with Codex and notifying desktop.',
     level: 'WARN',
     data: {
       channelId: task.event.channelId,
       threadTs: task.event.threadTs,
-      personalityMode: mode,
     },
   });
 
   const generator = generateUnknownReply ?? generateUnknownReplyWithCodex;
-  const generated = await generator({ task, config, slack, personalityMode: mode, logStep });
-  const seriousContext = generated.seriousContext;
-  const effectiveMode = seriousContext ? 'professional' : mode;
-  const replyText = sanitizeReply(generated.reply, task.event.userId, generated.track, seriousContext);
-  const reaction = sanitizeReaction(generated.reaction, seriousContext);
+  const generated = await generator({ task, config, slack, logStep });
+  const replyText = sanitizeReply(generated.reply, task.event.userId, generated.track);
+  const reaction = sanitizeReaction(generated.reaction);
 
   let postedTs: string | undefined;
   try {
@@ -455,7 +334,7 @@ export async function runUnknownTaskWorkflow(params: {
   return {
     workflow: 'UNKNOWN',
     status: 'SKIPPED',
-    message: `Unknown task; Codex-generated ${effectiveMode}/${generated.track} Slack reply sent.`,
+    message: `Unknown task; Codex-generated ${generated.track} Slack reply sent.`,
     notifyDesktop: true,
     slackPosted: Boolean(postedTs),
   };

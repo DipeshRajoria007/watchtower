@@ -86,7 +86,7 @@ describe('selfLearning', () => {
     store.close();
   });
 
-  it('persists personality directives and resolves mode', () => {
+  it('keeps reply mode normal by default', () => {
     const dbPath = tempDbPath();
     const store = new JobStore(dbPath);
 
@@ -97,7 +97,7 @@ describe('selfLearning', () => {
     });
 
     const directiveResult = applyLearning({ task: directiveTask, config, store });
-    expect(directiveResult.personalityMode).toBe('professional');
+    expect(directiveResult.personalityMode).toBe('normal');
 
     const nextUserTask = buildTask({
       text: '<@UBOT1> random ask',
@@ -106,7 +106,7 @@ describe('selfLearning', () => {
     });
 
     const nextUserResult = applyLearning({ task: nextUserTask, config, store });
-    expect(nextUserResult.personalityMode).toBe('professional');
+    expect(nextUserResult.personalityMode).toBe('normal');
 
     store.close();
   });

@@ -30,14 +30,13 @@ describe('mentionSystemPrompt', () => {
     expect(prompt).toContain('This request is from the owner. Execute directly');
   });
 
-  it('includes personality mode when provided', () => {
+  it('always enforces plain wording', () => {
     const prompt = buildMentionSystemPrompt({
       task: makeTask(),
       workflow: 'UNKNOWN',
-      personalityMode: 'dark_humor',
     });
-    expect(prompt).toContain('Reply personality mode: dark_humor');
-    expect(prompt).toContain('Dark_humor and chaos modes only apply in clearly casual threads.');
+    expect(prompt).toContain('Use plain, natural wording.');
+    expect(prompt).toContain('No jokes, sarcasm, playful metaphors, or themed tone.');
     expect(prompt).toContain('Do not force technical framing for non-technical prompts.');
   });
 
@@ -52,8 +51,7 @@ describe('mentionSystemPrompt', () => {
         },
       }),
       workflow: 'UNKNOWN',
-      personalityMode: 'dark_humor',
     });
-    expect(prompt).toContain('This is a serious work context. No jokes, sarcasm, playful metaphors, or throwaway one-liners.');
+    expect(prompt).toContain('This is a serious work context. Keep the reply especially direct and unembellished.');
   });
 });

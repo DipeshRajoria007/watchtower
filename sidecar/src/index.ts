@@ -201,25 +201,6 @@ async function processReactionFeedback(event: SlackReactionEvent): Promise<void>
     sentiment,
   });
 
-  // Reactions on bot outputs become lightweight preference signals.
-  if (event.itemUserId === config.botUserId) {
-    if (sentiment < 0) {
-      store.setPersonalityProfile({
-        scope: 'channel',
-        scopeId: event.channelId,
-        mode: 'professional',
-        source: `reaction:${event.reaction}`,
-      });
-    } else if (event.reaction.toLowerCase() === 'thumbsup' || event.reaction.toLowerCase() === '+1') {
-      store.setPersonalityProfile({
-        scope: 'channel',
-        scopeId: event.channelId,
-        mode: 'friendly',
-        source: `reaction:${event.reaction}`,
-      });
-    }
-  }
-
   logger.info(
     {
       eventId: event.eventId,
@@ -519,7 +500,6 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       originalIntent: task.intent,
       routedIntent: routedTask.intent,
       correctionApplied: learning.correctionApplied,
-      personalityMode: learning.personalityMode,
       learningNotes: learning.notes,
     },
     'learning engine evaluated task'
@@ -543,7 +523,6 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       intent: routedTask.intent,
       originalIntent: task.intent,
       correctionApplied: learning.correctionApplied,
-      personalityMode: learning.personalityMode,
       learningNotes: learning.notes,
       eventTs: event.eventTs,
       ingestSource: event.ingestSource ?? 'socket',
@@ -608,7 +587,6 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       intent: routedTask.intent,
       originalIntent: task.intent,
       correctionApplied: learning.correctionApplied,
-      personalityMode: learning.personalityMode,
       learningNotes: learning.notes,
       threadMessages: threadMessages.length,
       ingestSource: event.ingestSource ?? 'socket',
@@ -644,7 +622,6 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
           config,
           slack: eventClient,
           store,
-          personalityMode: learning.personalityMode,
           logStep,
         });
         const diagnosis =
@@ -705,7 +682,6 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
             intent: task.intent,
             status: result.status,
             correctionApplied: learning.correctionApplied,
-            personalityMode: learning.personalityMode,
             errorKind: diagnosis?.errorKind,
           });
         } catch (error) {
@@ -824,7 +800,6 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         intent: task.intent,
         status: 'FAILED',
         correctionApplied: learning.correctionApplied,
-        personalityMode: learning.personalityMode,
         errorKind: diagnosis?.errorKind,
       });
     } catch (error) {
@@ -873,7 +848,6 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         intent: task.intent,
         status: 'FAILED',
         correctionApplied: learning.correctionApplied,
-        personalityMode: learning.personalityMode,
         errorKind: diagnosis?.errorKind,
       });
     } catch {

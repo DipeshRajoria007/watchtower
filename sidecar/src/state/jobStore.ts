@@ -10,6 +10,10 @@ import type {
   WorkflowIntent,
 } from '../types/contracts.js';
 
+function normalizeStoredPersonalityMode(_mode: unknown): PersonalityMode {
+  return 'normal';
+}
+
 export class JobStore {
   private db: Database.Database;
 
@@ -739,7 +743,7 @@ export class JobStore {
       )
       .get(input.userId) as { mode?: PersonalityMode } | undefined;
     if (userRow?.mode) {
-      return userRow.mode;
+      return normalizeStoredPersonalityMode(userRow.mode);
     }
 
     const channelRow = this.db
@@ -751,10 +755,10 @@ export class JobStore {
       )
       .get(input.channelId) as { mode?: PersonalityMode } | undefined;
     if (channelRow?.mode) {
-      return channelRow.mode;
+      return normalizeStoredPersonalityMode(channelRow.mode);
     }
 
-    return 'dark_humor';
+    return 'normal';
   }
 
   getPersonalityProfile(input: {
@@ -769,7 +773,7 @@ export class JobStore {
          LIMIT 1`
       )
       .get(input.scope, input.scopeId) as { mode?: PersonalityMode } | undefined;
-    return row?.mode;
+    return row?.mode ? normalizeStoredPersonalityMode(row.mode) : undefined;
   }
 
   upsertMissionStart(input: {
@@ -1507,7 +1511,6 @@ export class JobStore {
     intent: WorkflowIntent;
     status: JobRecord['status'];
     correctionApplied: boolean;
-    personalityMode: PersonalityMode;
     errorKind?: string;
   }): void {
     this.db
@@ -1526,7 +1529,7 @@ export class JobStore {
         input.status,
         input.intent,
         input.correctionApplied ? 1 : 0,
-        input.personalityMode,
+        'normal',
         input.errorKind ?? null,
         new Date().toISOString()
       );

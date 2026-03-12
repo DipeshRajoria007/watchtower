@@ -482,13 +482,12 @@ describe('devAssistWorkflow', () => {
     );
   });
 
-  it('updates personality profile for wt personality set', async () => {
+  it('explains that reply-style commands were removed', async () => {
     const slack = {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
       },
     };
-    const setPersonalityProfile = vi.fn();
 
     const task: NormalizedTask = {
       event: {
@@ -525,7 +524,6 @@ describe('devAssistWorkflow', () => {
           topErrorKind: 'CODEX_BIN_NOT_FOUND',
         }),
         getDevChannelHeat: () => [],
-        setPersonalityProfile,
         listDevRuns: () => [],
         resolveJobId: () => undefined,
         getJobSummary: () => undefined,
@@ -533,17 +531,15 @@ describe('devAssistWorkflow', () => {
       } as any,
     });
 
-    expect(result.status).toBe('SUCCESS');
-    expect(result.result?.command).toBe('PERSONALITY_SET');
-    expect(setPersonalityProfile).toHaveBeenCalledWith(
+    expect(result.status).toBe('SKIPPED');
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        scope: 'user',
-        mode: 'professional',
+        text: expect.stringContaining('Reply-style customization has been removed'),
       }),
     );
   });
 
-  it('shows personality profile for wt personality show', async () => {
+  it('explains that reply-style inspection was removed', async () => {
     const slack = {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
@@ -585,9 +581,6 @@ describe('devAssistWorkflow', () => {
           topErrorKind: 'CODEX_BIN_NOT_FOUND',
         }),
         getDevChannelHeat: () => [],
-        setPersonalityProfile: () => {},
-        getPersonalityProfile: () => 'friendly',
-        getPersonalityMode: () => 'friendly',
         listDevRuns: () => [],
         resolveJobId: () => undefined,
         getJobSummary: () => undefined,
@@ -595,11 +588,10 @@ describe('devAssistWorkflow', () => {
       } as any,
     });
 
-    expect(result.status).toBe('SUCCESS');
-    expect(result.result?.command).toBe('PERSONALITY_SHOW');
+    expect(result.status).toBe('SKIPPED');
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining('Current personality'),
+        text: expect.stringContaining('Reply-style customization has been removed'),
       }),
     );
   });
@@ -644,7 +636,7 @@ describe('devAssistWorkflow', () => {
       getDevChannelHeat: () => [],
       setPersonalityProfile: () => {},
       getPersonalityProfile: () => undefined,
-      getPersonalityMode: () => 'dark_humor',
+      getPersonalityMode: () => 'normal',
       listDevRuns: () => [],
       resolveJobId: () => undefined,
       getJobSummary: () => undefined,
@@ -767,8 +759,8 @@ describe('devAssistWorkflow', () => {
         }),
         getDevChannelHeat: () => [],
         setPersonalityProfile: () => {},
-        getPersonalityProfile: () => 'friendly',
-        getPersonalityMode: () => 'friendly',
+        getPersonalityProfile: () => 'normal',
+        getPersonalityMode: () => 'normal',
         listDevRuns: () => [],
         resolveJobId: () => undefined,
         getJobSummary: () => undefined,
@@ -831,8 +823,8 @@ describe('devAssistWorkflow', () => {
       }),
       getDevChannelHeat: () => [],
       setPersonalityProfile: () => {},
-      getPersonalityProfile: () => 'friendly',
-      getPersonalityMode: () => 'friendly',
+      getPersonalityProfile: () => 'normal',
+      getPersonalityMode: () => 'normal',
       listDevRuns: () => [],
       resolveJobId: () => 'job-1-uuid',
       getJobSummary: () => undefined,
@@ -915,8 +907,8 @@ describe('devAssistWorkflow', () => {
         }),
         getDevChannelHeat: () => [],
         setPersonalityProfile: () => {},
-        getPersonalityProfile: () => 'friendly',
-        getPersonalityMode: () => 'friendly',
+        getPersonalityProfile: () => 'normal',
+        getPersonalityMode: () => 'normal',
         listDevRuns: () => [],
         resolveJobId: () => undefined,
         getJobSummary: () => undefined,
@@ -989,8 +981,8 @@ describe('devAssistWorkflow', () => {
         }),
         getDevChannelHeat: () => [],
         setPersonalityProfile: () => {},
-        getPersonalityProfile: () => 'friendly',
-        getPersonalityMode: () => 'friendly',
+        getPersonalityProfile: () => 'normal',
+        getPersonalityMode: () => 'normal',
         listDevRuns: () => [],
         resolveJobId: () => undefined,
         getJobSummary: () => undefined,
@@ -1061,8 +1053,8 @@ describe('devAssistWorkflow', () => {
         }),
         getDevChannelHeat: () => [],
         setPersonalityProfile: () => {},
-        getPersonalityProfile: () => 'friendly',
-        getPersonalityMode: () => 'friendly',
+        getPersonalityProfile: () => 'normal',
+        getPersonalityMode: () => 'normal',
         listDevRuns: () => [],
         resolveJobId: () => undefined,
         getJobSummary: () => undefined,

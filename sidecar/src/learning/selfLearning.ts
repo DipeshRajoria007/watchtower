@@ -11,12 +11,6 @@ const REVIEW_KEYWORDS = [/review/i, /pr\b/i, /pull request/i, /code review/i];
 const BUG_KEYWORDS = [/bug/i, /fix/i, /broken/i, /error/i, /failing/i, /regression/i, /crash/i, /issue/i];
 const CORRECTION_CUE = /\b(actually|instead|wrong|not this|no,|retry|again)\b/i;
 
-type PersonalityDirective = {
-  mode: PersonalityMode;
-  applyToChannel: boolean;
-  reason: string;
-};
-
 export type LearningResult = {
   intent: WorkflowIntent;
   correctionApplied: boolean;
@@ -35,42 +29,7 @@ export function applyLearning(input: {
   const notes: string[] = [];
   let intent = task.intent;
   let correctionApplied = false;
-
-  const directive = detectPersonalityDirective(task.event.text);
-  if (directive) {
-    store.setPersonalityProfile({
-      scope: 'user',
-      scopeId: task.event.userId,
-      mode: directive.mode,
-      source: directive.reason,
-    });
-    if (directive.applyToChannel) {
-      store.setPersonalityProfile({
-        scope: 'channel',
-        scopeId: task.event.channelId,
-        mode: directive.mode,
-        source: directive.reason,
-      });
-    }
-    notes.push(
-      directive.applyToChannel
-        ? `updated personality to ${directive.mode} for user+channel`
-        : `updated personality to ${directive.mode} for user`
-    );
-    logStep?.({
-      stage: 'learning.personality.updated',
-      message: 'Updated personality profile from user instruction.',
-      data: {
-        mode: directive.mode,
-        applyToChannel: directive.applyToChannel,
-      },
-    });
-  }
-
-  const personalityMode = store.getPersonalityMode({
-    channelId: task.event.channelId,
-    userId: task.event.userId,
-  });
+  const personalityMode: PersonalityMode = 'normal';
 
   const phraseKey = normalizePhraseKey(task.event.text);
   const explicitIntent = detectExplicitIntent(task.event.text, task.event.channelId, config);
@@ -149,23 +108,4 @@ function normalizePhraseKey(text: string): string {
     .filter(token => token.length > 2)
     .slice(0, 10)
     .join(' ');
-}
-
-function detectPersonalityDirective(text: string): PersonalityDirective | undefined {
-  const normalized = text.toLowerCase();
-  const applyToChannel = /\b(this channel|channel wide|channel-wide|for everyone here|here)\b/i.test(text);
-
-  if (/\b(professional|serious|formal|no jokes|strict)\b/.test(normalized)) {
-    return { mode: 'professional', applyToChannel, reason: 'directive:professional' };
-  }
-  if (/\b(friendly|polite|calm|kind)\b/.test(normalized)) {
-    return { mode: 'friendly', applyToChannel, reason: 'directive:friendly' };
-  }
-  if (/\b(chaos|chaotic|unhinged)\b/.test(normalized)) {
-    return { mode: 'chaos', applyToChannel, reason: 'directive:chaos' };
-  }
-  if (/\b(dark humor|dark humour|dark mode replies|sus|roast)\b/.test(normalized)) {
-    return { mode: 'dark_humor', applyToChannel, reason: 'directive:dark_humor' };
-  }
-  return undefined;
 }
