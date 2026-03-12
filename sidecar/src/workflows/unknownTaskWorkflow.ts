@@ -8,6 +8,7 @@ import type {
   WorkflowStepLogger,
 } from '../types/contracts.js';
 import { runCodex } from '../codex/runCodex.js';
+import { LIGHTWEIGHT_CODEX_PROFILE } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
@@ -202,13 +203,13 @@ Return strict JSON with keys:
     prompt,
     timeoutMs: Math.min(config.workflowTimeouts.prReviewMs, 120_000),
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/unknown-task-result.schema.json'),
-    reasoningEffort: 'low',
+    ...LIGHTWEIGHT_CODEX_PROFILE,
     onLog: logStep,
   };
 
   logStep?.({
     stage: 'unknown.codex.start',
-    message: 'Generating unknown-task reply with Codex (low reasoning effort).',
+    message: 'Generating unknown-task reply with Codex lightweight profile.',
     data: {
       timeoutMs: request.timeoutMs,
       threadMessages: threadMessages.length,
