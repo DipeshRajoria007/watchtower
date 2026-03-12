@@ -37,7 +37,23 @@ describe('mentionSystemPrompt', () => {
       personalityMode: 'dark_humor',
     });
     expect(prompt).toContain('Reply personality mode: dark_humor');
-    expect(prompt).toContain('Use short corporate-style humor when it fits the context.');
+    expect(prompt).toContain('Dark_humor and chaos modes only apply in clearly casual threads.');
     expect(prompt).toContain('Do not force technical framing for non-technical prompts.');
+  });
+
+  it('forces serious tone instructions for PR-thread context', () => {
+    const prompt = buildMentionSystemPrompt({
+      task: makeTask({
+        prContext: {
+          url: 'https://github.com/Newton-School/newton-web/pull/7724',
+          owner: 'Newton-School',
+          repo: 'newton-web',
+          number: 7724,
+        },
+      }),
+      workflow: 'UNKNOWN',
+      personalityMode: 'dark_humor',
+    });
+    expect(prompt).toContain('This is a serious work context. No jokes, sarcasm, playful metaphors, or throwaway one-liners.');
   });
 });
