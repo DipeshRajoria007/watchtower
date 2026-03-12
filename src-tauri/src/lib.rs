@@ -782,10 +782,8 @@ fn summarize_dev_assist_command(text: &str) -> Option<String> {
         "Run the learning pass"
     } else if lower.starts_with("heat") {
         "Show channel heat"
-    } else if lower.starts_with("personality set ") {
-        "Update personality mode"
-    } else if lower.starts_with("personality show") {
-        "Show personality mode"
+    } else if lower.starts_with("personality set ") || lower.starts_with("personality show") {
+        "Reply style settings removed"
     } else if lower.starts_with("replay ") {
         "Replay a previous job"
     } else if lower.starts_with("fork ") {
@@ -1322,33 +1320,16 @@ fn query_learning_insights(connection: &Connection) -> Result<LearningInsights, 
         })
         .map_err(|err| format!("db query personality profile count failed: {err}"))?;
 
-    let mut mode_stmt = connection
-        .prepare(
-            "SELECT mode, COUNT(*) as cnt
-             FROM personality_profiles
-             GROUP BY mode
-             ORDER BY cnt DESC, mode ASC
-             LIMIT 8",
-        )
-        .map_err(|err| format!("db prepare personality mode stats failed: {err}"))?;
-    let mode_rows = mode_stmt
-        .query_map([], |row| {
-            Ok(PersonalityModeStats {
-                mode: row.get(0)?,
-                count: row.get(1)?,
-            })
-        })
-        .map_err(|err| format!("db query personality mode stats failed: {err}"))?;
+    let profiles_by_mode = if personality_profiles > 0 {
+        vec![PersonalityModeStats {
+            mode: "normal".to_string(),
+            count: personality_profiles,
+        }]
+    } else {
+        Vec::new()
+    };
 
-    let mut profiles_by_mode = Vec::new();
-    for row in mode_rows {
-        profiles_by_mode.push(row.map_err(|err| format!("db row personality mode failed: {err}"))?);
-    }
-
-    let dominant_personality_mode = profiles_by_mode
-        .first()
-        .map(|entry| entry.mode.clone())
-        .unwrap_or_else(|| "dark_humor".to_string());
+    let dominant_personality_mode = "normal".to_string();
 
     let (top_failure_kind, top_failure_count) = connection
         .query_row(

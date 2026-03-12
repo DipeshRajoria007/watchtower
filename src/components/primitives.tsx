@@ -487,7 +487,7 @@ export function LearningInsightsPanel({
           variant="compact"
         />
         <MetricCard
-          label="Profiles"
+          label="Reply Profiles"
           value={learning.personalityProfiles}
           variant="compact"
         />
@@ -495,7 +495,7 @@ export function LearningInsightsPanel({
 
       <div className="learning-highlights">
         <MetricCard
-          label="Dominant Mode"
+          label="Reply Style"
           value={dominantMode}
           tone="accent"
           variant="compact"
@@ -513,7 +513,7 @@ export function LearningInsightsPanel({
 
       {learning.profilesByMode.length > 1 ? (
         <div className="learning-mode-section">
-          <div className="section-label">Profiles by Mode</div>
+          <div className="section-label">Profiles by Reply Style</div>
           <div className="mode-heat-grid">
             {learning.profilesByMode.map((mode) => (
               <article className="mode-card" key={mode.mode}>

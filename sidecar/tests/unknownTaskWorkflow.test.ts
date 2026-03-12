@@ -61,7 +61,7 @@ describe('unknownTaskWorkflow', () => {
     vi.mocked(fetchThreadContext).mockReset();
   });
 
-  it('classifies social banter and posts a non-tech humorous reply', async () => {
+  it('classifies direct chatter and posts a plain reply', async () => {
     vi.mocked(fetchThreadContext).mockResolvedValue([
       { text: "at least he is better than me right?", user: 'U2', ts: '111.20' },
     ]);
@@ -74,8 +74,8 @@ describe('unknownTaskWorkflow', () => {
       stderr: '',
       lastMessage: '',
       parsedJson: {
-        reply: 'fair point. this is premium office-banter material.',
-        reaction: 'sparkles',
+        reply: 'noted.',
+        reaction: 'eyes',
       },
     });
 
@@ -102,7 +102,7 @@ describe('unknownTaskWorkflow', () => {
     expect(result.slackPosted).toBe(true);
     expect(runCodex).toHaveBeenCalledWith(
       expect.objectContaining({
-        prompt: expect.stringContaining('Context track: social_banter'),
+        prompt: expect.stringContaining('Context track: direct_reply'),
       })
     );
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
@@ -117,12 +117,12 @@ describe('unknownTaskWorkflow', () => {
     );
     expect(slack.reactions.add).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: 'sparkles',
+        name: 'eyes',
       })
     );
   });
 
-  it('strips joke clauses and forces neutral reactions in serious PR-thread replies', async () => {
+  it('strips joke clauses and keeps neutral reactions in replies', async () => {
     vi.mocked(fetchThreadContext).mockResolvedValue([
       { text: 'Please review and merge https://github.com/Newton-School/newton-web/pull/7724', user: 'U2', ts: '111.20' },
     ]);
@@ -165,13 +165,12 @@ describe('unknownTaskWorkflow', () => {
       },
       config,
       slack: slack as any,
-      personalityMode: 'dark_humor',
     });
 
     expect(result.status).toBe('SKIPPED');
     expect(runCodex).toHaveBeenCalledWith(
       expect.objectContaining({
-        prompt: expect.stringContaining('Serious context: yes.'),
+        prompt: expect.stringContaining('No jokes, sarcasm, banter, or themed tone.'),
       })
     );
     expect(slack.chat.postMessage).toHaveBeenCalledWith(

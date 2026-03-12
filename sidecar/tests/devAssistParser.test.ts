@@ -59,28 +59,9 @@ describe('devAssistParser', () => {
     });
   });
 
-  it('parses wt personality set command', () => {
-    expect(parseDevAssistCommand('<@UBOT1> wt personality set friendly me')).toEqual({
-      type: 'PERSONALITY_SET',
-      mode: 'friendly',
-      scope: 'user',
-    });
-    expect(parseDevAssistCommand('<@UBOT1> wt personality set chaos channel')).toEqual({
-      type: 'PERSONALITY_SET',
-      mode: 'chaos',
-      scope: 'channel',
-    });
-  });
-
-  it('parses wt personality show command', () => {
-    expect(parseDevAssistCommand('<@UBOT1> wt personality show')).toEqual({
-      type: 'PERSONALITY_SHOW',
-      scope: 'user',
-    });
-    expect(parseDevAssistCommand('<@UBOT1> wt personality show channel')).toEqual({
-      type: 'PERSONALITY_SHOW',
-      scope: 'channel',
-    });
+  it('does not parse removed personality commands', () => {
+    expect(parseDevAssistCommand('<@UBOT1> wt personality set friendly me')).toBeUndefined();
+    expect(parseDevAssistCommand('<@UBOT1> wt personality show channel')).toBeUndefined();
   });
 
   it('parses wt mission commands', () => {
@@ -210,7 +191,7 @@ describe('devAssistParser', () => {
   it('does not treat arbitrary chat text as a natural-language alias', () => {
     expect(parseDevAssistCommand('<@UBOT1> status report for the PR')).toBeUndefined();
     expect(parseDevAssistCommand('<@UBOT1> this queue is cursed today')).toBeUndefined();
-    expect(parseDevAssistCommand('<@UBOT1> failures are expected in chaos mode')).toBeUndefined();
+    expect(parseDevAssistCommand('<@UBOT1> failures are expected in default mode')).toBeUndefined();
   });
 
   it('detects dev-assist prefix only when present', () => {

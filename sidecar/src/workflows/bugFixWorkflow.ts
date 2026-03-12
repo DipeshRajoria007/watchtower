@@ -4,7 +4,6 @@ import type {
   AppConfig,
   CodexRunRequest,
   NormalizedTask,
-  PersonalityMode,
   WorkflowResult,
   WorkflowStepLogger,
 } from '../types/contracts.js';
@@ -20,11 +19,10 @@ export async function runBugFixWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
-  personalityMode?: PersonalityMode;
   store?: Pick<JobStore, 'getChannelPolicyPack'>;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, personalityMode, store, logStep } = params;
+  const { task, config, slack, store, logStep } = params;
 
   if (!config.allowedChannelsForBugFix.includes(task.event.channelId)) {
     logStep?.({
@@ -111,7 +109,7 @@ export async function runBugFixWorkflow(params: {
   await slack.chat.postMessage({
     channel: task.event.channelId,
     thread_ts: task.event.threadTs,
-    text: `Bug-fix run started in ${classification.selectedRepo}. I am on it.`,
+    text: `Bug-fix run started in ${classification.selectedRepo}.`,
   });
 
   logStep?.({
@@ -136,7 +134,7 @@ export async function runBugFixWorkflow(params: {
     : 'No explicit policy pack assigned for this channel.';
 
   const prompt = `
-${buildMentionSystemPrompt({ task, workflow: 'BUG_FIX', personalityMode })}
+${buildMentionSystemPrompt({ task, workflow: 'BUG_FIX' })}
 
 You are running Watchtower bug-fix automation.
 
@@ -198,7 +196,7 @@ Requirements:
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
-      text: `${errorText} Execution tripped over itself. Check desktop notifications for details.`,
+      text: `${errorText} Check desktop notifications for details.`,
     });
     logStep?.({
       stage: 'bug_fix.slack.failure_posted',

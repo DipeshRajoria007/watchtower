@@ -5,7 +5,6 @@ import type {
   AppConfig,
   CodexRunRequest,
   NormalizedTask,
-  PersonalityMode,
   WorkflowResult,
   WorkflowStepLogger,
 } from '../types/contracts.js';
@@ -121,12 +120,11 @@ function buildOwnerPrimaryPrompt(params: {
   config: AppConfig;
   workspaceRoot: string;
   githubToken?: string;
-  personalityMode?: PersonalityMode;
   threadContext: string;
 }): string {
-  const { task, config, workspaceRoot, githubToken, personalityMode, threadContext } = params;
+  const { task, config, workspaceRoot, githubToken, threadContext } = params;
   return `
-${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT', personalityMode })}
+${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT' })}
 
 You are running Watchtower owner-autopilot mode.
 
@@ -160,12 +158,11 @@ function buildOwnerRelaxedPrompt(params: {
   config: AppConfig;
   workspaceRoot: string;
   githubToken?: string;
-  personalityMode?: PersonalityMode;
   threadContext: string;
 }): string {
-  const { task, config, workspaceRoot, githubToken, personalityMode, threadContext } = params;
+  const { task, config, workspaceRoot, githubToken, threadContext } = params;
   return `
-${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT', personalityMode })}
+${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT' })}
 
 You are running Watchtower owner-autopilot mode in relaxed output mode.
 
@@ -193,10 +190,9 @@ export async function runOwnerAutopilotWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
-  personalityMode?: PersonalityMode;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, personalityMode, logStep } = params;
+  const { task, config, slack, logStep } = params;
 
   logStep?.({
     stage: 'owner_autopilot.context.fetch.start',
@@ -260,7 +256,6 @@ export async function runOwnerAutopilotWorkflow(params: {
     config,
     workspaceRoot,
     githubToken,
-    personalityMode,
     threadContext,
   });
 
@@ -343,7 +338,6 @@ export async function runOwnerAutopilotWorkflow(params: {
       config,
       workspaceRoot,
       githubToken,
-      personalityMode,
       threadContext,
     });
     const relaxedResult = await runCodex({

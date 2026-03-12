@@ -46,7 +46,7 @@ export function humanizeToken(value: string): string {
 }
 
 export function humanizeMode(mode: string): string {
-  return humanizeToken(mode || 'dark_humor');
+  return humanizeToken(mode || 'normal');
 }
 
 export function getStatusTone(status: string): string {

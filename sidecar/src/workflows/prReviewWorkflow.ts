@@ -4,7 +4,6 @@ import type {
   AppConfig,
   CodexRunRequest,
   NormalizedTask,
-  PersonalityMode,
   PrContext,
   WorkflowResult,
   WorkflowStepLogger,
@@ -82,14 +81,13 @@ const NO_NEW_CHANGES_TEXT =
   'No new commits since the last review. Same diff, same verdict. Push an update and I will rerun.';
 
 function buildOutOfScopePrReply(userId: string, allowedPrOrg: string): string {
-  return `<@${userId}> this PR is outside my review lane right now. i can review \`${allowedPrOrg}/newton-web\` and \`${allowedPrOrg}/newton-api\`.`;
+  return `<@${userId}> this PR is outside supported review scope. I can review \`${allowedPrOrg}/newton-web\` and \`${allowedPrOrg}/newton-api\`.`;
 }
 
 export async function runPrReviewWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
-  personalityMode?: PersonalityMode;
   store?: Pick<JobStore, 'findLatestReviewedPrHeadSha' | 'getChannelPolicyPack'>;
   resolvePrHeadSha?: (input: {
     prContext: PrContext;
@@ -98,7 +96,7 @@ export async function runPrReviewWorkflow(params: {
   }) => Promise<string | undefined>;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, personalityMode, store, resolvePrHeadSha, logStep } = params;
+  const { task, config, slack, store, resolvePrHeadSha, logStep } = params;
 
   logStep?.({
     stage: 'pr_review.context.fetch.start',
@@ -307,7 +305,7 @@ export async function runPrReviewWorkflow(params: {
     : 'No explicit policy pack assigned for this channel.';
 
   const prompt = `
-${buildMentionSystemPrompt({ task, workflow: 'PR_REVIEW', personalityMode })}
+${buildMentionSystemPrompt({ task, workflow: 'PR_REVIEW' })}
 
 You are executing Watchtower PR review automation.
 

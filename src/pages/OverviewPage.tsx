@@ -94,7 +94,7 @@ export function OverviewPage({
 
         <SectionCard
           title="Learning Snapshot"
-          subtitle="Signals, corrections, and the dominant behavior mode without leaving the overview page."
+          subtitle="Signals, corrections, and the default reply style without leaving the overview page."
           count={data?.learning.personalityProfiles ?? 0}
           actions={
             <button className="ghost-button" type="button" onClick={onOpenIntelligence}>
@@ -105,9 +105,9 @@ export function OverviewPage({
           <div className="overview-learning-grid">
             <MetricCard label="Signals 24h" value={data?.learning.signals24h ?? 0} />
             <MetricCard label="Corrections Applied" value={data?.learning.correctionsApplied24h ?? 0} tone="success" />
-            <MetricCard label="Profiles" value={data?.learning.personalityProfiles ?? 0} />
+            <MetricCard label="Reply Profiles" value={data?.learning.personalityProfiles ?? 0} />
             <MetricCard
-              label="Dominant Mode"
+              label="Reply Style"
               value={humanizeMode(data?.learning.dominantPersonalityMode ?? '')}
               tone="accent"
             />

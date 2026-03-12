@@ -86,7 +86,7 @@ describe('jobStore', () => {
     store.setPersonalityProfile({
       scope: 'user',
       scopeId: 'U1',
-      mode: 'professional',
+      mode: 'normal',
       source: 'test',
     });
     expect(
@@ -94,13 +94,13 @@ describe('jobStore', () => {
         channelId: 'C1',
         userId: 'U1',
       })
-    ).toBe('professional');
+    ).toBe('normal');
     expect(
       store.getPersonalityProfile({
         scope: 'user',
         scopeId: 'U1',
       })
-    ).toBe('professional');
+    ).toBe('normal');
 
     store.recordLearningSignal({
       jobId: 'job-1',
@@ -111,7 +111,6 @@ describe('jobStore', () => {
       intent: 'PR_REVIEW',
       status: 'SUCCESS',
       correctionApplied: false,
-      personalityMode: 'professional',
     });
 
     const learning = store.getDevLearningSnapshot();

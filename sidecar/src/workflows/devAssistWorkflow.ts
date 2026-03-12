@@ -16,8 +16,6 @@ const HELP_TEXT = [
   '- `wt diagnose <jobId>` -> run Failure Doctor diagnosis on a job',
   '- `wt learn` -> show learning engine stats',
   '- `wt heat [n]` -> show top active channels in last 7 days',
-  '- `wt personality set <mode> [channel|me]` -> set reply tone profile',
-  '- `wt personality show [channel|me]` -> show current tone profile',
   '- `wt mission start <goal>` -> start/update mission state for this thread',
   '- `wt mission show` -> show mission state for this thread',
   '- `wt mission run --swarm` -> launch planner/coder/reviewer/shipper run',
@@ -35,6 +33,10 @@ const HELP_TEXT = [
   '',
   'More commands are being added in the next updates.',
 ].join('\n');
+
+function isRemovedReplyStyleCommand(text: string): boolean {
+  return /(?:^|\s)(?:wt|watchtower)\s+personality\b/i.test(text);
+}
 
 function resolveSkillPath(name: string): string | undefined {
   const home = process.env.HOME ?? '';
@@ -66,10 +68,14 @@ export async function runDevAssistWorkflow(params: {
   const command = parseDevAssistCommand(task.event.text);
 
   if (!command) {
+    const text = isRemovedReplyStyleCommand(task.event.text)
+      ? 'Reply-style customization has been removed. Watchtower now replies in a normal tone by default.'
+      : 'I could not parse that `wt` command. Try `wt help`.';
+
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
-      text: 'I could not parse that `wt` command. Try `wt help`.',
+      text,
     });
 
     logStep?.({
@@ -81,7 +87,9 @@ export async function runDevAssistWorkflow(params: {
     return {
       workflow: 'DEV_ASSIST',
       status: 'SKIPPED',
-      message: 'Unrecognized dev-assist command.',
+      message: isRemovedReplyStyleCommand(task.event.text)
+        ? 'Reply-style configuration command removed.'
+        : 'Unrecognized dev-assist command.',
       notifyDesktop: false,
       slackPosted: true,
     };
@@ -363,7 +371,7 @@ export async function runDevAssistWorkflow(params: {
       `- Signals (24h): ${snapshot.signals24h}`,
       `- Corrections learned: ${snapshot.correctionsLearned}`,
       `- Corrections applied (24h): ${snapshot.correctionsApplied24h}`,
-      `- Personality profiles: ${snapshot.personalityProfiles}`,
+      `- Reply profiles: ${snapshot.personalityProfiles}`,
       `- Top failure pattern: ${snapshot.topErrorKind}`,
     ].join('\n');
 
@@ -427,98 +435,6 @@ export async function runDevAssistWorkflow(params: {
         command: 'HEAT',
         limit: command.limit,
         count: heat.length,
-      },
-    };
-  }
-
-  if (command.type === 'PERSONALITY_SET') {
-    const scopeId = command.scope === 'channel' ? task.event.channelId : task.event.userId;
-    store.setPersonalityProfile({
-      scope: command.scope,
-      scopeId,
-      mode: command.mode,
-      source: 'dev_assist_command',
-    });
-
-    const target = command.scope === 'channel' ? `channel ${task.event.channelId}` : `user ${task.event.userId}`;
-    const text = `Personality updated: \`${command.mode}\` for ${target}.`;
-
-    await slack.chat.postMessage({
-      channel: task.event.channelId,
-      thread_ts: task.event.threadTs,
-      text,
-    });
-
-    logStep?.({
-      stage: 'dev_assist.personality_set.posted',
-      message: 'Updated personality profile via dev-assist command.',
-      data: {
-        scope: command.scope,
-        scopeId,
-        mode: command.mode,
-      },
-    });
-
-    return {
-      workflow: 'DEV_ASSIST',
-      status: 'SUCCESS',
-      message: 'Updated personality profile.',
-      notifyDesktop: false,
-      slackPosted: true,
-      result: {
-        command: 'PERSONALITY_SET',
-        scope: command.scope,
-        scopeId,
-        mode: command.mode,
-      },
-    };
-  }
-
-  if (command.type === 'PERSONALITY_SHOW') {
-    const scopeId = command.scope === 'channel' ? task.event.channelId : task.event.userId;
-    const direct = store.getPersonalityProfile({
-      scope: command.scope,
-      scopeId,
-    });
-    const fallback = store.getPersonalityMode({
-      channelId: task.event.channelId,
-      userId: task.event.userId,
-    });
-
-    const effective = direct ?? fallback;
-    const text = direct
-      ? `Current personality for ${command.scope} ${scopeId}: \`${effective}\``
-      : `No explicit ${command.scope} profile found. Effective personality right now: \`${effective}\``;
-
-    await slack.chat.postMessage({
-      channel: task.event.channelId,
-      thread_ts: task.event.threadTs,
-      text,
-    });
-
-    logStep?.({
-      stage: 'dev_assist.personality_show.posted',
-      message: 'Posted personality profile snapshot in Slack thread.',
-      data: {
-        scope: command.scope,
-        scopeId,
-        mode: effective,
-        explicit: Boolean(direct),
-      },
-    });
-
-    return {
-      workflow: 'DEV_ASSIST',
-      status: 'SUCCESS',
-      message: 'Posted personality profile.',
-      notifyDesktop: false,
-      slackPosted: true,
-      result: {
-        command: 'PERSONALITY_SHOW',
-        scope: command.scope,
-        scopeId,
-        mode: effective,
-        explicit: Boolean(direct),
       },
     };
   }
