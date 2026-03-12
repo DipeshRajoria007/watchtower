@@ -122,6 +122,70 @@ describe('unknownTaskWorkflow', () => {
     );
   });
 
+  it('strips joke clauses and forces neutral reactions in serious PR-thread replies', async () => {
+    vi.mocked(fetchThreadContext).mockResolvedValue([
+      { text: 'Please review and merge https://github.com/Newton-School/newton-web/pull/7724', user: 'U2', ts: '111.20' },
+    ]);
+
+    vi.mocked(runCodex).mockResolvedValue({
+      ok: true,
+      exitCode: 0,
+      timedOut: false,
+      stdout: '',
+      stderr: '',
+      lastMessage: '',
+      parsedJson: {
+        reply: 'Which proof are we greenlighting here: that 10 is solitary, or did this thread acquire another surprise deliverable?',
+        reaction: 'skull',
+      },
+    });
+
+    const slack = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
+      },
+      reactions: {
+        add: vi.fn().mockResolvedValue({ ok: true }),
+      },
+    };
+
+    const result = await runUnknownTaskWorkflow({
+      task: {
+        ...makeTask({
+          userId: 'U779',
+          eventId: 'EvUnknownSerious',
+          text: '<@UBOT1> provide proof',
+        }),
+        prContext: {
+          url: 'https://github.com/Newton-School/newton-web/pull/7724',
+          owner: 'Newton-School',
+          repo: 'newton-web',
+          number: 7724,
+        },
+      },
+      config,
+      slack: slack as any,
+      personalityMode: 'dark_humor',
+    });
+
+    expect(result.status).toBe('SKIPPED');
+    expect(runCodex).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining('Serious context: yes.'),
+      })
+    );
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: '<@U779> Which proof are we greenlighting here: that 10 is solitary?',
+      })
+    );
+    expect(slack.reactions.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'eyes',
+      })
+    );
+  });
+
   it('classifies technical ambiguity and asks for one clear outcome without PR/bug/CI triad wording', async () => {
     vi.mocked(fetchThreadContext).mockResolvedValue([
       { text: 'deployment has been noisy since morning', user: 'U2', ts: '111.21' },
