@@ -102,7 +102,9 @@ describe('unknownTaskWorkflow', () => {
     expect(result.slackPosted).toBe(true);
     expect(runCodex).toHaveBeenCalledWith(
       expect.objectContaining({
+        model: 'gpt-5.2-codex',
         prompt: expect.stringContaining('Context track: direct_reply'),
+        reasoningEffort: 'low',
       })
     );
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
@@ -170,7 +172,9 @@ describe('unknownTaskWorkflow', () => {
     expect(result.status).toBe('SKIPPED');
     expect(runCodex).toHaveBeenCalledWith(
       expect.objectContaining({
+        model: 'gpt-5.2-codex',
         prompt: expect.stringContaining('No jokes, sarcasm, banter, or themed tone.'),
+        reasoningEffort: 'low',
       })
     );
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
@@ -225,7 +229,9 @@ describe('unknownTaskWorkflow', () => {
     expect(result.status).toBe('SKIPPED');
     expect(runCodex).toHaveBeenCalledWith(
       expect.objectContaining({
+        model: 'gpt-5.2-codex',
         prompt: expect.stringContaining('Context track: task_clarifier'),
+        reasoningEffort: 'low',
       })
     );
     expect(slack.chat.postMessage).toHaveBeenCalledWith(

@@ -1,6 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runPrReviewWorkflow } from '../src/workflows/prReviewWorkflow.js';
+import { runCodex } from '../src/codex/runCodex.js';
+import { resolveGithubTokenForCodex } from '../src/github/githubAuth.js';
 import type { AppConfig, NormalizedTask } from '../src/types/contracts.js';
+
+vi.mock('../src/codex/runCodex.js', () => ({
+  runCodex: vi.fn(),
+}));
+
+vi.mock('../src/github/githubAuth.js', () => ({
+  resolveGithubTokenForCodex: vi.fn().mockResolvedValue(undefined),
+  githubAuthModeHint: vi.fn().mockReturnValue('none'),
+}));
 
 const config: AppConfig = {
   platformPolicy: 'macos_only',
@@ -28,6 +39,11 @@ const config: AppConfig = {
 };
 
 describe('prReviewWorkflow', () => {
+  beforeEach(() => {
+    vi.mocked(runCodex).mockReset();
+    vi.mocked(resolveGithubTokenForCodex).mockResolvedValue(undefined);
+  });
+
   it('asks for PR URL and pauses when PR context is missing', async () => {
     const slack = {
       conversations: {
@@ -215,6 +231,85 @@ describe('prReviewWorkflow', () => {
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: '<@U_SCOPE2> this PR is outside supported review scope. I can review `Newton-School/newton-web` and `Newton-School/newton-api`.',
+      })
+    );
+  });
+
+  it('uses the high-reasoning profile for in-scope PR review execution', async () => {
+    vi.mocked(runCodex).mockResolvedValue({
+      ok: true,
+      exitCode: 0,
+      timedOut: false,
+      stdout: '',
+      stderr: '',
+      lastMessage: '',
+      parsedJson: {
+        status: 'success',
+        summary: 'Two findings posted on the PR.',
+        prUrl: 'https://github.com/Newton-School/newton-web/pull/901',
+      },
+    });
+
+    const slack = {
+      conversations: {
+        replies: vi.fn().mockResolvedValue({
+          messages: [{ text: 'please review https://github.com/Newton-School/newton-web/pull/901' }],
+        }),
+      },
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true }),
+      },
+    };
+
+    const task: NormalizedTask = {
+      event: {
+        eventId: 'Ev5',
+        channelId: 'C1',
+        threadTs: '555.66',
+        eventTs: '555.66',
+        userId: 'U_REVIEW',
+        text: '<@UBOT1> review this https://github.com/Newton-School/newton-web/pull/901',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: false,
+      intent: 'PR_REVIEW',
+      prContext: {
+        url: 'https://github.com/Newton-School/newton-web/pull/901',
+        owner: 'Newton-School',
+        repo: 'newton-web',
+        number: 901,
+      },
+    };
+
+    const result = await runPrReviewWorkflow({
+      task,
+      config,
+      slack: slack as any,
+      store: {
+        findLatestReviewedPrHeadSha: () => undefined,
+        getChannelPolicyPack: () => undefined,
+      } as any,
+      resolvePrHeadSha: async () => 'cafebabe',
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(runCodex).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: '/Users/dipesh/code/newton-web',
+        model: 'gpt-5.4',
+        reasoningEffort: 'xhigh',
+      })
+    );
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'PR review in progress. I will drop findings here shortly.',
+      })
+    );
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('PR review done. Two findings posted on the PR.'),
       })
     );
   });

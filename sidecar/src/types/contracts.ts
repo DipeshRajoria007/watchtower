@@ -105,13 +105,16 @@ export interface RepoClassificationResult {
   uncertain: boolean;
 }
 
+export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+
 export interface CodexRunRequest {
   cwd: string;
   prompt: string;
   timeoutMs: number;
   outputSchemaPath?: string;
   githubToken?: string;
-  reasoningEffort?: 'low' | 'medium' | 'high';
+  model?: string;
+  reasoningEffort?: CodexReasoningEffort;
   onLog?: WorkflowStepLogger;
 }
 

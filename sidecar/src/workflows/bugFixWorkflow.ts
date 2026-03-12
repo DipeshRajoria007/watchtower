@@ -12,6 +12,7 @@ import { classifyRepo } from '../router/repoClassifier.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { runCodex } from '../codex/runCodex.js';
+import { HIGH_REASONING_CODEX_PROFILE } from '../codex/modelProfiles.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import type { JobStore } from '../state/jobStore.js';
 
@@ -162,12 +163,13 @@ Requirements:
     timeoutMs: config.workflowTimeouts.bugFixMs,
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/bug-fix-result.schema.json'),
     githubToken,
+    ...HIGH_REASONING_CODEX_PROFILE,
     onLog: logStep,
   };
 
   logStep?.({
     stage: 'bug_fix.codex.start',
-    message: 'Starting Codex bug-fix execution.',
+    message: 'Starting Codex bug-fix execution with high-reasoning profile.',
     data: {
       repoPath,
       timeoutMs: config.workflowTimeouts.bugFixMs,

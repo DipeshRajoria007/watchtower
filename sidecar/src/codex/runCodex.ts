@@ -162,6 +162,7 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
       cwd: request.cwd,
       timeoutMs: request.timeoutMs,
       schemaEnabled: Boolean(request.outputSchemaPath),
+      model: request.model ?? 'default',
       reasoningEffort: request.reasoningEffort ?? 'default',
       githubTokenInjected: Boolean(request.githubToken),
       codexExecutable,
@@ -169,6 +170,9 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
   });
 
   const args = ['exec', '--cd', request.cwd, '--full-auto', '--skip-git-repo-check'];
+  if (request.model) {
+    args.push('-m', request.model);
+  }
   if (request.reasoningEffort) {
     args.push('-c', `model_reasoning_effort="${request.reasoningEffort}"`);
   }

@@ -14,6 +14,7 @@ import { extractPrContext } from '../router/intentParser.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { runCodex } from '../codex/runCodex.js';
+import { HIGH_REASONING_CODEX_PROFILE } from '../codex/modelProfiles.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 
 const SUPPORTED_PR_REPOS = ['newton-web', 'newton-api'] as const;
@@ -329,12 +330,13 @@ Requirements:
     timeoutMs: config.workflowTimeouts.prReviewMs,
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/pr-review-result.schema.json'),
     githubToken,
+    ...HIGH_REASONING_CODEX_PROFILE,
     onLog: logStep,
   };
 
   logStep?.({
     stage: 'pr_review.codex.start',
-    message: 'Starting Codex PR review execution.',
+    message: 'Starting Codex PR review execution with high-reasoning profile.',
     data: {
       repoPath,
       timeoutMs: config.workflowTimeouts.prReviewMs,
