@@ -323,9 +323,13 @@ export async function runOwnerAutopilotWorkflow(params: {
       });
 
       const coderStep = fullResult.steps.find(s => s.role === 'coder');
-      const summary = coderStep?.output?.summary
+      const rawCoderSummary = coderStep?.output?.summary
         ? sanitizeOwnerSummary(String(coderStep.output.summary))
-        : 'Done.';
+        : '';
+      const summary = rawCoderSummary
+        || (fullResult.finalStatus === 'passed'
+          ? 'Pipeline completed but the agent did not return a summary. Check the repo for changes.'
+          : `Pipeline finished with status: ${fullResult.finalStatus}. The agent did not produce output — it may not be installed or may have timed out.`);
       const prUrl = coderStep?.output?.prUrl ? String(coderStep.output.prUrl) : '';
       const prBlock = prUrl ? `\n${prUrl}` : '';
 
@@ -349,17 +353,18 @@ export async function runOwnerAutopilotWorkflow(params: {
       ? (plannerOutput.plan as string[]).join('. ')
       : 'No action needed.';
     const sanitized = sanitizeOwnerSummary(planSummary);
+    const plannerMessage = sanitized || 'Planner finished but produced no actionable summary. The agent backend may not be installed or returned empty output.';
 
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
-      text: sanitized || 'Done.',
+      text: plannerMessage,
     });
 
     return {
       workflow: 'OWNER_AUTOPILOT',
       status: 'SUCCESS',
-      message: sanitized || 'Done.',
+      message: plannerMessage,
       notifyDesktop: false,
       slackPosted: true,
     };
@@ -480,7 +485,7 @@ export async function runOwnerAutopilotWorkflow(params: {
     if (relaxedResult.ok) {
       const relaxedSummaryRaw = relaxedResult.lastMessage || relaxedResult.stdout;
       const relaxedSummary = sanitizeOwnerSummary(relaxedSummaryRaw || '');
-      const messageText = relaxedSummary || 'Done.';
+      const messageText = relaxedSummary || 'Workflow completed but the agent returned empty output. Verify the configured backend CLI is installed and working.';
 
       await slack.chat.postMessage({
         channel: task.event.channelId,
