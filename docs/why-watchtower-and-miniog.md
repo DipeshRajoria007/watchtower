@@ -235,6 +235,26 @@ Routing quality improved, contextual tone improved, serious-mode handling was en
 
 That indicates a shift from "fun AI coworker" toward "reliable AI teammate that fits engineering culture."
 
+### March 13, 2026: the next planned step
+
+By March 13, 2026, the next product direction was becoming clear:
+
+Watchtower should evolve from a single-agent executor into a multi-agent engineering pipeline.
+
+The gist of that plan was:
+
+- strengthen the engineering base first with linting, formatting, pre-commit hooks, CI, and better test coverage
+- introduce specialized agent roles instead of one monolithic Codex prompt
+- split work across planner, coder, reviewer, security, performance, and verifier stages depending on workflow type
+- allow reviewer-to-coder feedback loops so the system can refine output before posting it back to Slack or GitHub
+- abort early on critical findings instead of letting unsafe or low-quality output pass through
+- roll the change out behind a feature flag so current workflows remain backward compatible
+- persist pipeline runs in the database and expose them in the UI so operators can see step-by-step progress, findings, cost, and failure patterns
+
+This matters because it adds a second-layer thesis to the product:
+
+Watchtower should not only execute work from Slack. It should also apply specialized judgment before that work leaves the system.
+
 ## The Real Vision
 
 The long-term vision is not only to automate PR review or fix isolated bugs.
