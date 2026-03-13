@@ -16,16 +16,18 @@ import { HIGH_REASONING_CODEX_PROFILE } from '../codex/modelProfiles.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import type { JobStore } from '../state/jobStore.js';
 import { runAgentPipeline } from '../agents/pipeline.js';
+import type { PipelineStore } from '../agents/pipeline.js';
 import type { PipelineConfig } from '../agents/types.js';
 
 export async function runBugFixWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
-  store?: Pick<JobStore, 'getChannelPolicyPack'>;
+  store?: Pick<JobStore, 'getChannelPolicyPack'> & Partial<PipelineStore>;
+  jobId?: string;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, store, logStep } = params;
+  const { task, config, slack, store, jobId, logStep } = params;
 
   if (!config.allowedChannelsForBugFix.includes(task.event.channelId)) {
     logStep?.({
@@ -167,6 +169,8 @@ export async function runBugFixWorkflow(params: {
       },
       slack,
       logStep: logStep ?? (() => {}),
+      store: store?.createPipelineRun && store?.updatePipelineRun ? store as PipelineStore : undefined,
+      jobId,
     });
 
     const coderStep = pipelineResult.steps.find(s => s.role === 'coder');

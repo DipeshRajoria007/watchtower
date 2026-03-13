@@ -17,6 +17,7 @@ import { runCodex } from '../codex/runCodex.js';
 import { HIGH_REASONING_CODEX_PROFILE } from '../codex/modelProfiles.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import { runAgentPipeline } from '../agents/pipeline.js';
+import type { PipelineStore } from '../agents/pipeline.js';
 import type { PipelineConfig } from '../agents/types.js';
 
 const SUPPORTED_PR_REPOS = ['newton-web', 'newton-api'] as const;
@@ -91,15 +92,16 @@ export async function runPrReviewWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
-  store?: Pick<JobStore, 'findLatestReviewedPrHeadSha' | 'getChannelPolicyPack'>;
+  store?: Pick<JobStore, 'findLatestReviewedPrHeadSha' | 'getChannelPolicyPack'> & Partial<PipelineStore>;
   resolvePrHeadSha?: (input: {
     prContext: PrContext;
     githubToken?: string;
     logStep?: WorkflowStepLogger;
   }) => Promise<string | undefined>;
+  jobId?: string;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, store, resolvePrHeadSha, logStep } = params;
+  const { task, config, slack, store, resolvePrHeadSha, jobId, logStep } = params;
 
   logStep?.({
     stage: 'pr_review.context.fetch.start',
@@ -339,6 +341,8 @@ export async function runPrReviewWorkflow(params: {
       },
       slack,
       logStep: logStep ?? (() => {}),
+      store: store?.createPipelineRun && store?.updatePipelineRun ? store as PipelineStore : undefined,
+      jobId,
     });
 
     const findings = pipelineResult.aggregatedFindings;

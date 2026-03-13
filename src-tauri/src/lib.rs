@@ -190,8 +190,7 @@ struct PipelineRunData {
     id: String,
     job_id: String,
     status: String,
-    steps_json: String,
-    pipeline_config_json: String,
+    steps: serde_json::Value,
     retry_loops: i64,
     total_duration_ms: Option<i64>,
     created_at: String,
@@ -526,12 +525,14 @@ async fn get_pipeline_run(
 
     let result = stmt
         .query_row(params![job_id], |row| {
+            let steps_raw: String = row.get(4)?;
+            let steps: serde_json::Value =
+                serde_json::from_str(&steps_raw).unwrap_or(serde_json::Value::Array(vec![]));
             Ok(PipelineRunData {
                 id: row.get(0)?,
                 job_id: row.get(1)?,
-                pipeline_config_json: row.get(2)?,
                 status: row.get(3)?,
-                steps_json: row.get(4)?,
+                steps,
                 retry_loops: row.get(5)?,
                 total_duration_ms: row.get(6)?,
                 created_at: row.get(7)?,

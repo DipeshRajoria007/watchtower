@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { WebClient } from '@slack/web-api';
 import type {
@@ -11,6 +12,27 @@ import type { WorkflowStepLogger } from '../types/contracts.js';
 import { buildPromptForRole } from './prompts.js';
 import { profileForAgentRole } from '../codex/modelProfiles.js';
 import { runCodex } from '../codex/runCodex.js';
+
+export type PipelineStore = {
+  createPipelineRun(input: {
+    id: string;
+    jobId: string;
+    pipelineConfigJson: string;
+    status: string;
+    stepsJson: string;
+    retryLoops?: number;
+    totalDurationMs?: number;
+  }): void;
+  updatePipelineRun(
+    id: string,
+    updates: {
+      status?: string;
+      stepsJson?: string;
+      retryLoops?: number;
+      totalDurationMs?: number;
+    },
+  ): void;
+};
 
 const SCHEMA_MAP: Partial<Record<AgentRole, string>> = {
   planner: 'agent-planner-result.schema.json',
@@ -69,14 +91,31 @@ export async function runAgentPipeline(params: {
   ctx: AgentContext;
   slack: WebClient;
   logStep: WorkflowStepLogger;
+  store?: PipelineStore;
+  jobId?: string;
 }): Promise<PipelineResult> {
-  const { ctx, slack, logStep } = params;
+  const { ctx, slack, logStep, store, jobId } = params;
   const { agents, maxRetryLoops, perAgentTimeoutMs, totalTimeoutMs, abortOnCriticalFinding } = ctx.pipelineConfig;
 
   const pipelineStart = Date.now();
   const steps: AgentStepResult[] = [];
   let retryLoops = 0;
   let aborted = false;
+
+  const pipelineRunId = randomUUID();
+  if (store && jobId) {
+    try {
+      store.createPipelineRun({
+        id: pipelineRunId,
+        jobId,
+        pipelineConfigJson: JSON.stringify(ctx.pipelineConfig),
+        status: 'running',
+        stepsJson: '[]',
+      });
+    } catch {
+      // Non-fatal: persistence failure should not block pipeline execution
+    }
+  }
 
   logStep({
     stage: 'pipeline.start',
@@ -238,6 +277,19 @@ export async function runAgentPipeline(params: {
     level: finalStatus === 'passed' ? 'INFO' : 'WARN',
     data: { finalStatus, totalDurationMs, retryLoops, totalFindings: aggregatedFindings.length },
   });
+
+  if (store && jobId) {
+    try {
+      store.updatePipelineRun(pipelineRunId, {
+        status: finalStatus,
+        stepsJson: JSON.stringify(steps),
+        retryLoops,
+        totalDurationMs,
+      });
+    } catch {
+      // Non-fatal
+    }
+  }
 
   return {
     steps,

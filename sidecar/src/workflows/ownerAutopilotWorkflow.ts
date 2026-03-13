@@ -15,6 +15,7 @@ import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/github
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
 import { runAgentPipeline } from '../agents/pipeline.js';
+import type { PipelineStore } from '../agents/pipeline.js';
 import type { AgentRole, PipelineConfig } from '../agents/types.js';
 
 function resolveOwnerWorkspaceRoot(config: AppConfig): string {
@@ -193,9 +194,11 @@ export async function runOwnerAutopilotWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
+  store?: PipelineStore;
+  jobId?: string;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, logStep } = params;
+  const { task, config, slack, store, jobId, logStep } = params;
 
   logStep?.({
     stage: 'owner_autopilot.context.fetch.start',
@@ -284,6 +287,8 @@ export async function runOwnerAutopilotWorkflow(params: {
       },
       slack,
       logStep: logStep ?? (() => {}),
+      store,
+      jobId,
     });
 
     const plannerOutput = plannerResult.steps[0]?.output ?? {};
@@ -313,6 +318,8 @@ export async function runOwnerAutopilotWorkflow(params: {
         },
         slack,
         logStep: logStep ?? (() => {}),
+        store,
+        jobId,
       });
 
       const coderStep = fullResult.steps.find(s => s.role === 'coder');
