@@ -35,6 +35,7 @@ const config: AppConfig = {
   maxConcurrentJobs: 2,
   repoClassifierThreshold: 0.75,
   allowedPrOrg: 'Newton-School',
+  multiAgentEnabled: false,
 };
 
 function makeTask(input: { userId: string; text: string; eventId: string }): NormalizedTask {

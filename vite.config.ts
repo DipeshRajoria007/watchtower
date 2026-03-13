@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -9,5 +10,10 @@ export default defineConfig({
     hmr: {
       port: 1421,
     },
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: [],
   },
 });

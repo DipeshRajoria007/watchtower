@@ -37,6 +37,7 @@ export interface AppConfig {
   maxConcurrentJobs: number;
   repoClassifierThreshold: number;
   allowedPrOrg: string;
+  multiAgentEnabled: boolean;
 }
 
 export interface SlackEventEnvelope {

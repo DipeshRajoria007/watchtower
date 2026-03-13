@@ -235,6 +235,19 @@ export class JobStore {
         updated_by TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS agent_pipeline_runs (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        pipeline_config_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        steps_json TEXT NOT NULL,
+        retry_loops INTEGER NOT NULL DEFAULT 0,
+        total_duration_ms INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_pipeline_runs_job_id ON agent_pipeline_runs(job_id);
     `);
   }
 
@@ -1937,5 +1950,108 @@ export class JobStore {
       runs: Number(row.runs),
       failures: Number(row.failures),
     }));
+  }
+
+  // --- Agent Pipeline Runs ---
+
+  createPipelineRun(input: {
+    id: string;
+    jobId: string;
+    pipelineConfigJson: string;
+    status: string;
+    stepsJson: string;
+    retryLoops?: number;
+    totalDurationMs?: number;
+  }): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO agent_pipeline_runs(
+           id, job_id, pipeline_config_json, status, steps_json,
+           retry_loops, total_duration_ms, created_at, updated_at
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.jobId,
+        input.pipelineConfigJson,
+        input.status,
+        input.stepsJson,
+        input.retryLoops ?? 0,
+        input.totalDurationMs ?? null,
+        now,
+        now,
+      );
+  }
+
+  updatePipelineRun(
+    id: string,
+    updates: {
+      status?: string;
+      stepsJson?: string;
+      retryLoops?: number;
+      totalDurationMs?: number;
+    },
+  ): void {
+    const now = new Date().toISOString();
+    const sets: string[] = ['updated_at = ?'];
+    const values: unknown[] = [now];
+
+    if (updates.status !== undefined) {
+      sets.push('status = ?');
+      values.push(updates.status);
+    }
+    if (updates.stepsJson !== undefined) {
+      sets.push('steps_json = ?');
+      values.push(updates.stepsJson);
+    }
+    if (updates.retryLoops !== undefined) {
+      sets.push('retry_loops = ?');
+      values.push(updates.retryLoops);
+    }
+    if (updates.totalDurationMs !== undefined) {
+      sets.push('total_duration_ms = ?');
+      values.push(updates.totalDurationMs);
+    }
+
+    values.push(id);
+    this.db.prepare(`UPDATE agent_pipeline_runs SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+  }
+
+  getPipelineRunByJobId(jobId: string): {
+    id: string;
+    jobId: string;
+    pipelineConfigJson: string;
+    status: string;
+    stepsJson: string;
+    retryLoops: number;
+    totalDurationMs: number | null;
+    createdAt: string;
+    updatedAt: string;
+  } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, job_id, pipeline_config_json, status, steps_json,
+                retry_loops, total_duration_ms, created_at, updated_at
+         FROM agent_pipeline_runs
+         WHERE job_id = ?
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      )
+      .get(jobId) as Record<string, unknown> | undefined;
+
+    if (!row) return undefined;
+
+    return {
+      id: String(row.id),
+      jobId: String(row.job_id),
+      pipelineConfigJson: String(row.pipeline_config_json),
+      status: String(row.status),
+      stepsJson: String(row.steps_json),
+      retryLoops: Number(row.retry_loops),
+      totalDurationMs: row.total_duration_ms != null ? Number(row.total_duration_ms) : null,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
   }
 }

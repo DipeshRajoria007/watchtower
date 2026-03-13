@@ -33,6 +33,7 @@ const config: AppConfig = {
   maxConcurrentJobs: 2,
   repoClassifierThreshold: 0.75,
   allowedPrOrg: 'Newton-School',
+  multiAgentEnabled: false,
 };
 
 function buildTask(input: { text: string; intent?: NormalizedTask['intent']; userId?: string; channelId?: string; threadTs?: string }): NormalizedTask {

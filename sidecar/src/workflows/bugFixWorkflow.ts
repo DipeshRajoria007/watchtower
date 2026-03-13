@@ -15,6 +15,8 @@ import { runCodex } from '../codex/runCodex.js';
 import { HIGH_REASONING_CODEX_PROFILE } from '../codex/modelProfiles.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import type { JobStore } from '../state/jobStore.js';
+import { runAgentPipeline } from '../agents/pipeline.js';
+import type { PipelineConfig } from '../agents/types.js';
 
 export async function runBugFixWorkflow(params: {
   task: NormalizedTask;
@@ -134,6 +136,73 @@ export async function runBugFixWorkflow(params: {
       ].join('\n')
     : 'No explicit policy pack assigned for this channel.';
 
+  // --- Multi-agent pipeline path ---
+  if (config.multiAgentEnabled) {
+    logStep?.({
+      stage: 'bug_fix.pipeline.start',
+      message: 'Running bug-fix through multi-agent pipeline.',
+    });
+
+    const pipelineConfig: PipelineConfig = {
+      agents: ['planner', 'coder', 'reviewer', 'security', 'verifier'],
+      maxRetryLoops: 2,
+      perAgentTimeoutMs: config.workflowTimeouts.bugFixMs / 5,
+      totalTimeoutMs: config.workflowTimeouts.bugFixMs,
+      abortOnCriticalFinding: true,
+      slackProgressUpdates: true,
+    };
+
+    const threadContext = texts.join('\n---\n');
+    const pipelineResult = await runAgentPipeline({
+      ctx: {
+        workflowIntent: 'BUG_FIX',
+        task,
+        config,
+        repoPath,
+        githubToken,
+        threadContext,
+        previousSteps: [],
+        pipelineConfig,
+        policyPack: policyPack ? { packName: policyPack.packName, rules: policyPack.rules } : undefined,
+      },
+      slack,
+      logStep: logStep ?? (() => {}),
+    });
+
+    const coderStep = pipelineResult.steps.find(s => s.role === 'coder');
+    const summary = coderStep?.output?.summary
+      ? String(coderStep.output.summary)
+      : `Bug-fix pipeline ${pipelineResult.finalStatus}.`;
+    const prUrl = coderStep?.output?.prUrl ? String(coderStep.output.prUrl) : '';
+    const qualityReport = pipelineResult.aggregatedFindings
+      .map(f => `- [${f.severity}] ${f.message}`)
+      .join('\n');
+
+    const slackText = qualityReport
+      ? `Bug fix wrapped. ${summary}\n${prUrl}\n\nQuality report:\n${qualityReport}`
+      : `Bug fix wrapped. ${summary}\n${prUrl}`;
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: slackText,
+    });
+
+    return {
+      workflow: 'BUG_FIX',
+      status: pipelineResult.finalStatus === 'passed' ? 'SUCCESS' : 'FAILED',
+      message: summary,
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        pipelineStatus: pipelineResult.finalStatus,
+        prUrl,
+        totalFindings: pipelineResult.aggregatedFindings.length,
+      },
+    };
+  }
+
+  // --- Single-agent path (legacy) ---
   const prompt = `
 ${buildMentionSystemPrompt({ task, workflow: 'BUG_FIX' })}
 

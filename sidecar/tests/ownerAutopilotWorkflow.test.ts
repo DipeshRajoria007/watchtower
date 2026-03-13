@@ -42,6 +42,7 @@ const config = {
   maxConcurrentJobs: 2,
   repoClassifierThreshold: 0.75,
   allowedPrOrg: 'Newton-School',
+  multiAgentEnabled: false,
 };
 
 describe('ownerAutopilotWorkflow', () => {
