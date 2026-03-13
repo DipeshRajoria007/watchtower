@@ -1733,6 +1733,11 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
 
     ensure_app_settings_column(
         &connection,
+        "multi_agent_enabled",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_app_settings_column(
+        &connection,
         "agent_backend",
         "TEXT NOT NULL DEFAULT 'codex'",
     )?;
