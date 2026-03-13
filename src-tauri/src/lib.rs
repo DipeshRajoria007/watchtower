@@ -286,6 +286,7 @@ struct AppSettings {
     failure_notification_audio_mode: String,
     failure_notification_audio_default_sound: String,
     failure_notification_audio_custom_path: String,
+    agent_backend: String,
 }
 
 #[derive(Serialize)]
@@ -332,6 +333,7 @@ impl Default for AppSettings {
             failure_notification_audio_mode: "off".to_string(),
             failure_notification_audio_default_sound: DEFAULT_NOTIFICATION_AUDIO_SOUND.to_string(),
             failure_notification_audio_custom_path: String::new(),
+            agent_backend: "codex".to_string(),
         }
     }
 }
@@ -1729,6 +1731,12 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
         migrate_legacy_notification_audio_settings(&connection)?;
     }
 
+    ensure_app_settings_column(
+        &connection,
+        "agent_backend",
+        "TEXT NOT NULL DEFAULT 'codex'",
+    )?;
+
     Ok(())
 }
 
@@ -1804,7 +1812,8 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
               success_notification_audio_custom_path,
               failure_notification_audio_mode,
               failure_notification_audio_default_sound,
-              failure_notification_audio_custom_path
+              failure_notification_audio_custom_path,
+              agent_backend
              FROM app_settings
              WHERE id = 1
              LIMIT 1",
@@ -1836,6 +1845,7 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
                 failure_notification_audio_mode: row.get(19)?,
                 failure_notification_audio_default_sound: row.get(20)?,
                 failure_notification_audio_custom_path: row.get(21)?,
+                agent_backend: row.get(22)?,
             })
         })
         .optional()
@@ -1872,8 +1882,9 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               failure_notification_audio_mode,
               failure_notification_audio_default_sound,
               failure_notification_audio_custom_path,
+              agent_backend,
               updated_at
-             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
               slack_bot_token=excluded.slack_bot_token,
               slack_app_token=excluded.slack_app_token,
@@ -1897,6 +1908,7 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               failure_notification_audio_mode=excluded.failure_notification_audio_mode,
               failure_notification_audio_default_sound=excluded.failure_notification_audio_default_sound,
               failure_notification_audio_custom_path=excluded.failure_notification_audio_custom_path,
+              agent_backend=excluded.agent_backend,
               updated_at=excluded.updated_at",
             params![
                 settings.slack_bot_token.trim(),
@@ -1921,6 +1933,7 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
                 settings.failure_notification_audio_mode.trim(),
                 settings.failure_notification_audio_default_sound.trim(),
                 settings.failure_notification_audio_custom_path.trim(),
+                settings.agent_backend.trim(),
                 Utc::now().to_rfc3339(),
             ],
         )

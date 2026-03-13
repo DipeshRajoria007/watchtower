@@ -7,6 +7,7 @@ import {
   resolveThemeFont,
 } from "../lib/theme";
 import type {
+  AgentBackendId,
   AppSettings,
   NotificationAudioDefaultSoundId,
   NotificationAudioMode,
@@ -53,6 +54,30 @@ type ThemeCard = {
   id: ThemePresetId;
   label: string;
 };
+
+type AgentBackendOption = {
+  description: string;
+  id: AgentBackendId;
+  label: string;
+};
+
+const AGENT_BACKEND_OPTIONS: AgentBackendOption[] = [
+  {
+    description: "OpenAI Codex CLI for autonomous coding tasks.",
+    id: "codex",
+    label: "Codex (OpenAI)",
+  },
+  {
+    description: "Anthropic Claude Code CLI for autonomous coding tasks.",
+    id: "claude-code",
+    label: "Claude Code (Anthropic)",
+  },
+  {
+    description: "Cursor AI coding assistant CLI.",
+    id: "cursor",
+    label: "Cursor",
+  },
+];
 
 type NotificationAudioModeCard = {
   description: string;
@@ -958,6 +983,37 @@ export function SettingsPage({
                     })
                   }
                 />
+              </label>
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            title="Agent Backend"
+            subtitle="Choose which AI coding CLI runs your workflows. The selected CLI must be installed and accessible from PATH."
+          >
+            <div className="settings-fields two-column">
+              <label className="field">
+                <span>Backend CLI</span>
+                <select
+                  value={settings.agentBackend}
+                  onChange={(event) =>
+                    updateSettings({
+                      agentBackend: event.target
+                        .value as AgentBackendId,
+                    })
+                  }
+                >
+                  {AGENT_BACKEND_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <small className="field-hint">
+                  Workflows will use this CLI for all agent executions. Changing
+                  the backend takes effect after saving and restarting the
+                  sidecar.
+                </small>
               </label>
             </div>
           </SectionCard>

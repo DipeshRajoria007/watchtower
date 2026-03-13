@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { z } from 'zod';
-import type { AppConfig } from './types/contracts.js';
+import type { AgentBackendId, AppConfig } from './types/contracts.js';
 
 const settingsSchema = z.object({
   slack_bot_token: z.string(),
@@ -17,6 +17,7 @@ const settingsSchema = z.object({
   bug_fix_timeout_ms: z.number().int().positive().default(2700000),
   repo_classifier_threshold: z.number().min(0).max(1).default(0.75),
   multi_agent_enabled: z.number().int().min(0).max(1).default(0),
+  agent_backend: z.string().default('codex'),
 });
 
 type SettingsRow = z.infer<typeof settingsSchema>;
@@ -74,7 +75,8 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
           pr_review_timeout_ms,
           bug_fix_timeout_ms,
           repo_classifier_threshold,
-          COALESCE(multi_agent_enabled, 0) AS multi_agent_enabled
+          COALESCE(multi_agent_enabled, 0) AS multi_agent_enabled,
+          COALESCE(agent_backend, 'codex') AS agent_backend
          FROM app_settings
          WHERE id = 1
          LIMIT 1`
@@ -142,5 +144,6 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
     repoClassifierThreshold: settings.repo_classifier_threshold,
     allowedPrOrg: 'Newton-School',
     multiAgentEnabled: Boolean(settings.multi_agent_enabled),
+    agentBackend: (settings.agent_backend || 'codex') as AgentBackendId,
   };
 }

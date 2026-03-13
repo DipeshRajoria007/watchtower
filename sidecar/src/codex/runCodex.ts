@@ -1,9 +1,20 @@
 import fs from 'node:fs/promises';
-import fsSync from 'node:fs';
 import os from 'node:os';
-import path, { delimiter as pathDelimiter } from 'node:path';
+import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { CodexRunRequest, CodexRunResult } from '../types/contracts.js';
+import type { AgentBackend, AgentBackendId } from '../backends/types.js';
+import { getBackend } from '../backends/registry.js';
+
+let activeBackendId: AgentBackendId = 'codex';
+
+export function setActiveBackend(id: AgentBackendId): void {
+  activeBackendId = id;
+}
+
+export function getActiveBackendId(): AgentBackendId {
+  return activeBackendId;
+}
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => void): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -149,55 +160,41 @@ export function parseCodexStructuredOutput(raw: string): ParsedCodexOutput {
   };
 }
 
-export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult> {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'watchtower-codex-'));
+export async function runAgent(request: CodexRunRequest, backend: AgentBackend): Promise<CodexRunResult> {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `watchtower-${backend.id}-`));
   const outputPath = path.join(tempDir, 'final-message.txt');
 
-  const codexExecutable = resolveCodexBinary();
+  const executable = backend.resolveBinary();
 
   request.onLog?.({
-    stage: 'codex.prepare',
-    message: 'Preparing Codex command invocation.',
+    stage: 'agent.prepare',
+    message: `Preparing ${backend.displayName} command invocation.`,
     data: {
+      backend: backend.id,
       cwd: request.cwd,
       timeoutMs: request.timeoutMs,
       schemaEnabled: Boolean(request.outputSchemaPath),
       model: request.model ?? 'default',
       reasoningEffort: request.reasoningEffort ?? 'default',
       githubTokenInjected: Boolean(request.githubToken),
-      codexExecutable,
+      executable,
     },
   });
 
-  const args = ['exec', '--cd', request.cwd, '--full-auto', '--skip-git-repo-check'];
-  if (request.model) {
-    args.push('-m', request.model);
-  }
-  if (request.reasoningEffort) {
-    args.push('-c', `model_reasoning_effort="${request.reasoningEffort}"`);
-  }
-  if (request.outputSchemaPath) {
-    args.push('--output-schema', request.outputSchemaPath);
-  }
-  args.push('--output-last-message', outputPath, request.prompt);
-
-  const env = { ...process.env };
-  env.PATH = buildCodexPath(env.PATH);
-  if (request.githubToken) {
-    env.GITHUB_TOKEN = request.githubToken;
-    env.GH_TOKEN = request.githubToken;
-  }
+  const args = backend.buildArgs(request, outputPath);
+  const envOverrides = backend.buildEnv(request, process.env.PATH ?? '');
+  const env = { ...process.env, ...envOverrides };
 
   let timedOut = false;
-  const child = spawn(codexExecutable, args, {
+  const child = spawn(executable, args, {
     cwd: request.cwd,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
   request.onLog?.({
-    stage: 'codex.spawned',
-    message: 'Codex process spawned.',
+    stage: 'agent.spawned',
+    message: `${backend.displayName} process spawned.`,
     data: {
       pid: child.pid ?? null,
     },
@@ -217,8 +214,8 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
     if (!stdoutStarted) {
       stdoutStarted = true;
       request.onLog?.({
-        stage: 'codex.stdout.start',
-        message: 'Codex started streaming stdout.',
+        stage: 'agent.stdout.start',
+        message: `${backend.displayName} started streaming stdout.`,
       });
     }
   });
@@ -229,8 +226,8 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
     if (!stderrStarted) {
       stderrStarted = true;
       request.onLog?.({
-        stage: 'codex.stderr.start',
-        message: 'Codex started streaming stderr.',
+        stage: 'agent.stderr.start',
+        message: `${backend.displayName} started streaming stderr.`,
         level: 'WARN',
       });
     }
@@ -246,8 +243,8 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
       () => {
         timedOut = true;
         request.onLog?.({
-          stage: 'codex.timeout',
-          message: 'Codex execution exceeded timeout and was force-killed.',
+          stage: 'agent.timeout',
+          message: `${backend.displayName} execution exceeded timeout and was force-killed.`,
           level: 'ERROR',
           data: {
             timeoutMs: request.timeoutMs,
@@ -258,8 +255,8 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
     );
 
     request.onLog?.({
-      stage: 'codex.process.exit',
-      message: 'Codex process exited.',
+      stage: 'agent.process.exit',
+      message: `${backend.displayName} process exited.`,
       data: {
         exitCode,
         timedOut,
@@ -272,8 +269,8 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
     try {
       lastMessage = await fs.readFile(outputPath, 'utf8');
       request.onLog?.({
-        stage: 'codex.output.read',
-        message: 'Read deterministic final output file from Codex.',
+        stage: 'agent.output.read',
+        message: `Read deterministic final output file from ${backend.displayName}.`,
         data: {
           outputPath,
           bytes: Buffer.byteLength(lastMessage),
@@ -282,8 +279,8 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
     } catch {
       lastMessage = '';
       request.onLog?.({
-        stage: 'codex.output.missing',
-        message: 'Codex final output file was not readable.',
+        stage: 'agent.output.missing',
+        message: `${backend.displayName} final output file was not readable.`,
         level: 'WARN',
         data: {
           outputPath,
@@ -291,26 +288,21 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
       });
     }
 
-    const parsedOutput = parseCodexStructuredOutput(lastMessage);
+    const parsedOutput = backend.parseOutput(lastMessage);
     const parsedJson = parsedOutput.parsedJson;
     if (parsedJson) {
       request.onLog?.({
-        stage: 'codex.output.parsed',
-        message: 'Parsed Codex final output as JSON.',
+        stage: 'agent.output.parsed',
+        message: `Parsed ${backend.displayName} final output as JSON.`,
         data: {
           strategy: parsedOutput.strategy,
-          preview: parsedOutput.preview,
         },
       });
     } else {
       request.onLog?.({
-        stage: 'codex.output.parse_failed',
-        message: 'Codex final output is not valid JSON.',
+        stage: 'agent.output.parse_failed',
+        message: `${backend.displayName} final output is not valid JSON.`,
         level: 'WARN',
-        data: {
-          attempts: parsedOutput.attempts,
-          preview: parsedOutput.preview,
-        },
       });
     }
 
@@ -325,8 +317,8 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
     };
   } catch (error) {
     request.onLog?.({
-      stage: 'codex.execution.error',
-      message: 'Codex process execution threw before completion.',
+      stage: 'agent.execution.error',
+      message: `${backend.displayName} process execution threw before completion.`,
       level: 'ERROR',
       data: {
         error: String(error),
@@ -340,15 +332,15 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
       stdout,
       stderr: `${stderr}\n${String(error)}${
         String(error).includes('ENOENT')
-          ? '\nCodex executable not found. Set CODEX_BIN to an absolute path or install codex in /opt/homebrew/bin or /usr/local/bin.'
+          ? `\n${backend.displayName} executable not found. Ensure the CLI is installed and accessible from PATH.`
           : ''
       }`,
       lastMessage: '',
     };
   } finally {
     request.onLog?.({
-      stage: 'codex.cleanup',
-      message: 'Cleaning up temporary Codex output directory.',
+      stage: 'agent.cleanup',
+      message: `Cleaning up temporary ${backend.displayName} output directory.`,
       data: {
         tempDir,
       },
@@ -357,116 +349,6 @@ export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult
   }
 }
 
-function resolveCodexBinary(): string {
-  const envOverride = process.env.CODEX_BIN?.trim();
-  if (envOverride) {
-    if (path.isAbsolute(envOverride)) {
-      if (isExecutable(envOverride)) {
-        return envOverride;
-      }
-    } else {
-      const fromPath = findInPath(envOverride, buildCodexPath(process.env.PATH));
-      if (fromPath) {
-        return fromPath;
-      }
-    }
-  }
-
-  const fromPath = findInPath('codex', buildCodexPath(process.env.PATH));
-  if (fromPath) {
-    return fromPath;
-  }
-
-  const home = process.env.HOME?.trim() || os.homedir();
-  const nvmRoot = home ? path.join(home, '.nvm', 'versions', 'node') : '';
-  const absoluteCandidates = [
-    '/opt/homebrew/bin/codex',
-    '/usr/local/bin/codex',
-    '/Applications/Codex.app/Contents/Resources/codex',
-    home ? path.join(home, '.npm-global', 'bin', 'codex') : '',
-    home ? path.join(home, '.local', 'bin', 'codex') : '',
-    home ? path.join(home, '.bun', 'bin', 'codex') : '',
-    ...findNvmCodexBinaries(nvmRoot),
-  ].filter(Boolean);
-  for (const candidate of absoluteCandidates) {
-    if (isExecutable(candidate)) {
-      return candidate;
-    }
-  }
-
-  return 'codex';
-}
-
-function isExecutable(filePath: string): boolean {
-  try {
-    fsSync.accessSync(filePath, fsSync.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function findInPath(binary: string, customPath?: string): string | undefined {
-  const sourcePath = customPath ?? process.env.PATH ?? '';
-  for (const dir of sourcePath.split(pathDelimiter)) {
-    const trimmed = dir.trim();
-    if (!trimmed) {
-      continue;
-    }
-    const candidate = path.join(trimmed, binary);
-    if (isExecutable(candidate)) {
-      return candidate;
-    }
-  }
-  return undefined;
-}
-
-function buildCodexPath(existingPath?: string): string {
-  const parts = new Set<string>();
-  const add = (value?: string): void => {
-    const trimmed = value?.trim();
-    if (!trimmed) {
-      return;
-    }
-    parts.add(trimmed);
-  };
-
-  const currentNodeDir = path.dirname(process.execPath);
-  add(currentNodeDir);
-  add('/opt/homebrew/bin');
-  add('/usr/local/bin');
-  add('/usr/bin');
-  add('/bin');
-
-  const home = process.env.HOME?.trim() || os.homedir();
-  if (home) {
-    add(path.join(home, '.npm-global', 'bin'));
-    add(path.join(home, '.local', 'bin'));
-    add(path.join(home, '.bun', 'bin'));
-    add(path.join(home, '.nvm', 'versions', 'node', 'current', 'bin'));
-  }
-
-  for (const value of (existingPath ?? '').split(pathDelimiter)) {
-    add(value);
-  }
-
-  return Array.from(parts).join(pathDelimiter);
-}
-
-function findNvmCodexBinaries(nvmRoot: string): string[] {
-  if (!nvmRoot || !fsSync.existsSync(nvmRoot)) {
-    return [];
-  }
-
-  const versions = fsSync
-    .readdirSync(nvmRoot, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && entry.name.startsWith('v'))
-    .map(entry => entry.name)
-    .sort((a, b) => b.localeCompare(a));
-
-  const candidates: string[] = [];
-  for (const version of versions) {
-    candidates.push(path.join(nvmRoot, version, 'bin', 'codex'));
-  }
-  return candidates;
+export async function runCodex(request: CodexRunRequest): Promise<CodexRunResult> {
+  return runAgent(request, getBackend(activeBackendId));
 }

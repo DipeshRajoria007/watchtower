@@ -1,5 +1,6 @@
 import type { CodexReasoningEffort } from '../types/contracts.js';
 import type { AgentRole } from '../agents/types.js';
+import type { AgentBackendId } from '../backends/types.js';
 
 export type CodexExecutionProfile = {
   model: string;
@@ -21,15 +22,46 @@ export const HIGH_REASONING_CODEX_PROFILE: CodexExecutionProfile = {
   reasoningEffort: 'xhigh',
 };
 
-const AGENT_ROLE_PROFILES: Record<AgentRole, CodexExecutionProfile> = {
-  planner: LIGHTWEIGHT_CODEX_PROFILE,
-  coder: HIGH_REASONING_CODEX_PROFILE,
-  reviewer: HIGH_REASONING_CODEX_PROFILE,
-  security: HIGH_REASONING_CODEX_PROFILE,
-  performance: LIGHTWEIGHT_CODEX_PROFILE,
-  verifier: LIGHTWEIGHT_CODEX_PROFILE,
+type BackendProfileTable = Record<'lightweight' | 'highReasoning', CodexExecutionProfile>;
+
+const BACKEND_PROFILES: Record<AgentBackendId, BackendProfileTable> = {
+  codex: {
+    lightweight: LIGHTWEIGHT_CODEX_PROFILE,
+    highReasoning: HIGH_REASONING_CODEX_PROFILE,
+  },
+  'claude-code': {
+    lightweight: {
+      model: 'claude-sonnet-4-20250514',
+      reasoningEffort: 'low',
+    },
+    highReasoning: {
+      model: 'claude-opus-4-20250514',
+      reasoningEffort: 'high',
+    },
+  },
+  cursor: {
+    lightweight: {
+      model: 'claude-sonnet-4-20250514',
+      reasoningEffort: 'low',
+    },
+    highReasoning: {
+      model: 'claude-sonnet-4-20250514',
+      reasoningEffort: 'high',
+    },
+  },
 };
 
-export function profileForAgentRole(role: AgentRole): CodexExecutionProfile {
-  return AGENT_ROLE_PROFILES[role];
+const ROLE_TIER: Record<AgentRole, 'lightweight' | 'highReasoning'> = {
+  planner: 'lightweight',
+  coder: 'highReasoning',
+  reviewer: 'highReasoning',
+  security: 'highReasoning',
+  performance: 'lightweight',
+  verifier: 'lightweight',
+};
+
+export function profileForAgentRole(role: AgentRole, backendId?: AgentBackendId): CodexExecutionProfile {
+  const backend = backendId ?? 'codex';
+  const tier = ROLE_TIER[role];
+  return BACKEND_PROFILES[backend][tier];
 }
