@@ -14,6 +14,9 @@ import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
+import { runAgentPipeline } from '../agents/pipeline.js';
+import type { PipelineStore } from '../agents/pipeline.js';
+import type { AgentRole, PipelineConfig } from '../agents/types.js';
 
 function resolveOwnerWorkspaceRoot(config: AppConfig): string {
   const webParent = path.dirname(config.repoPaths.newtonWeb);
@@ -191,9 +194,11 @@ export async function runOwnerAutopilotWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
+  store?: PipelineStore;
+  jobId?: string;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, logStep } = params;
+  const { task, config, slack, store, jobId, logStep } = params;
 
   logStep?.({
     stage: 'owner_autopilot.context.fetch.start',
@@ -252,6 +257,115 @@ export async function runOwnerAutopilotWorkflow(params: {
     data: { tokenInjected: Boolean(githubToken) },
   });
 
+  // --- Multi-agent pipeline path ---
+  if (config.multiAgentEnabled) {
+    logStep?.({
+      stage: 'owner_autopilot.pipeline.start',
+      message: 'Running owner-autopilot through multi-agent pipeline.',
+    });
+
+    // Planner runs first to determine if code changes are needed
+    const plannerPipelineConfig: PipelineConfig = {
+      agents: ['planner'],
+      maxRetryLoops: 0,
+      perAgentTimeoutMs: config.workflowTimeouts.bugFixMs / 5,
+      totalTimeoutMs: config.workflowTimeouts.bugFixMs,
+      abortOnCriticalFinding: false,
+      slackProgressUpdates: false,
+    };
+
+    const plannerResult = await runAgentPipeline({
+      ctx: {
+        workflowIntent: 'OWNER_AUTOPILOT',
+        task,
+        config,
+        repoPath: workspaceRoot,
+        githubToken,
+        threadContext,
+        previousSteps: [],
+        pipelineConfig: plannerPipelineConfig,
+      },
+      slack,
+      logStep: logStep ?? (() => {}),
+      store,
+      jobId,
+    });
+
+    const plannerOutput = plannerResult.steps[0]?.output ?? {};
+    const requiresCodeChanges = Boolean(plannerOutput.requiresCodeChanges);
+
+    if (requiresCodeChanges) {
+      // Full pipeline: planner -> coder -> reviewer -> verifier
+      const fullPipelineConfig: PipelineConfig = {
+        agents: ['planner', 'coder', 'reviewer', 'verifier'],
+        maxRetryLoops: 2,
+        perAgentTimeoutMs: config.workflowTimeouts.bugFixMs / 4,
+        totalTimeoutMs: config.workflowTimeouts.bugFixMs,
+        abortOnCriticalFinding: true,
+        slackProgressUpdates: true,
+      };
+
+      const fullResult = await runAgentPipeline({
+        ctx: {
+          workflowIntent: 'OWNER_AUTOPILOT',
+          task,
+          config,
+          repoPath: workspaceRoot,
+          githubToken,
+          threadContext,
+          previousSteps: [],
+          pipelineConfig: fullPipelineConfig,
+        },
+        slack,
+        logStep: logStep ?? (() => {}),
+        store,
+        jobId,
+      });
+
+      const coderStep = fullResult.steps.find(s => s.role === 'coder');
+      const summary = coderStep?.output?.summary
+        ? sanitizeOwnerSummary(String(coderStep.output.summary))
+        : 'Done.';
+      const prUrl = coderStep?.output?.prUrl ? String(coderStep.output.prUrl) : '';
+      const prBlock = prUrl ? `\n${prUrl}` : '';
+
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: `${summary}${prBlock}`.trim(),
+      });
+
+      return {
+        workflow: 'OWNER_AUTOPILOT',
+        status: fullResult.finalStatus === 'passed' ? 'SUCCESS' : 'FAILED',
+        message: summary,
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+
+    // Planner-only fast path (no code changes needed)
+    const planSummary = plannerOutput.plan
+      ? (plannerOutput.plan as string[]).join('. ')
+      : 'No action needed.';
+    const sanitized = sanitizeOwnerSummary(planSummary);
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: sanitized || 'Done.',
+    });
+
+    return {
+      workflow: 'OWNER_AUTOPILOT',
+      status: 'SUCCESS',
+      message: sanitized || 'Done.',
+      notifyDesktop: false,
+      slackPosted: true,
+    };
+  }
+
+  // --- Single-agent path (legacy) ---
   const prompt = buildOwnerPrimaryPrompt({
     task,
     config,

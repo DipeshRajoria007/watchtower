@@ -17,20 +17,21 @@ export async function routeTask(params: {
   config: AppConfig;
   slack: WebClient;
   store: JobStore;
+  jobId?: string;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, store, logStep } = params;
+  const { task, config, slack, store, jobId, logStep } = params;
 
   if (task.intent === 'PR_REVIEW') {
-    return runPrReviewWorkflow({ task, config, slack, store, logStep });
+    return runPrReviewWorkflow({ task, config, slack, store, jobId, logStep });
   }
 
   if (task.intent === 'BUG_FIX') {
-    return runBugFixWorkflow({ task, config, slack, store, logStep });
+    return runBugFixWorkflow({ task, config, slack, store, jobId, logStep });
   }
 
   if (task.intent === 'OWNER_AUTOPILOT') {
-    return runOwnerAutopilotWorkflow({ task, config, slack, logStep });
+    return runOwnerAutopilotWorkflow({ task, config, slack, store, jobId, logStep });
   }
 
   if (task.intent === 'DEV_ASSIST') {

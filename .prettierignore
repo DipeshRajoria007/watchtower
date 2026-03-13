@@ -1,0 +1,6 @@
+dist
+node_modules
+sidecar/dist
+sidecar/node_modules
+src-tauri/target
+*.json

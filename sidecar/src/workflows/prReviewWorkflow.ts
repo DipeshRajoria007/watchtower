@@ -16,6 +16,9 @@ import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { runCodex } from '../codex/runCodex.js';
 import { HIGH_REASONING_CODEX_PROFILE } from '../codex/modelProfiles.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
+import { runAgentPipeline } from '../agents/pipeline.js';
+import type { PipelineStore } from '../agents/pipeline.js';
+import type { PipelineConfig } from '../agents/types.js';
 
 const SUPPORTED_PR_REPOS = ['newton-web', 'newton-api'] as const;
 
@@ -89,15 +92,16 @@ export async function runPrReviewWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
-  store?: Pick<JobStore, 'findLatestReviewedPrHeadSha' | 'getChannelPolicyPack'>;
+  store?: Pick<JobStore, 'findLatestReviewedPrHeadSha' | 'getChannelPolicyPack'> & Partial<PipelineStore>;
   resolvePrHeadSha?: (input: {
     prContext: PrContext;
     githubToken?: string;
     logStep?: WorkflowStepLogger;
   }) => Promise<string | undefined>;
+  jobId?: string;
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, store, resolvePrHeadSha, logStep } = params;
+  const { task, config, slack, store, resolvePrHeadSha, jobId, logStep } = params;
 
   logStep?.({
     stage: 'pr_review.context.fetch.start',
@@ -305,6 +309,77 @@ export async function runPrReviewWorkflow(params: {
       ].join('\n')
     : 'No explicit policy pack assigned for this channel.';
 
+  // --- Multi-agent pipeline path ---
+  if (config.multiAgentEnabled) {
+    logStep?.({
+      stage: 'pr_review.pipeline.start',
+      message: 'Running PR review through multi-agent pipeline.',
+    });
+
+    const pipelineConfig: PipelineConfig = {
+      agents: ['planner', 'reviewer', 'security', 'performance'],
+      maxRetryLoops: 0,
+      perAgentTimeoutMs: config.workflowTimeouts.prReviewMs / 4,
+      totalTimeoutMs: config.workflowTimeouts.prReviewMs,
+      abortOnCriticalFinding: true,
+      slackProgressUpdates: true,
+    };
+
+    const threadContext = threadTexts.join('\n---\n');
+    const pipelineResult = await runAgentPipeline({
+      ctx: {
+        workflowIntent: 'PR_REVIEW',
+        task,
+        config,
+        repoPath: repoPath!,
+        githubToken,
+        threadContext,
+        prContext,
+        previousSteps: [],
+        pipelineConfig,
+        policyPack: policyPack ? { packName: policyPack.packName, rules: policyPack.rules } : undefined,
+      },
+      slack,
+      logStep: logStep ?? (() => {}),
+      store: store?.createPipelineRun && store?.updatePipelineRun ? store as PipelineStore : undefined,
+      jobId,
+    });
+
+    const findings = pipelineResult.aggregatedFindings;
+    const summaryParts: string[] = [];
+    for (const step of pipelineResult.steps) {
+      const tag = `[${step.role.charAt(0).toUpperCase() + step.role.slice(1)}]`;
+      for (const f of step.findings) {
+        summaryParts.push(`${tag} ${f.severity}: ${f.message}`);
+      }
+    }
+
+    const summaryText = summaryParts.length > 0
+      ? `Multi-agent PR review complete. ${findings.length} finding(s):\n${summaryParts.join('\n')}`
+      : 'Multi-agent PR review complete. No actionable findings. Good to go.';
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: `${summaryText}\n${prContext.url}`,
+    });
+
+    return {
+      workflow: 'PR_REVIEW',
+      status: pipelineResult.finalStatus === 'passed' ? 'SUCCESS' : 'FAILED',
+      message: summaryText,
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        ...( currentPrHeadSha ? { prHeadSha: currentPrHeadSha } : {}),
+        prUrl: prContext.url,
+        pipelineStatus: pipelineResult.finalStatus,
+        totalFindings: findings.length,
+      },
+    };
+  }
+
+  // --- Single-agent path (legacy) ---
   const prompt = `
 ${buildMentionSystemPrompt({ task, workflow: 'PR_REVIEW' })}
 

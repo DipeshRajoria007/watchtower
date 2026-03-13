@@ -11,6 +11,28 @@ import {
   TabBar,
 } from '../components/primitives';
 import { getStatusTone } from '../lib/formatters';
+import { AgentPipelineView } from '../components/AgentPipelineView';
+
+type PipelineRunData = {
+  id: string;
+  jobId: string;
+  status: string;
+  steps: Array<{
+    role: string;
+    status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
+    durationMs: number;
+    findings: Array<{
+      severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
+      category: string;
+      message: string;
+      file?: string;
+      line?: number;
+      suggestion?: string;
+    }>;
+  }>;
+  retryLoops: number;
+  totalDurationMs: number | null;
+};
 
 type RunsPageProps = {
   data: DashboardData | null;
@@ -21,6 +43,7 @@ type RunsPageProps = {
   selectedRun: RunSummary | null;
   selectedRunId: string | null;
   selectedRunLogs: JobLogEntry[];
+  selectedRunPipeline?: PipelineRunData | null;
 };
 
 export function RunsPage({
@@ -32,6 +55,7 @@ export function RunsPage({
   selectedRun,
   selectedRunId,
   selectedRunLogs,
+  selectedRunPipeline,
 }: RunsPageProps) {
   const tabs = [
     { label: 'Active', value: 'active' as const, count: data?.activeJobs.length ?? 0 },
@@ -146,6 +170,7 @@ export function RunsPage({
           </SectionCard>
 
           <RunInspector run={selectedRun} logs={selectedRunLogs} />
+          {selectedRunPipeline && <AgentPipelineView pipelineRun={selectedRunPipeline} />}
         </section>
       )}
     </div>

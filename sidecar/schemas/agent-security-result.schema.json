@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "required": ["approved", "findings", "overallSeverity"],
+  "properties": {
+    "approved": {
+      "type": "boolean"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "category", "message"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "info"]
+          },
+          "category": { "type": "string" },
+          "message": { "type": "string" },
+          "file": { "type": "string" },
+          "line": { "type": "number" },
+          "suggestion": { "type": "string" }
+        }
+      }
+    },
+    "overallSeverity": {
+      "type": "string",
+      "enum": ["clean", "low", "medium", "high", "critical"]
+    }
+  },
+  "additionalProperties": false
+}

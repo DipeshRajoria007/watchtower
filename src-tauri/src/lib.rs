@@ -186,6 +186,19 @@ struct JobLogEntry {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct PipelineRunData {
+    id: String,
+    job_id: String,
+    status: String,
+    steps: serde_json::Value,
+    retry_loops: i64,
+    total_duration_ms: Option<i64>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct DashboardData {
     sidecar_status: String,
     settings_configured: bool,
@@ -388,6 +401,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_dashboard_data,
             get_job_logs,
+            get_pipeline_run,
             get_app_settings,
             save_app_settings,
             submit_launchpad_task,
@@ -488,6 +502,47 @@ async fn get_job_logs(
         output.push(row.map_err(|err| format!("db row job_logs failed: {err}"))?);
     }
     Ok(output)
+}
+
+#[tauri::command]
+async fn get_pipeline_run(
+    job_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<PipelineRunData>, String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+
+    let mut stmt = connection
+        .prepare(
+            "SELECT id, job_id, pipeline_config_json, status, steps_json,
+                    retry_loops, total_duration_ms, created_at, updated_at
+             FROM agent_pipeline_runs
+             WHERE job_id = ?
+             ORDER BY created_at DESC
+             LIMIT 1",
+        )
+        .map_err(|err| format!("db prepare pipeline_run failed: {err}"))?;
+
+    let result = stmt
+        .query_row(params![job_id], |row| {
+            let steps_raw: String = row.get(4)?;
+            let steps: serde_json::Value =
+                serde_json::from_str(&steps_raw).unwrap_or(serde_json::Value::Array(vec![]));
+            Ok(PipelineRunData {
+                id: row.get(0)?,
+                job_id: row.get(1)?,
+                status: row.get(3)?,
+                steps,
+                retry_loops: row.get(5)?,
+                total_duration_ms: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        })
+        .optional()
+        .map_err(|err| format!("db query pipeline_run failed: {err}"))?;
+
+    Ok(result)
 }
 
 #[tauri::command]

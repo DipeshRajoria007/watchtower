@@ -622,6 +622,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
           config,
           slack: eventClient,
           store,
+          jobId,
           logStep,
         });
         const diagnosis =

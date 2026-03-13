@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "required": ["plan", "risks", "affectedFiles", "scope", "requiresCodeChanges"],
+  "properties": {
+    "plan": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "affectedFiles": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "scope": {
+      "type": "string",
+      "enum": ["small", "medium", "large"]
+    },
+    "requiresCodeChanges": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

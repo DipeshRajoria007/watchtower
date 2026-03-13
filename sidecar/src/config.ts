@@ -16,6 +16,7 @@ const settingsSchema = z.object({
   pr_review_timeout_ms: z.number().int().positive().default(720000),
   bug_fix_timeout_ms: z.number().int().positive().default(2700000),
   repo_classifier_threshold: z.number().min(0).max(1).default(0.75),
+  multi_agent_enabled: z.number().int().min(0).max(1).default(0),
 });
 
 type SettingsRow = z.infer<typeof settingsSchema>;
@@ -72,7 +73,8 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
           max_concurrent_jobs,
           pr_review_timeout_ms,
           bug_fix_timeout_ms,
-          repo_classifier_threshold
+          repo_classifier_threshold,
+          COALESCE(multi_agent_enabled, 0) AS multi_agent_enabled
          FROM app_settings
          WHERE id = 1
          LIMIT 1`
@@ -139,5 +141,6 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
     maxConcurrentJobs: settings.max_concurrent_jobs,
     repoClassifierThreshold: settings.repo_classifier_threshold,
     allowedPrOrg: 'Newton-School',
+    multiAgentEnabled: Boolean(settings.multi_agent_enabled),
   };
 }

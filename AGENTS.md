@@ -53,10 +53,27 @@ Watchtower is a macOS-only Tauri desktop app with a Node sidecar that listens to
 
 ## Quality Gate
 Before merge:
-1. `npm --prefix sidecar run build`
-2. `npm --prefix sidecar run test`
-3. `npm run build`
-4. `cargo check --manifest-path src-tauri/Cargo.toml`
+1. `npm run lint` — zero ESLint violations
+2. `npm run format:check` — Prettier formatting verified
+3. `npm --prefix sidecar run build` — sidecar compiles
+4. `npm --prefix sidecar run test` — all sidecar tests pass
+5. `npm run build` — frontend TypeScript + Vite build
+6. `cargo check --manifest-path src-tauri/Cargo.toml` — Rust compiles
+
+## CI Pipeline
+GitHub Actions (`.github/workflows/ci.yml`) runs on push/PR to `main`:
+- **lint** — ESLint + Prettier check
+- **typecheck** — sidecar build + frontend tsc
+- **sidecar-test** — vitest
+- **rust-check** — cargo check (macOS runner)
+
+## Multi-Agent Pipeline
+When `multiAgentEnabled` is true, workflows use a multi-agent pipeline instead of a single Codex call:
+- Agents: planner, coder, reviewer, security, performance, verifier
+- Pipeline orchestrator: `sidecar/src/agents/pipeline.ts`
+- Agent prompts: `sidecar/src/agents/prompts.ts`
+- Type definitions: `sidecar/src/agents/types.ts`
+- Feature flag: `multiAgentEnabled` in app settings (default: false)
 
 ## Git Workflow
 - Do not commit changes directly to `main`.
