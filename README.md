@@ -3,6 +3,8 @@
 > Watchtower turns Slack mentions into local engineering workflows running on your Mac.
 > It can review PRs, attempt bug fixes, accept owner override tasks, answer `wt` operator commands, recover missed mentions after sleep, and show every step in a desktop dashboard.
 
+If you want the product rationale instead of the implementation overview, read [Why Watchtower And miniOG Exist](docs/why-watchtower-and-miniog.md).
+
 ## What This App Does In A Nutshell
 
 Watchtower is a macOS Tauri app with a Node sidecar that lives in Slack through Socket Mode.
@@ -111,4 +113,3 @@ Why this is worth reading further:
 - Automated PR review currently allowlists the `Newton-School` GitHub org.
 - Unknown-task reaction posting requires Slack scope `reactions:write`.
 - GitHub auth works best with `gh auth login`; if unavailable, Codex GitHub MCP auth can be used.
-
