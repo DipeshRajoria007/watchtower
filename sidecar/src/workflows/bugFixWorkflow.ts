@@ -11,8 +11,8 @@ import { fetchThreadContext } from '../slack/threadContext.js';
 import { classifyRepo } from '../router/repoClassifier.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
-import { runCodex } from '../codex/runCodex.js';
-import { HIGH_REASONING_CODEX_PROFILE } from '../codex/modelProfiles.js';
+import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
+import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import type { JobStore } from '../state/jobStore.js';
 import { runAgentPipeline } from '../agents/pipeline.js';
@@ -236,7 +236,7 @@ Requirements:
     timeoutMs: config.workflowTimeouts.bugFixMs,
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/bug-fix-result.schema.json'),
     githubToken,
-    ...HIGH_REASONING_CODEX_PROFILE,
+    ...highReasoningProfile(getActiveBackendId()),
     onLog: logStep,
   };
 

@@ -8,8 +8,8 @@ import type {
   WorkflowResult,
   WorkflowStepLogger,
 } from '../types/contracts.js';
-import { runCodex } from '../codex/runCodex.js';
-import { HIGH_REASONING_CODEX_PROFILE } from '../codex/modelProfiles.js';
+import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
+import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
@@ -385,7 +385,7 @@ export async function runOwnerAutopilotWorkflow(params: {
     timeoutMs: config.workflowTimeouts.bugFixMs,
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/owner-autopilot-result.schema.json'),
     githubToken,
-    ...HIGH_REASONING_CODEX_PROFILE,
+    ...highReasoningProfile(getActiveBackendId()),
     onLog: logStep,
   };
 
@@ -466,7 +466,7 @@ export async function runOwnerAutopilotWorkflow(params: {
       prompt: relaxedPrompt,
       timeoutMs: config.workflowTimeouts.bugFixMs,
       githubToken,
-      ...HIGH_REASONING_CODEX_PROFILE,
+      ...highReasoningProfile(getActiveBackendId()),
       onLog: logStep,
     });
 

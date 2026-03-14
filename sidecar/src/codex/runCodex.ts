@@ -277,13 +277,18 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
         },
       });
     } catch {
-      lastMessage = '';
+      // Output file not written — fall back to captured stdout (e.g. Claude Code
+      // writes JSON to stdout rather than a file).
+      lastMessage = stdout;
       request.onLog?.({
         stage: 'agent.output.missing',
-        message: `${backend.displayName} final output file was not readable.`,
+        message: lastMessage
+          ? `${backend.displayName} output file missing; falling back to stdout.`
+          : `${backend.displayName} final output file was not readable.`,
         level: 'WARN',
         data: {
           outputPath,
+          stdoutFallback: Boolean(lastMessage),
         },
       });
     }

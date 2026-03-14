@@ -65,3 +65,11 @@ export function profileForAgentRole(role: AgentRole, backendId?: AgentBackendId)
   const tier = ROLE_TIER[role];
   return BACKEND_PROFILES[backend][tier];
 }
+
+export function highReasoningProfile(backendId: AgentBackendId): CodexExecutionProfile {
+  return BACKEND_PROFILES[backendId].highReasoning;
+}
+
+export function lightweightProfile(backendId: AgentBackendId): CodexExecutionProfile {
+  return BACKEND_PROFILES[backendId].lightweight;
+}

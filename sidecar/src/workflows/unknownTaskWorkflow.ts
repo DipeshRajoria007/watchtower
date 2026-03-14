@@ -7,8 +7,8 @@ import type {
   WorkflowResult,
   WorkflowStepLogger,
 } from '../types/contracts.js';
-import { runCodex } from '../codex/runCodex.js';
-import { LIGHTWEIGHT_CODEX_PROFILE } from '../codex/modelProfiles.js';
+import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
+import { lightweightProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
@@ -203,7 +203,7 @@ Return strict JSON with keys:
     prompt,
     timeoutMs: Math.min(config.workflowTimeouts.prReviewMs, 120_000),
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/unknown-task-result.schema.json'),
-    ...LIGHTWEIGHT_CODEX_PROFILE,
+    ...lightweightProfile(getActiveBackendId()),
     onLog: logStep,
   };
 

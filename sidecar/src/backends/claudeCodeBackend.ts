@@ -70,10 +70,9 @@ export const claudeCodeBackend: AgentBackend = {
     if (request.model) {
       args.push('--model', request.model);
     }
-    // Claude Code writes to stdout; redirect captured output to the file
-    // via the runner's stdout capture. outputPath is used by the generic runner
-    // to read the final message, so we pass --output to write there.
-    args.push('--output', outputPath);
+    // Claude Code writes JSON to stdout when --output-format json is set.
+    // The generic runner captures stdout and falls back to it when the
+    // output file is missing, so we do not pass an --output flag here.
     return args;
   },
 

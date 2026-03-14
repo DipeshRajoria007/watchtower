@@ -4,6 +4,7 @@ import { runCodex } from '../src/codex/runCodex.js';
 
 vi.mock('../src/codex/runCodex.js', () => ({
   runCodex: vi.fn(),
+  getActiveBackendId: vi.fn().mockReturnValue('codex'),
 }));
 
 vi.mock('../src/slack/threadContext.js', () => ({

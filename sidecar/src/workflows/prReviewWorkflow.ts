@@ -13,8 +13,8 @@ import { fetchThreadContext } from '../slack/threadContext.js';
 import { extractPrContext } from '../router/intentParser.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
-import { runCodex } from '../codex/runCodex.js';
-import { HIGH_REASONING_CODEX_PROFILE } from '../codex/modelProfiles.js';
+import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
+import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import { runAgentPipeline } from '../agents/pipeline.js';
 import type { PipelineStore } from '../agents/pipeline.js';
@@ -405,7 +405,7 @@ Requirements:
     timeoutMs: config.workflowTimeouts.prReviewMs,
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/pr-review-result.schema.json'),
     githubToken,
-    ...HIGH_REASONING_CODEX_PROFILE,
+    ...highReasoningProfile(getActiveBackendId()),
     onLog: logStep,
   };
 
