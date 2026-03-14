@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { WebClient } from '@slack/web-api';
-import { loadConfigFromDb } from './config.js';
+import { loadConfigFromDb, readAgentBackend } from './config.js';
 import { setActiveBackend } from './codex/runCodex.js';
 import { diagnoseFailure } from './learning/failureDoctor.js';
 import { applyLearning } from './learning/selfLearning.js';
@@ -619,6 +619,11 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         },
       });
       try {
+        // Hot-reload agent backend setting from DB before each workflow run
+        // so that settings changes take effect without restarting the sidecar.
+        const currentBackend = readAgentBackend(dbPath);
+        setActiveBackend(currentBackend);
+
         const result = await routeTask({
           task: routedTask,
           config,
