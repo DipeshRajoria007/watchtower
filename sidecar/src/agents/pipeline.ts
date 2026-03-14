@@ -11,7 +11,7 @@ import type {
 import type { WorkflowStepLogger } from '../types/contracts.js';
 import { buildPromptForRole } from './prompts.js';
 import { profileForAgentRole } from '../codex/modelProfiles.js';
-import { runCodex } from '../codex/runCodex.js';
+import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
 
 export type PipelineStore = {
   createPipelineRun(input: {
@@ -149,7 +149,7 @@ export async function runAgentPipeline(params: {
       previousSteps: steps,
     });
 
-    const profile = profileForAgentRole(role);
+    const profile = profileForAgentRole(role, getActiveBackendId());
     const schemaFile = SCHEMA_MAP[role];
     const schemaPath = schemaFile
       ? path.resolve(process.cwd(), `schemas/${schemaFile}`)
@@ -225,7 +225,7 @@ export async function runAgentPipeline(params: {
           ...ctx,
           previousSteps: steps,
         });
-        const coderProfile = profileForAgentRole('coder');
+        const coderProfile = profileForAgentRole('coder', getActiveBackendId());
         const coderSchemaPath = undefined; // coder has no dedicated schema
         const coderStart = Date.now();
 

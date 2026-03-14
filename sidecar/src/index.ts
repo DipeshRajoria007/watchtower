@@ -2,6 +2,7 @@ import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { WebClient } from '@slack/web-api';
 import { loadConfigFromDb } from './config.js';
+import { setActiveBackend } from './codex/runCodex.js';
 import { diagnoseFailure } from './learning/failureDoctor.js';
 import { applyLearning } from './learning/selfLearning.js';
 import {
@@ -25,6 +26,7 @@ assertMacOS();
 
 const dbPath = process.env.WATCHTOWER_DB_PATH ?? path.resolve(process.cwd(), 'watchtower.db');
 const config = loadConfigFromDb(dbPath);
+setActiveBackend(config.agentBackend);
 const store = new JobStore(dbPath);
 
 const queue: Array<{ event: SlackEventEnvelope; client: WebClient }> = [];

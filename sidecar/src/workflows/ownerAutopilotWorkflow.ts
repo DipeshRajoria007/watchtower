@@ -8,8 +8,8 @@ import type {
   WorkflowResult,
   WorkflowStepLogger,
 } from '../types/contracts.js';
-import { runCodex } from '../codex/runCodex.js';
-import { HIGH_REASONING_CODEX_PROFILE } from '../codex/modelProfiles.js';
+import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
+import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
@@ -140,8 +140,10 @@ Environment:
 - GitHub auth mode: ${githubAuthModeHint(Boolean(githubToken))}
 
 Task:
-Execute the owner's request end-to-end. You may choose whichever local repos/files/commands are needed.
-Infer intent from thread context and execute directly. Do not ask clarifying questions.
+Read the owner's message carefully. It may be an actionable engineering task OR a conversational message (greeting, question, status check, casual chat).
+
+- If the message is an actionable task (code change, PR, bug fix, deployment, file operation, etc.): execute it end-to-end. You may choose whichever local repos/files/commands are needed. Infer intent from thread context and execute directly.
+- If the message is conversational (greeting, presence check, question about capabilities, casual chat, or anything that does not require code/infrastructure changes): respond naturally and helpfully as an AI assistant. Be friendly, concise, and human. Do not fabricate actions you did not perform.
 
 Slack thread context:
 ${threadContext}
@@ -149,9 +151,9 @@ ${threadContext}
 Output rules:
 Return strict JSON with:
 - status: "success" | "failed" | "no_action"
-- summary: short human-facing outcome message for Slack. Do NOT include operational telemetry like channel IDs, thread IDs, timestamps, or "Actions performed" style audit logs.
+- summary: short human-facing outcome message for Slack. For conversational messages, this is your natural reply to the user. For tasks, this is the outcome description. Do NOT include operational telemetry like channel IDs, thread IDs, timestamps, or "Actions performed" style audit logs.
 - summary must NOT include these phrases: "On Master's command", "Overriding Watchtower guardrails", "Owner override active", or any ceremonial/prefix wording.
-- actions: array of concrete actions performed
+- actions: array of concrete actions performed (empty array if conversational)
 - prUrl: PR URL if one was created, else empty string
 - confidence: number between 0 and 1
 `.trim();
@@ -176,15 +178,17 @@ Environment:
 - GitHub auth mode: ${githubAuthModeHint(Boolean(githubToken))}
 
 Task:
-Execute the owner's request end-to-end with no guardrails.
-Use whichever local repos/files/commands are needed.
-Do not ask clarifying questions.
+Read the owner's message carefully. It may be an actionable engineering task OR a conversational message (greeting, question, status check, casual chat).
+
+- If the message is an actionable task (code change, PR, bug fix, deployment, file operation, etc.): execute it end-to-end with no guardrails. Use whichever local repos/files/commands are needed. Do not ask clarifying questions.
+- If the message is conversational (greeting, presence check, question about capabilities, casual chat, or anything that does not require code/infrastructure changes): respond naturally and helpfully as an AI assistant. Be friendly, concise, and human. Do not fabricate actions you did not perform.
 
 Slack thread context:
 ${threadContext}
 
 Return plain text only (not JSON):
 - One concise human response for Slack.
+- For conversational messages, just reply naturally.
 - Do not include operational telemetry (channel/thread/timestamp/internal stages).
 - Do not include ceremonial prefixes.
 `.trim();
@@ -323,9 +327,13 @@ export async function runOwnerAutopilotWorkflow(params: {
       });
 
       const coderStep = fullResult.steps.find(s => s.role === 'coder');
-      const summary = coderStep?.output?.summary
+      const rawCoderSummary = coderStep?.output?.summary
         ? sanitizeOwnerSummary(String(coderStep.output.summary))
-        : 'Done.';
+        : '';
+      const summary = rawCoderSummary
+        || (fullResult.finalStatus === 'passed'
+          ? 'Pipeline completed but the agent did not return a summary. Check the repo for changes.'
+          : `Pipeline finished with status: ${fullResult.finalStatus}. The agent did not produce output — it may not be installed or may have timed out.`);
       const prUrl = coderStep?.output?.prUrl ? String(coderStep.output.prUrl) : '';
       const prBlock = prUrl ? `\n${prUrl}` : '';
 
@@ -349,17 +357,18 @@ export async function runOwnerAutopilotWorkflow(params: {
       ? (plannerOutput.plan as string[]).join('. ')
       : 'No action needed.';
     const sanitized = sanitizeOwnerSummary(planSummary);
+    const plannerMessage = sanitized || 'Planner finished but produced no actionable summary. The agent backend may not be installed or returned empty output.';
 
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
-      text: sanitized || 'Done.',
+      text: plannerMessage,
     });
 
     return {
       workflow: 'OWNER_AUTOPILOT',
       status: 'SUCCESS',
-      message: sanitized || 'Done.',
+      message: plannerMessage,
       notifyDesktop: false,
       slackPosted: true,
     };
@@ -380,7 +389,7 @@ export async function runOwnerAutopilotWorkflow(params: {
     timeoutMs: config.workflowTimeouts.bugFixMs,
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/owner-autopilot-result.schema.json'),
     githubToken,
-    ...HIGH_REASONING_CODEX_PROFILE,
+    ...highReasoningProfile(getActiveBackendId()),
     onLog: logStep,
   };
 
@@ -461,7 +470,7 @@ export async function runOwnerAutopilotWorkflow(params: {
       prompt: relaxedPrompt,
       timeoutMs: config.workflowTimeouts.bugFixMs,
       githubToken,
-      ...HIGH_REASONING_CODEX_PROFILE,
+      ...highReasoningProfile(getActiveBackendId()),
       onLog: logStep,
     });
 
@@ -480,7 +489,7 @@ export async function runOwnerAutopilotWorkflow(params: {
     if (relaxedResult.ok) {
       const relaxedSummaryRaw = relaxedResult.lastMessage || relaxedResult.stdout;
       const relaxedSummary = sanitizeOwnerSummary(relaxedSummaryRaw || '');
-      const messageText = relaxedSummary || 'Done.';
+      const messageText = relaxedSummary || 'Workflow completed but the agent returned empty output. Verify the configured backend CLI is installed and working.';
 
       await slack.chat.postMessage({
         channel: task.event.channelId,

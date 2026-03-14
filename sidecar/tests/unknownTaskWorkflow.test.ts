@@ -6,6 +6,7 @@ import type { AppConfig, NormalizedTask } from '../src/types/contracts.js';
 
 vi.mock('../src/codex/runCodex.js', () => ({
   runCodex: vi.fn(),
+  getActiveBackendId: vi.fn().mockReturnValue('codex'),
 }));
 
 vi.mock('../src/slack/threadContext.js', () => ({

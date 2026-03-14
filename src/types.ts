@@ -112,6 +112,8 @@ export type JobLogEntry = {
   createdAt: string;
 };
 
+export type AgentBackendId = "codex" | "claude-code" | "cursor";
+
 export type AppSettings = {
   slackBotToken: string;
   slackAppToken: string;
@@ -135,6 +137,7 @@ export type AppSettings = {
   failureNotificationAudioMode: NotificationAudioMode;
   failureNotificationAudioDefaultSound: NotificationAudioDefaultSoundId;
   failureNotificationAudioCustomPath: string;
+  agentBackend: AgentBackendId;
 };
 
 export type SaveSettingsResponse = {
