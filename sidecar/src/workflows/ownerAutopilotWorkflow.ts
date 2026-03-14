@@ -554,8 +554,12 @@ export async function runOwnerAutopilotWorkflow(params: {
   const summaryRaw = String(result.parsedJson.summary ?? 'Owner request completed.');
   const summary = sanitizeOwnerSummary(summaryRaw);
   const prUrl = String(result.parsedJson.prUrl ?? '');
+  // When the agent returns no_action with high confidence and a summary,
+  // it's a conversational reply — skip the "No action required." prefix.
+  const isConversationalNoAction =
+    status === 'no_action' && summary && (Number.isFinite(confidence) ? confidence >= 0.8 : true);
   const statusIntro =
-    status === 'success'
+    status === 'success' || isConversationalNoAction
       ? ''
       : status === 'no_action'
         ? 'No action required.'
