@@ -18,6 +18,8 @@ const settingsSchema = z.object({
   repo_classifier_threshold: z.number().min(0).max(1).default(0.75),
   multi_agent_enabled: z.number().int().min(0).max(1).default(0),
   agent_backend: z.string().default('codex'),
+  pm_slack_user_ids: z.string().default(''),
+  pm_task_timeout_ms: z.number().int().positive().default(600000),
 });
 
 type SettingsRow = z.infer<typeof settingsSchema>;
@@ -76,7 +78,9 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
           bug_fix_timeout_ms,
           repo_classifier_threshold,
           COALESCE(multi_agent_enabled, 0) AS multi_agent_enabled,
-          COALESCE(agent_backend, 'codex') AS agent_backend
+          COALESCE(agent_backend, 'codex') AS agent_backend,
+          COALESCE(pm_slack_user_ids, '') AS pm_slack_user_ids,
+          COALESCE(pm_task_timeout_ms, 600000) AS pm_task_timeout_ms
          FROM app_settings
          WHERE id = 1
          LIMIT 1`
@@ -93,6 +97,18 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
     }
 
     return mapSettingsToConfig(parsed.data);
+  } finally {
+    db.close();
+  }
+}
+
+export function readAgentBackend(dbPath: string): AgentBackendId {
+  const db = new Database(dbPath);
+  try {
+    const row = db
+      .prepare(`SELECT COALESCE(agent_backend, 'codex') AS agent_backend FROM app_settings WHERE id = 1 LIMIT 1`)
+      .get() as { agent_backend?: string } | undefined;
+    return ((row?.agent_backend || 'codex') as AgentBackendId);
   } finally {
     db.close();
   }
@@ -120,10 +136,13 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
   const newtonWeb = mustBeAbsoluteExistingDir(settings.newton_web_path, 'newton_web_path');
   const newtonApi = mustBeAbsoluteExistingDir(settings.newton_api_path, 'newton_api_path');
 
+  const pmSlackUserIds = parseOwnerIds(settings.pm_slack_user_ids);
+
   return {
     platformPolicy: 'macos_only',
     bundleTargets: ['app', 'dmg'],
     ownerSlackUserIds,
+    pmSlackUserIds,
     botUserId: settings.bot_user_id.trim(),
     slackBotToken: settings.slack_bot_token.trim(),
     slackAppToken: settings.slack_app_token.trim(),
@@ -136,6 +155,7 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
     workflowTimeouts: {
       prReviewMs: settings.pr_review_timeout_ms,
       bugFixMs: settings.bug_fix_timeout_ms,
+      pmTaskMs: settings.pm_task_timeout_ms,
     },
     unknownTaskPolicy: 'desktop_only',
     uncertainRepoPolicy: 'desktop_only',
