@@ -90,7 +90,29 @@ export const claudeCodeBackend: AgentBackend = {
   },
 
   parseOutput(raw: string): { parsedJson?: Record<string, unknown>; strategy?: string } {
-    return parseStructuredOutput(raw);
+    // Claude Code with --output-format json wraps the response in:
+    // {"type":"result","subtype":"success","result":"<actual AI text>","session_id":"...","cost_usd":...}
+    // We need to unwrap the "result" field first, then parse the inner content.
+    const outerParsed = parseStructuredOutput(raw);
+    if (
+      outerParsed.parsedJson &&
+      outerParsed.parsedJson.type === 'result' &&
+      typeof outerParsed.parsedJson.result === 'string'
+    ) {
+      const innerText = (outerParsed.parsedJson.result as string).trim();
+      // Try to parse the inner text as the structured JSON we asked the model to produce
+      const innerParsed = parseStructuredOutput(innerText);
+      if (innerParsed.parsedJson) {
+        return { parsedJson: innerParsed.parsedJson, strategy: `claude_unwrap+${innerParsed.strategy}` };
+      }
+      // Inner text is plain text (not JSON) — surface it as a summary so workflows can use it
+      return {
+        parsedJson: { status: 'success', summary: innerText, actions: [], prUrl: '' },
+        strategy: 'claude_unwrap+plain_text',
+      };
+    }
+    // Fallback: not a Claude Code wrapper — try parsing raw output directly
+    return outerParsed;
   },
 
   availableModels(): string[] {
