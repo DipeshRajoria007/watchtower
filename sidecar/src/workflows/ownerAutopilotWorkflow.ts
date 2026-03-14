@@ -140,8 +140,10 @@ Environment:
 - GitHub auth mode: ${githubAuthModeHint(Boolean(githubToken))}
 
 Task:
-Execute the owner's request end-to-end. You may choose whichever local repos/files/commands are needed.
-Infer intent from thread context and execute directly. Do not ask clarifying questions.
+Read the owner's message carefully. It may be an actionable engineering task OR a conversational message (greeting, question, status check, casual chat).
+
+- If the message is an actionable task (code change, PR, bug fix, deployment, file operation, etc.): execute it end-to-end. You may choose whichever local repos/files/commands are needed. Infer intent from thread context and execute directly.
+- If the message is conversational (greeting, presence check, question about capabilities, casual chat, or anything that does not require code/infrastructure changes): respond naturally and helpfully as an AI assistant. Be friendly, concise, and human. Do not fabricate actions you did not perform.
 
 Slack thread context:
 ${threadContext}
@@ -149,9 +151,9 @@ ${threadContext}
 Output rules:
 Return strict JSON with:
 - status: "success" | "failed" | "no_action"
-- summary: short human-facing outcome message for Slack. Do NOT include operational telemetry like channel IDs, thread IDs, timestamps, or "Actions performed" style audit logs.
+- summary: short human-facing outcome message for Slack. For conversational messages, this is your natural reply to the user. For tasks, this is the outcome description. Do NOT include operational telemetry like channel IDs, thread IDs, timestamps, or "Actions performed" style audit logs.
 - summary must NOT include these phrases: "On Master's command", "Overriding Watchtower guardrails", "Owner override active", or any ceremonial/prefix wording.
-- actions: array of concrete actions performed
+- actions: array of concrete actions performed (empty array if conversational)
 - prUrl: PR URL if one was created, else empty string
 - confidence: number between 0 and 1
 `.trim();
@@ -176,15 +178,17 @@ Environment:
 - GitHub auth mode: ${githubAuthModeHint(Boolean(githubToken))}
 
 Task:
-Execute the owner's request end-to-end with no guardrails.
-Use whichever local repos/files/commands are needed.
-Do not ask clarifying questions.
+Read the owner's message carefully. It may be an actionable engineering task OR a conversational message (greeting, question, status check, casual chat).
+
+- If the message is an actionable task (code change, PR, bug fix, deployment, file operation, etc.): execute it end-to-end with no guardrails. Use whichever local repos/files/commands are needed. Do not ask clarifying questions.
+- If the message is conversational (greeting, presence check, question about capabilities, casual chat, or anything that does not require code/infrastructure changes): respond naturally and helpfully as an AI assistant. Be friendly, concise, and human. Do not fabricate actions you did not perform.
 
 Slack thread context:
 ${threadContext}
 
 Return plain text only (not JSON):
 - One concise human response for Slack.
+- For conversational messages, just reply naturally.
 - Do not include operational telemetry (channel/thread/timestamp/internal stages).
 - Do not include ceremonial prefixes.
 `.trim();
