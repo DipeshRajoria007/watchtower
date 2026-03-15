@@ -276,8 +276,7 @@ export function RunInspector({
           <p className="detail-error">{run.errorMessage}</p>
         ) : null}
 
-        {run.workflow === "PM_TASK" &&
-        run.status === "SUCCESS" &&
+        {run.status === "SUCCESS" &&
         onReviewChanges ? (
           <button
             className="primary-button"

@@ -39,29 +39,12 @@ const PROMPT_PRESETS = [
   },
 ];
 
-const PM_PROMPT_PRESETS = [
-  {
-    label: 'Fix this bug',
-    prompt: 'Fix this bug: [describe the issue and the URL where it occurs]',
-  },
-  {
-    label: 'Build a feature',
-    prompt: 'Build a feature: [describe what you need]',
-  },
-  {
-    label: 'Update the UI',
-    prompt: 'Update the UI: [describe the change you want]',
-  },
-];
-
 type SlackLaunchpadProps = {
   draft: string;
   focusToken: number;
   onDraftChange: (value: string) => void;
   onSubmit: () => void | Promise<void>;
   onTargetChange: (value: SlackCommandTarget) => void;
-  pmMode?: boolean;
-  onPmModeChange?: (enabled: boolean) => void;
   settingsRequired: boolean;
   submitting: boolean;
   target: SlackCommandTarget;
@@ -74,8 +57,6 @@ export function SlackLaunchpad({
   onDraftChange,
   onSubmit,
   onTargetChange,
-  pmMode = false,
-  onPmModeChange,
   settingsRequired,
   submitting,
   target,
@@ -182,16 +163,6 @@ export function SlackLaunchpad({
           </div>
 
           <div className="slack-toolbar-actions">
-            {isMiniOg && onPmModeChange ? (
-              <label className="slack-toolbar-checkbox">
-                <input
-                  type="checkbox"
-                  checked={pmMode}
-                  onChange={e => onPmModeChange(e.target.checked)}
-                />
-                <span>PM Mode</span>
-              </label>
-            ) : null}
             <button className="ghost-button slack-toolbar-button" type="button" onClick={openSlack}>
               Open Slack
             </button>
@@ -238,7 +209,7 @@ export function SlackLaunchpad({
       </div>
 
       <div className="slack-presets">
-        {(pmMode ? PM_PROMPT_PRESETS : PROMPT_PRESETS).map(preset => (
+        {PROMPT_PRESETS.map(preset => (
           <button
             key={preset.label}
             className="slack-preset"

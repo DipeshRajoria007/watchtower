@@ -7,8 +7,6 @@ type LaunchpadPageProps = {
   onDraftChange: (value: string) => void;
   onSubmit: () => void | Promise<void>;
   onTargetChange: (value: SlackCommandTarget) => void;
-  pmMode?: boolean;
-  onPmModeChange?: (enabled: boolean) => void;
   settingsRequired: boolean;
   submitting: boolean;
   target: SlackCommandTarget;
@@ -20,8 +18,6 @@ export function LaunchpadPage({
   onDraftChange,
   onSubmit,
   onTargetChange,
-  pmMode,
-  onPmModeChange,
   settingsRequired,
   submitting,
   target,
@@ -35,8 +31,6 @@ export function LaunchpadPage({
           onDraftChange={onDraftChange}
           onSubmit={onSubmit}
           onTargetChange={onTargetChange}
-          pmMode={pmMode}
-          onPmModeChange={onPmModeChange}
           settingsRequired={settingsRequired}
           submitting={submitting}
           target={target}

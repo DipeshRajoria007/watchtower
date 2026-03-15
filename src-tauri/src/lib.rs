@@ -819,10 +819,8 @@ fn derive_task_summary(
 
     match workflow {
         "PR_REVIEW" => "Pull request review".to_string(),
-        "BUG_FIX" => "Bug fix request".to_string(),
         "OWNER_AUTOPILOT" => "Owner request".to_string(),
         "DEV_ASSIST" => "Watchtower command".to_string(),
-        "PM_TASK" => "PM task request".to_string(),
         _ => "Workflow task".to_string(),
     }
 }

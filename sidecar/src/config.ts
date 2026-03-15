@@ -136,13 +136,10 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
   const newtonWeb = mustBeAbsoluteExistingDir(settings.newton_web_path, 'newton_web_path');
   const newtonApi = mustBeAbsoluteExistingDir(settings.newton_api_path, 'newton_api_path');
 
-  const pmSlackUserIds = parseOwnerIds(settings.pm_slack_user_ids);
-
   return {
     platformPolicy: 'macos_only',
     bundleTargets: ['app', 'dmg'],
     ownerSlackUserIds,
-    pmSlackUserIds,
     botUserId: settings.bot_user_id.trim(),
     slackBotToken: settings.slack_bot_token.trim(),
     slackAppToken: settings.slack_app_token.trim(),
@@ -155,7 +152,6 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
     workflowTimeouts: {
       prReviewMs: settings.pr_review_timeout_ms,
       bugFixMs: settings.bug_fix_timeout_ms,
-      pmTaskMs: settings.pm_task_timeout_ms,
     },
     unknownTaskPolicy: 'desktop_only',
     uncertainRepoPolicy: 'desktop_only',

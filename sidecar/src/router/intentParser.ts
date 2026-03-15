@@ -8,17 +8,6 @@ const PR_REVIEW_KEYWORDS = [
   /code review/i,
 ];
 
-const BUG_FIX_KEYWORDS = [
-  /bug/i,
-  /fix/i,
-  /broken/i,
-  /error/i,
-  /failing/i,
-  /regression/i,
-  /crash/i,
-  /issue/i,
-];
-
 const GITHUB_PR_REGEX = /https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)/g;
 
 export function detectMention(
@@ -87,31 +76,17 @@ function inferIntent(
     return 'DEV_ASSIST';
   }
 
-  // PM users mentioning the bot (or sending a DM) get routed to PM_TASK.
-  const isPmAuthor = config.pmSlackUserIds.includes(event.userId);
-  if (mention.detected && mention.type === 'bot' && isPmAuthor) {
-    return 'PM_TASK';
-  }
-
-  // Explicit [PM_TASK] prefix (from Launchpad PM mode) always routes to PM_TASK.
-  if ((event.text ?? '').includes('[PM_TASK]')) {
-    return 'PM_TASK';
-  }
-
-  const isOwnerAuthor = config.ownerSlackUserIds.includes(event.userId);
-  if (mention.detected && mention.type === 'bot' && isOwnerAuthor) {
-    return 'OWNER_AUTOPILOT';
-  }
-
+  // PR review keywords take priority — PR_REVIEW is a specialized workflow.
   const text = event.text ?? '';
   const isReview = PR_REVIEW_KEYWORDS.some(regex => regex.test(text));
   if (isReview) {
     return 'PR_REVIEW';
   }
 
-  const isBugFix = BUG_FIX_KEYWORDS.some(regex => regex.test(text));
-  if (isBugFix && config.allowedChannelsForBugFix.includes(event.channelId)) {
-    return 'BUG_FIX';
+  // Any bot mention (owner or non-owner) routes to OWNER_AUTOPILOT.
+  // The workflow itself determines trust level based on ownerSlackUserIds.
+  if (mention.detected && mention.type === 'bot') {
+    return 'OWNER_AUTOPILOT';
   }
 
   return 'UNKNOWN';

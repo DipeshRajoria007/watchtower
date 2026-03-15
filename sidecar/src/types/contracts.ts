@@ -1,5 +1,5 @@
 export type AgentBackendId = 'codex' | 'claude-code' | 'cursor';
-export type WorkflowIntent = 'PR_REVIEW' | 'BUG_FIX' | 'PM_TASK' | 'OWNER_AUTOPILOT' | 'DEV_ASSIST' | 'UNKNOWN';
+export type WorkflowIntent = 'PR_REVIEW' | 'OWNER_AUTOPILOT' | 'DEV_ASSIST' | 'UNKNOWN';
 export type WorkflowStatus = 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED';
 export type JobLogLevel = 'INFO' | 'WARN' | 'ERROR';
 export type PersonalityMode = 'normal';
@@ -28,11 +28,9 @@ export interface AppConfig {
     newtonWeb: string;
     newtonApi: string;
   };
-  pmSlackUserIds: string[];
   workflowTimeouts: {
     prReviewMs: number;
     bugFixMs: number;
-    pmTaskMs: number;
   };
   unknownTaskPolicy: 'desktop_only';
   uncertainRepoPolicy: 'desktop_only';

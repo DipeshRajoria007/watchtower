@@ -74,7 +74,7 @@ describe('intentParser', () => {
     expect(task.prContext?.repo).toBe('newton-web');
   });
 
-  it('classifies bug-fix intent only for allowed channel', () => {
+  it('routes any bot-mentioned bug request to owner-autopilot', () => {
     const task = normalizeTask(
       {
         ...baseEvent,
@@ -84,21 +84,9 @@ describe('intentParser', () => {
       [],
     );
 
-    expect(task.intent).toBe('BUG_FIX');
+    expect(task.intent).toBe('OWNER_AUTOPILOT');
 
-    const secondAllowed = normalizeTask(
-      {
-        ...baseEvent,
-        channelId: 'C02BUGS',
-        text: '<@UBOT1> fix this bug please',
-      },
-      config,
-      [],
-    );
-
-    expect(secondAllowed.intent).toBe('BUG_FIX');
-
-    const nonAllowed = normalizeTask(
+    const otherChannel = normalizeTask(
       {
         ...baseEvent,
         channelId: 'COTHER',
@@ -108,7 +96,7 @@ describe('intentParser', () => {
       [],
     );
 
-    expect(nonAllowed.intent).toBe('UNKNOWN');
+    expect(otherChannel.intent).toBe('OWNER_AUTOPILOT');
   });
 
   it('classifies PR review in any channel when mentioned', () => {
