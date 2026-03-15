@@ -41,6 +41,7 @@ export interface PipelineConfig {
   totalTimeoutMs?: number;
   abortOnCriticalFinding: boolean;
   slackProgressUpdates: boolean;
+  requireApproval?: boolean;
 }
 
 export interface PipelineResult {
