@@ -287,6 +287,8 @@ struct AppSettings {
     failure_notification_audio_default_sound: String,
     failure_notification_audio_custom_path: String,
     agent_backend: String,
+    pm_slack_user_ids: String,
+    pm_task_timeout_ms: i64,
 }
 
 #[derive(Serialize)]
@@ -334,6 +336,8 @@ impl Default for AppSettings {
             failure_notification_audio_default_sound: DEFAULT_NOTIFICATION_AUDIO_SOUND.to_string(),
             failure_notification_audio_custom_path: String::new(),
             agent_backend: "codex".to_string(),
+            pm_slack_user_ids: String::new(),
+            pm_task_timeout_ms: 600_000,
         }
     }
 }
@@ -408,7 +412,9 @@ pub fn run() {
             save_app_settings,
             submit_launchpad_task,
             import_notification_audio,
-            emit_preview_notification
+            emit_preview_notification,
+            get_job_diff,
+            create_pr_from_job
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -650,6 +656,104 @@ async fn emit_preview_notification(
     Ok(())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobDiffData {
+    job_id: String,
+    branch_name: String,
+    repo_path: String,
+    diff_text: String,
+    files: serde_json::Value,
+    insertions: i64,
+    deletions: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreatePrResponse {
+    pr_url: String,
+}
+
+#[tauri::command]
+async fn get_job_diff(
+    job_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<JobDiffData>, String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+
+    let mut stmt = connection
+        .prepare(
+            "SELECT job_id, branch_name, repo_path, diff_text, files_json, insertions, deletions
+             FROM job_diffs
+             WHERE job_id = ?
+             LIMIT 1",
+        )
+        .map_err(|err| format!("db prepare job_diffs failed: {err}"))?;
+
+    let result = stmt
+        .query_row(params![job_id], |row| {
+            let files_raw: String = row.get(4)?;
+            let files: serde_json::Value =
+                serde_json::from_str(&files_raw).unwrap_or(serde_json::Value::Array(vec![]));
+            Ok(JobDiffData {
+                job_id: row.get(0)?,
+                branch_name: row.get(1)?,
+                repo_path: row.get(2)?,
+                diff_text: row.get(3)?,
+                files,
+                insertions: row.get(5)?,
+                deletions: row.get(6)?,
+            })
+        })
+        .optional()
+        .map_err(|err| format!("db query job_diffs failed: {err}"))?;
+
+    Ok(result)
+}
+
+#[tauri::command]
+async fn create_pr_from_job(
+    job_id: String,
+    title: String,
+    body: String,
+    state: State<'_, AppState>,
+) -> Result<CreatePrResponse, String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+
+    let mut stmt = connection
+        .prepare(
+            "SELECT branch_name, repo_path FROM job_diffs WHERE job_id = ? LIMIT 1",
+        )
+        .map_err(|err| format!("db prepare job_diffs failed: {err}"))?;
+
+    let (branch_name, repo_path): (String, String) = stmt
+        .query_row(params![job_id], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .map_err(|err| format!("No diff found for job {job_id}: {err}"))?;
+
+    let output = std::process::Command::new("gh")
+        .args([
+            "pr", "create",
+            "--title", &title,
+            "--body", &body,
+            "--head", &branch_name,
+        ])
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|err| format!("Failed to run gh pr create: {err}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("gh pr create failed: {stderr}"));
+    }
+
+    let pr_url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(CreatePrResponse { pr_url })
+}
+
 fn query_runs(connection: &Connection, sql: &str) -> Result<Vec<RunSummary>, String> {
     let mut stmt = connection
         .prepare(sql)
@@ -718,6 +822,7 @@ fn derive_task_summary(
         "BUG_FIX" => "Bug fix request".to_string(),
         "OWNER_AUTOPILOT" => "Owner request".to_string(),
         "DEV_ASSIST" => "Watchtower command".to_string(),
+        "PM_TASK" => "PM task request".to_string(),
         _ => "Workflow task".to_string(),
     }
 }
@@ -1742,6 +1847,28 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
         "TEXT NOT NULL DEFAULT 'codex'",
     )?;
 
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS job_diffs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              job_id TEXT NOT NULL UNIQUE,
+              branch_name TEXT NOT NULL,
+              repo_path TEXT NOT NULL,
+              diff_text TEXT NOT NULL,
+              files_json TEXT NOT NULL,
+              insertions INTEGER NOT NULL DEFAULT 0,
+              deletions INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_job_diffs_job_id ON job_diffs(job_id);
+            ",
+        )
+        .map_err(|err| format!("db migration job_diffs failed: {err}"))?;
+
+    let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN pm_slack_user_ids TEXT NOT NULL DEFAULT ''", []);
+    let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN pm_task_timeout_ms INTEGER NOT NULL DEFAULT 600000", []);
+
     Ok(())
 }
 
@@ -1818,7 +1945,9 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
               failure_notification_audio_mode,
               failure_notification_audio_default_sound,
               failure_notification_audio_custom_path,
-              agent_backend
+              agent_backend,
+              COALESCE(pm_slack_user_ids, '') as pm_slack_user_ids,
+              COALESCE(pm_task_timeout_ms, 600000) as pm_task_timeout_ms
              FROM app_settings
              WHERE id = 1
              LIMIT 1",
@@ -1851,6 +1980,8 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
                 failure_notification_audio_default_sound: row.get(20)?,
                 failure_notification_audio_custom_path: row.get(21)?,
                 agent_backend: row.get(22)?,
+                pm_slack_user_ids: row.get(23)?,
+                pm_task_timeout_ms: row.get(24)?,
             })
         })
         .optional()
@@ -1888,8 +2019,10 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               failure_notification_audio_default_sound,
               failure_notification_audio_custom_path,
               agent_backend,
+              pm_slack_user_ids,
+              pm_task_timeout_ms,
               updated_at
-             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
               slack_bot_token=excluded.slack_bot_token,
               slack_app_token=excluded.slack_app_token,
@@ -1914,6 +2047,8 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               failure_notification_audio_default_sound=excluded.failure_notification_audio_default_sound,
               failure_notification_audio_custom_path=excluded.failure_notification_audio_custom_path,
               agent_backend=excluded.agent_backend,
+              pm_slack_user_ids=excluded.pm_slack_user_ids,
+              pm_task_timeout_ms=excluded.pm_task_timeout_ms,
               updated_at=excluded.updated_at",
             params![
                 settings.slack_bot_token.trim(),
@@ -1939,6 +2074,8 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
                 settings.failure_notification_audio_default_sound.trim(),
                 settings.failure_notification_audio_custom_path.trim(),
                 settings.agent_backend.trim(),
+                settings.pm_slack_user_ids.trim(),
+                settings.pm_task_timeout_ms,
                 Utc::now().to_rfc3339(),
             ],
         )

@@ -8,7 +8,9 @@ import type {
   WorkflowStepLogger,
 } from '../types/contracts.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
+import { downloadSlackImages } from '../slack/imageDownloader.js';
 import { classifyRepo } from '../router/repoClassifier.js';
+import { getBackend } from '../backends/registry.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
@@ -110,6 +112,34 @@ export async function runBugFixWorkflow(params: {
       repoPath,
     },
   });
+
+  // Download images from thread if present
+  const allFiles = threadMessages.flatMap(m => m.files ?? []);
+  let imagePaths: string[] = [];
+  if (allFiles.length > 0) {
+    try {
+      imagePaths = await downloadSlackImages({
+        files: allFiles,
+        botToken: config.slackBotToken,
+      });
+      logStep?.({
+        stage: 'bug_fix.images.downloaded',
+        message: `Downloaded ${imagePaths.length} image(s) from thread.`,
+        data: { count: imagePaths.length },
+      });
+    } catch {
+      logStep?.({
+        stage: 'bug_fix.images.download_failed',
+        message: 'Image download failed; continuing without images.',
+        level: 'WARN',
+      });
+    }
+  }
+
+  const backend = getBackend(getActiveBackendId());
+  const imageContext = imagePaths.length > 0 && !backend.supportsImages()
+    ? `\n\n[${imagePaths.length} image(s) attached in thread — this backend does not support image input]`
+    : '';
 
   await slack.chat.postMessage({
     channel: task.event.channelId,
@@ -213,7 +243,7 @@ ${buildMentionSystemPrompt({ task, workflow: 'BUG_FIX' })}
 You are running Watchtower bug-fix automation.
 
 Thread summary:
-${texts.join('\n---\n')}
+${texts.join('\n---\n')}${imageContext}
 
 GitHub auth mode:
 ${githubAuthModeHint(Boolean(githubToken))}
@@ -236,6 +266,7 @@ Requirements:
     timeoutMs: config.workflowTimeouts.bugFixMs,
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/bug-fix-result.schema.json'),
     githubToken,
+    imagePaths: imagePaths.length > 0 && backend.supportsImages() ? imagePaths : undefined,
     ...highReasoningProfile(getActiveBackendId()),
     onLog: logStep,
   };

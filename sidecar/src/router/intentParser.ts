@@ -87,6 +87,17 @@ function inferIntent(
     return 'DEV_ASSIST';
   }
 
+  // PM users mentioning the bot (or sending a DM) get routed to PM_TASK.
+  const isPmAuthor = config.pmSlackUserIds.includes(event.userId);
+  if (mention.detected && mention.type === 'bot' && isPmAuthor) {
+    return 'PM_TASK';
+  }
+
+  // Explicit [PM_TASK] prefix (from Launchpad PM mode) always routes to PM_TASK.
+  if ((event.text ?? '').includes('[PM_TASK]')) {
+    return 'PM_TASK';
+  }
+
   const isOwnerAuthor = config.ownerSlackUserIds.includes(event.userId);
   if (mention.detected && mention.type === 'bot' && isOwnerAuthor) {
     return 'OWNER_AUTOPILOT';

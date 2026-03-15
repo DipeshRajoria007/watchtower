@@ -37,6 +37,7 @@ type PipelineRunData = {
 type RunsPageProps = {
   data: DashboardData | null;
   liveSidecarLogs: string[];
+  onReviewChanges?: (runId: string) => void;
   onSubViewChange: (view: RunsSubView) => void;
   onSelectRun: (runId: string) => void;
   runsSubView: RunsSubView;
@@ -49,6 +50,7 @@ type RunsPageProps = {
 export function RunsPage({
   data,
   liveSidecarLogs,
+  onReviewChanges,
   onSubViewChange,
   onSelectRun,
   runsSubView,
@@ -169,7 +171,7 @@ export function RunsPage({
             />
           </SectionCard>
 
-          <RunInspector run={selectedRun} logs={selectedRunLogs} />
+          <RunInspector run={selectedRun} logs={selectedRunLogs} onReviewChanges={onReviewChanges} />
           {selectedRunPipeline && <AgentPipelineView pipelineRun={selectedRunPipeline} />}
         </section>
       )}

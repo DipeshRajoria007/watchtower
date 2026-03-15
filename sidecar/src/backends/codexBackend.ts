@@ -134,6 +134,10 @@ export const codexBackend: AgentBackend = {
     }
   },
 
+  supportsImages(): boolean {
+    return false;
+  },
+
   buildArgs(request: AgentRunRequest, outputPath: string): string[] {
     const args = ['exec', '--cd', request.cwd, '--full-auto', '--skip-git-repo-check'];
     if (request.model) {

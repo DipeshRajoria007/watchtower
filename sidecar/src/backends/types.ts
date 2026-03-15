@@ -10,6 +10,7 @@ export interface AgentBackend {
   displayName: string;
   resolveBinary(): string;
   isAvailable(): boolean;
+  supportsImages(): boolean;
   buildArgs(request: AgentRunRequest, outputPath: string): string[];
   buildEnv(request: AgentRunRequest, basePath: string): Record<string, string>;
   parseOutput(raw: string): { parsedJson?: Record<string, unknown>; strategy?: string };

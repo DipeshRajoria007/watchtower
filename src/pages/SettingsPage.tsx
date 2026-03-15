@@ -1017,6 +1017,47 @@ export function SettingsPage({
               </label>
             </div>
           </SectionCard>
+
+          <SectionCard
+            title="PM Configuration"
+            subtitle="Product manager users who can submit tasks via miniOG to create reviewable branches."
+          >
+            <div className="settings-fields two-column">
+              <label className="field">
+                <span>PM Slack User IDs</span>
+                <input
+                  type="text"
+                  value={settings.pmSlackUserIds}
+                  onChange={(event) =>
+                    updateSettings({ pmSlackUserIds: event.target.value })
+                  }
+                  placeholder="U01234567,U07654321"
+                />
+                <small className="field-hint">
+                  Comma-separated Slack user IDs. Messages from these users will
+                  route to the PM_TASK workflow instead of OWNER_AUTOPILOT.
+                </small>
+              </label>
+
+              <label className="field">
+                <span>PM Task Timeout (ms)</span>
+                <input
+                  type="number"
+                  min={60000}
+                  value={settings.pmTaskTimeoutMs}
+                  onChange={(event) =>
+                    updateSettings({
+                      pmTaskTimeoutMs: Number(event.target.value) || 600000,
+                    })
+                  }
+                />
+                <small className="field-hint">
+                  Maximum execution time for PM task workflows. Default: 600000
+                  (10 minutes).
+                </small>
+              </label>
+            </div>
+          </SectionCard>
         </div>
 
         <div className="settings-sticky-bar">
