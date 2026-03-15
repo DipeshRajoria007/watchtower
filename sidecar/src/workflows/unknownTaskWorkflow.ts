@@ -201,7 +201,6 @@ Return strict JSON with keys:
   const request: CodexRunRequest = {
     cwd: process.cwd(),
     prompt,
-    timeoutMs: Math.min(config.workflowTimeouts.prReviewMs, 120_000),
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/unknown-task-result.schema.json'),
     ...lightweightProfile(getActiveBackendId()),
     onLog: logStep,

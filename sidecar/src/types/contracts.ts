@@ -28,10 +28,6 @@ export interface AppConfig {
     newtonWeb: string;
     newtonApi: string;
   };
-  workflowTimeouts: {
-    prReviewMs: number;
-    bugFixMs: number;
-  };
   unknownTaskPolicy: 'desktop_only';
   uncertainRepoPolicy: 'desktop_only';
   unmappedPrRepoPolicy: 'desktop_only';
@@ -113,7 +109,7 @@ export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 export interface CodexRunRequest {
   cwd: string;
   prompt: string;
-  timeoutMs: number;
+  timeoutMs?: number;
   outputSchemaPath?: string;
   githubToken?: string;
   model?: string;

@@ -395,8 +395,6 @@ export async function runOwnerAutopilotWorkflow(params: {
     const plannerPipelineConfig: PipelineConfig = {
       agents: ['planner'],
       maxRetryLoops: 0,
-      perAgentTimeoutMs: config.workflowTimeouts.bugFixMs / 5,
-      totalTimeoutMs: config.workflowTimeouts.bugFixMs,
       abortOnCriticalFinding: false,
       slackProgressUpdates: false,
     };
@@ -427,8 +425,6 @@ export async function runOwnerAutopilotWorkflow(params: {
       const fullPipelineConfig: PipelineConfig = {
         agents: ['planner', 'coder', 'reviewer', 'verifier'],
         maxRetryLoops: 2,
-        perAgentTimeoutMs: config.workflowTimeouts.bugFixMs / 4,
-        totalTimeoutMs: config.workflowTimeouts.bugFixMs,
         abortOnCriticalFinding: true,
         slackProgressUpdates: true,
       };
@@ -521,7 +517,7 @@ export async function runOwnerAutopilotWorkflow(params: {
   const request: CodexRunRequest = {
     cwd,
     prompt,
-    timeoutMs: config.workflowTimeouts.bugFixMs,
+
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/owner-autopilot-result.schema.json'),
     githubToken,
     imagePaths: imagePaths.length > 0 && backend.supportsImages() ? imagePaths : undefined,
@@ -534,7 +530,7 @@ export async function runOwnerAutopilotWorkflow(params: {
     message: 'Starting owner-autopilot Codex execution with high-reasoning profile.',
     data: {
       cwd,
-      timeoutMs: config.workflowTimeouts.bugFixMs,
+  
       isOwnerAuthor,
     },
   });
@@ -608,7 +604,7 @@ export async function runOwnerAutopilotWorkflow(params: {
       const relaxedResult = await runCodex({
         cwd,
         prompt: relaxedPrompt,
-        timeoutMs: config.workflowTimeouts.bugFixMs,
+    
         githubToken,
         imagePaths: imagePaths.length > 0 && backend.supportsImages() ? imagePaths : undefined,
         ...highReasoningProfile(getActiveBackendId()),

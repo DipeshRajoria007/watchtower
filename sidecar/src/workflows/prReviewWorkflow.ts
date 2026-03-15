@@ -319,8 +319,6 @@ export async function runPrReviewWorkflow(params: {
     const pipelineConfig: PipelineConfig = {
       agents: ['planner', 'reviewer', 'security', 'performance'],
       maxRetryLoops: 0,
-      perAgentTimeoutMs: config.workflowTimeouts.prReviewMs / 4,
-      totalTimeoutMs: config.workflowTimeouts.prReviewMs,
       abortOnCriticalFinding: true,
       slackProgressUpdates: true,
     };
@@ -402,7 +400,6 @@ Requirements:
   const request: CodexRunRequest = {
     cwd: repoPath,
     prompt,
-    timeoutMs: config.workflowTimeouts.prReviewMs,
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/pr-review-result.schema.json'),
     githubToken,
     ...highReasoningProfile(getActiveBackendId()),
@@ -414,7 +411,6 @@ Requirements:
     message: 'Starting Codex PR review execution with high-reasoning profile.',
     data: {
       repoPath,
-      timeoutMs: config.workflowTimeouts.prReviewMs,
     },
   });
 

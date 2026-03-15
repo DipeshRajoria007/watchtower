@@ -234,25 +234,29 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
   });
 
   try {
-    const exitCode = await withTimeout(
-      new Promise<number | null>((resolve, reject) => {
-        child.on('error', reject);
-        child.on('close', code => resolve(code));
-      }),
-      request.timeoutMs,
-      () => {
-        timedOut = true;
-        request.onLog?.({
-          stage: 'agent.timeout',
-          message: `${backend.displayName} execution exceeded timeout and was force-killed.`,
-          level: 'ERROR',
-          data: {
-            timeoutMs: request.timeoutMs,
-          },
-        });
-        child.kill('SIGKILL');
-      }
-    );
+    const childDone = new Promise<number | null>((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', code => resolve(code));
+    });
+
+    const exitCode = request.timeoutMs
+      ? await withTimeout(
+          childDone,
+          request.timeoutMs,
+          () => {
+            timedOut = true;
+            request.onLog?.({
+              stage: 'agent.timeout',
+              message: `${backend.displayName} execution exceeded timeout and was force-killed.`,
+              level: 'ERROR',
+              data: {
+                timeoutMs: request.timeoutMs,
+              },
+            });
+            child.kill('SIGKILL');
+          }
+        )
+      : await childDone;
 
     request.onLog?.({
       stage: 'agent.process.exit',

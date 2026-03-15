@@ -124,8 +124,6 @@ export type AppSettings = {
   newtonWebPath: string;
   newtonApiPath: string;
   maxConcurrentJobs: number;
-  prReviewTimeoutMs: number;
-  bugFixTimeoutMs: number;
   repoClassifierThreshold: number;
   themePreset: ThemePresetId;
   themeBackgroundColor: string;

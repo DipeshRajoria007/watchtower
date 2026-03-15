@@ -211,16 +211,18 @@ export async function runAgentPipeline(params: {
   let planScope = 'unknown';
 
   for (let i = 0; i < agents.length; i++) {
-    const elapsed = Date.now() - pipelineStart;
-    if (elapsed >= totalTimeoutMs) {
-      logStep({
-        stage: 'pipeline.timeout',
-        message: 'Pipeline total timeout exceeded.',
-        level: 'ERROR',
-        data: { elapsed, totalTimeoutMs },
-      });
-      aborted = true;
-      break;
+    if (totalTimeoutMs) {
+      const elapsed = Date.now() - pipelineStart;
+      if (elapsed >= totalTimeoutMs) {
+        logStep({
+          stage: 'pipeline.timeout',
+          message: 'Pipeline total timeout exceeded.',
+          level: 'ERROR',
+          data: { elapsed, totalTimeoutMs },
+        });
+        aborted = true;
+        break;
+      }
     }
 
     const role = agents[i];
@@ -251,7 +253,6 @@ export async function runAgentPipeline(params: {
     const result = await runCodex({
       cwd: ctx.repoPath,
       prompt,
-      timeoutMs: Math.min(perAgentTimeoutMs, totalTimeoutMs - (Date.now() - pipelineStart)),
       outputSchemaPath: schemaPath,
       githubToken: ctx.githubToken,
       ...profile,
@@ -355,7 +356,6 @@ export async function runAgentPipeline(params: {
         const coderRetryResult = await runCodex({
           cwd: ctx.repoPath,
           prompt: coderPrompt,
-          timeoutMs: Math.min(perAgentTimeoutMs, totalTimeoutMs - (Date.now() - pipelineStart)),
           outputSchemaPath: coderSchemaPath,
           githubToken: ctx.githubToken,
           ...coderProfile,

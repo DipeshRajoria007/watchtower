@@ -149,10 +149,6 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
       newtonWeb,
       newtonApi,
     },
-    workflowTimeouts: {
-      prReviewMs: settings.pr_review_timeout_ms,
-      bugFixMs: settings.bug_fix_timeout_ms,
-    },
     unknownTaskPolicy: 'desktop_only',
     uncertainRepoPolicy: 'desktop_only',
     unmappedPrRepoPolicy: 'desktop_only',
