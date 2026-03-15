@@ -37,8 +37,8 @@ export interface AgentContext {
 export interface PipelineConfig {
   agents: AgentRole[];
   maxRetryLoops: number;
-  perAgentTimeoutMs: number;
-  totalTimeoutMs: number;
+  perAgentTimeoutMs?: number;
+  totalTimeoutMs?: number;
   abortOnCriticalFinding: boolean;
   slackProgressUpdates: boolean;
 }

@@ -33,10 +33,6 @@ const config = {
     newtonWeb: '/Users/dipesh/code/newton-web',
     newtonApi: '/Users/dipesh/code/newton-api',
   },
-  workflowTimeouts: {
-    prReviewMs: 720000,
-    bugFixMs: 2700000,
-  },
   unknownTaskPolicy: 'desktop_only' as const,
   uncertainRepoPolicy: 'desktop_only' as const,
   unmappedPrRepoPolicy: 'desktop_only' as const,

@@ -344,17 +344,13 @@ export function SettingsPage({
       label: "Runtime Limits",
       complete: [
         settings.maxConcurrentJobs >= 1 && settings.maxConcurrentJobs <= 10,
-        settings.prReviewTimeoutMs > 0,
-        settings.bugFixTimeoutMs > 0,
         settings.repoClassifierThreshold >= 0 &&
           settings.repoClassifierThreshold <= 1,
       ].filter(Boolean).length,
-      items: 4,
+      items: 2,
       ready:
         settings.maxConcurrentJobs >= 1 &&
         settings.maxConcurrentJobs <= 10 &&
-        settings.prReviewTimeoutMs > 0 &&
-        settings.bugFixTimeoutMs > 0 &&
         settings.repoClassifierThreshold >= 0 &&
         settings.repoClassifierThreshold <= 1,
     },
@@ -936,34 +932,6 @@ export function SettingsPage({
                   onChange={(event) =>
                     updateSettings({
                       maxConcurrentJobs: Number(event.target.value) || 1,
-                    })
-                  }
-                />
-              </label>
-
-              <label className="field">
-                <span>PR Review Timeout (ms)</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={settings.prReviewTimeoutMs}
-                  onChange={(event) =>
-                    updateSettings({
-                      prReviewTimeoutMs: Number(event.target.value) || 1,
-                    })
-                  }
-                />
-              </label>
-
-              <label className="field">
-                <span>Bug Fix Timeout (ms)</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={settings.bugFixTimeoutMs}
-                  onChange={(event) =>
-                    updateSettings({
-                      bugFixTimeoutMs: Number(event.target.value) || 1,
                     })
                   }
                 />

@@ -26,10 +26,6 @@ const config: AppConfig = {
     newtonWeb: repoRoot,
     newtonApi: repoRoot,
   },
-  workflowTimeouts: {
-    prReviewMs: 720000,
-    bugFixMs: 2700000,
-  },
   unknownTaskPolicy: 'desktop_only',
   uncertainRepoPolicy: 'desktop_only',
   unmappedPrRepoPolicy: 'desktop_only',
