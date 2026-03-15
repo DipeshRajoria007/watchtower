@@ -98,12 +98,12 @@ function buildCompletionMessage(role: AgentRole, status: string, nextRole?: Agen
   };
 
   const nextAction: Record<AgentRole, string> = {
-    planner: 'starting implementation.',
-    coder: 'moving to code review.',
-    reviewer: 'running security scan.',
-    security: 'checking performance.',
-    performance: 'running final verification.',
-    verifier: 'wrapping up.',
+    planner: 'building the execution plan.',
+    coder: 'starting implementation.',
+    reviewer: 'moving to code review.',
+    security: 'running security scan.',
+    performance: 'checking performance.',
+    verifier: 'running final verification.',
   };
 
   return `${done} ${transitions[role]}${nextAction[nextRole]}`;
