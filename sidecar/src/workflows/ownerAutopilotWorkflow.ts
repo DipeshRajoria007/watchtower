@@ -14,9 +14,12 @@ import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
+import { downloadSlackImages } from '../slack/imageDownloader.js';
+import { classifyRepo } from '../router/repoClassifier.js';
+import { getBackend } from '../backends/registry.js';
 import { runAgentPipeline } from '../agents/pipeline.js';
 import type { PipelineStore } from '../agents/pipeline.js';
-import type { AgentRole, PipelineConfig } from '../agents/types.js';
+import type { PipelineConfig } from '../agents/types.js';
 
 function resolveOwnerWorkspaceRoot(config: AppConfig): string {
   const webParent = path.dirname(config.repoPaths.newtonWeb);
@@ -125,8 +128,9 @@ function buildOwnerPrimaryPrompt(params: {
   workspaceRoot: string;
   githubToken?: string;
   threadContext: string;
+  imageContext: string;
 }): string {
-  const { task, config, workspaceRoot, githubToken, threadContext } = params;
+  const { task, config, workspaceRoot, githubToken, threadContext, imageContext } = params;
   return `
 ${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT' })}
 
@@ -146,7 +150,7 @@ Read the owner's message carefully. It may be an actionable engineering task OR 
 - If the message is conversational (greeting, presence check, question about capabilities, casual chat, or anything that does not require code/infrastructure changes): respond naturally and helpfully as an AI assistant. Be friendly, concise, and human. Do not fabricate actions you did not perform.
 
 Slack thread context:
-${threadContext}
+${threadContext}${imageContext}
 
 Output rules:
 Return strict JSON with:
@@ -165,8 +169,9 @@ function buildOwnerRelaxedPrompt(params: {
   workspaceRoot: string;
   githubToken?: string;
   threadContext: string;
+  imageContext: string;
 }): string {
-  const { task, config, workspaceRoot, githubToken, threadContext } = params;
+  const { task, config, workspaceRoot, githubToken, threadContext, imageContext } = params;
   return `
 ${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT' })}
 
@@ -184,13 +189,55 @@ Read the owner's message carefully. It may be an actionable engineering task OR 
 - If the message is conversational (greeting, presence check, question about capabilities, casual chat, or anything that does not require code/infrastructure changes): respond naturally and helpfully as an AI assistant. Be friendly, concise, and human. Do not fabricate actions you did not perform.
 
 Slack thread context:
-${threadContext}
+${threadContext}${imageContext}
 
 Return plain text only (not JSON):
 - One concise human response for Slack.
 - For conversational messages, just reply naturally.
 - Do not include operational telemetry (channel/thread/timestamp/internal stages).
 - Do not include ceremonial prefixes.
+`.trim();
+}
+
+function buildGuardrailedPrompt(params: {
+  task: NormalizedTask;
+  repoPath: string;
+  repoName: string;
+  githubToken?: string;
+  threadContext: string;
+  imageContext: string;
+}): string {
+  const { task, repoPath, repoName, githubToken, threadContext, imageContext } = params;
+  return `
+${buildMentionSystemPrompt({ task, workflow: 'OWNER_AUTOPILOT' })}
+
+You are running Watchtower autopilot mode with repository-scoped guardrails.
+
+Environment:
+- Working directory: ${repoPath}
+- Repository: ${repoName}
+- GitHub auth mode: ${githubAuthModeHint(Boolean(githubToken))}
+
+GUARDRAILS:
+- Work only within this repository directory. Do not access or modify files outside of it.
+- Do not run destructive git commands (force push, reset --hard, etc.).
+
+Task:
+Read the user's message carefully. It may be an actionable engineering task OR a conversational message (greeting, question about the codebase, status check, or general inquiry).
+
+- If the message is an actionable task (code change, bug fix, feature implementation, etc.): implement it within the repository. Create a branch, commit your changes, and open a PR to the default branch.
+- If the message is conversational (question about the codebase, how something works, where to find something, etc.): respond naturally and helpfully. You can read code to answer questions without making changes.
+
+Slack thread context:
+${threadContext}${imageContext}
+
+Output rules:
+Return strict JSON with:
+- status: "success" | "failed" | "no_action"
+- summary: short human-facing outcome message for Slack
+- actions: array of concrete actions performed (empty array if conversational)
+- prUrl: PR URL if one was created, else empty string
+- confidence: number between 0 and 1
 `.trim();
 }
 
@@ -203,22 +250,67 @@ export async function runOwnerAutopilotWorkflow(params: {
   logStep?: WorkflowStepLogger;
 }): Promise<WorkflowResult> {
   const { task, config, slack, store, jobId, logStep } = params;
+  const isOwnerAuthor = config.ownerSlackUserIds.includes(task.event.userId);
 
   logStep?.({
     stage: 'owner_autopilot.context.fetch.start',
     message: 'Fetching thread context for owner-autopilot execution.',
+    data: { isOwnerAuthor },
   });
 
   const threadMessages = await fetchThreadContext(slack, task.event.channelId, task.event.threadTs).catch(() => []);
-  const workspaceRoot = resolveOwnerWorkspaceRoot(config);
   const threadContext = formatThreadContext(task, threadMessages);
+
+  // --- Resolve working directory based on trust level ---
+  let cwd: string;
+  let repoName: string | undefined;
+
+  if (isOwnerAuthor) {
+    cwd = resolveOwnerWorkspaceRoot(config);
+  } else {
+    // Non-owner: classify repo and restrict to that path
+    const texts = [task.event.text, ...threadMessages.map(m => m.text)];
+    const classification = classifyRepo(texts, config.repoClassifierThreshold);
+
+    logStep?.({
+      stage: 'owner_autopilot.repo.classified',
+      message: 'Classified repository for guardrailed execution.',
+      data: {
+        selectedRepo: classification.selectedRepo,
+        confidence: classification.confidence,
+        uncertain: classification.uncertain,
+      },
+    });
+
+    if (classification.uncertain || !classification.selectedRepo) {
+      notifyDesktop(
+        'Watchtower uncertain repo classification',
+        `Could not confidently classify task thread ${task.event.threadTs} (confidence=${classification.confidence.toFixed(2)}).`
+      );
+
+      return {
+        workflow: 'OWNER_AUTOPILOT',
+        status: 'SKIPPED',
+        message: 'Repo classification uncertain; desktop notification only.',
+        notifyDesktop: true,
+        slackPosted: false,
+        result: { classification },
+      };
+    }
+
+    repoName = classification.selectedRepo;
+    cwd = classification.selectedRepo === 'newton-web'
+      ? config.repoPaths.newtonWeb
+      : config.repoPaths.newtonApi;
+  }
 
   logStep?.({
     stage: 'owner_autopilot.context.fetch.done',
     message: 'Thread context resolved for owner-autopilot execution.',
     data: {
       messages: threadMessages.length,
-      workspaceRoot,
+      cwd,
+      isOwnerAuthor,
     },
   });
 
@@ -227,8 +319,8 @@ export async function runOwnerAutopilotWorkflow(params: {
     message: 'Skipped owner-autopilot acknowledgement message by configuration.',
   });
 
-  const ownerInput = stripMentions(task.event.text);
-  if (isPresencePing(ownerInput)) {
+  const userInput = stripMentions(task.event.text);
+  if (isPresencePing(userInput)) {
     const presenceReply = buildPresenceReply(task.event.eventTs);
     await slack.chat.postMessage({
       channel: task.event.channelId,
@@ -238,10 +330,8 @@ export async function runOwnerAutopilotWorkflow(params: {
 
     logStep?.({
       stage: 'owner_autopilot.presence.reply_posted',
-      message: 'Posted direct presence acknowledgement for lightweight owner ping.',
-      data: {
-        ownerInput,
-      },
+      message: 'Posted direct presence acknowledgement for lightweight ping.',
+      data: { userInput },
     });
 
     return {
@@ -252,6 +342,38 @@ export async function runOwnerAutopilotWorkflow(params: {
       slackPosted: true,
     };
   }
+
+  // --- Download images from thread ---
+  const allFiles = threadMessages.flatMap(m => m.files ?? []);
+  let imagePaths: string[] = [];
+  if (allFiles.length > 0) {
+    logStep?.({
+      stage: 'owner_autopilot.images.download.start',
+      message: `Downloading ${allFiles.length} image(s) from thread.`,
+    });
+    try {
+      imagePaths = await downloadSlackImages({
+        files: allFiles,
+        botToken: config.slackBotToken,
+      });
+      logStep?.({
+        stage: 'owner_autopilot.images.download.done',
+        message: `Downloaded ${imagePaths.length} image(s).`,
+        data: { count: imagePaths.length },
+      });
+    } catch (error) {
+      logStep?.({
+        stage: 'owner_autopilot.images.download.error',
+        message: `Image download failed: ${String(error)}`,
+        level: 'WARN',
+      });
+    }
+  }
+
+  const backend = getBackend(getActiveBackendId());
+  const imageContext = imagePaths.length > 0 && !backend.supportsImages()
+    ? `\n\n[${imagePaths.length} image(s) attached in thread — this backend does not support image input]`
+    : '';
 
   const githubToken = await resolveGithubTokenForCodex();
 
@@ -266,6 +388,7 @@ export async function runOwnerAutopilotWorkflow(params: {
     logStep?.({
       stage: 'owner_autopilot.pipeline.start',
       message: 'Running owner-autopilot through multi-agent pipeline.',
+      data: { isOwnerAuthor },
     });
 
     // Planner runs first to determine if code changes are needed
@@ -283,11 +406,12 @@ export async function runOwnerAutopilotWorkflow(params: {
         workflowIntent: 'OWNER_AUTOPILOT',
         task,
         config,
-        repoPath: workspaceRoot,
+        repoPath: cwd,
         githubToken,
         threadContext,
         previousSteps: [],
         pipelineConfig: plannerPipelineConfig,
+        imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
       },
       slack,
       logStep: logStep ?? (() => {}),
@@ -314,11 +438,12 @@ export async function runOwnerAutopilotWorkflow(params: {
           workflowIntent: 'OWNER_AUTOPILOT',
           task,
           config,
-          repoPath: workspaceRoot,
+          repoPath: cwd,
           githubToken,
           threadContext,
           previousSteps: [],
           pipelineConfig: fullPipelineConfig,
+          imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
         },
         slack,
         logStep: logStep ?? (() => {}),
@@ -374,21 +499,32 @@ export async function runOwnerAutopilotWorkflow(params: {
     };
   }
 
-  // --- Single-agent path (legacy) ---
-  const prompt = buildOwnerPrimaryPrompt({
-    task,
-    config,
-    workspaceRoot,
-    githubToken,
-    threadContext,
-  });
+  // --- Single-agent path ---
+  const prompt = isOwnerAuthor
+    ? buildOwnerPrimaryPrompt({
+        task,
+        config,
+        workspaceRoot: cwd,
+        githubToken,
+        threadContext,
+        imageContext,
+      })
+    : buildGuardrailedPrompt({
+        task,
+        repoPath: cwd,
+        repoName: repoName ?? 'unknown',
+        githubToken,
+        threadContext,
+        imageContext,
+      });
 
   const request: CodexRunRequest = {
-    cwd: workspaceRoot,
+    cwd,
     prompt,
     timeoutMs: config.workflowTimeouts.bugFixMs,
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/owner-autopilot-result.schema.json'),
     githubToken,
+    imagePaths: imagePaths.length > 0 && backend.supportsImages() ? imagePaths : undefined,
     ...highReasoningProfile(getActiveBackendId()),
     onLog: logStep,
   };
@@ -397,8 +533,9 @@ export async function runOwnerAutopilotWorkflow(params: {
     stage: 'owner_autopilot.codex.start',
     message: 'Starting owner-autopilot Codex execution with high-reasoning profile.',
     data: {
-      workspaceRoot,
+      cwd,
       timeoutMs: config.workflowTimeouts.bugFixMs,
+      isOwnerAuthor,
     },
   });
 
@@ -447,68 +584,73 @@ export async function runOwnerAutopilotWorkflow(params: {
   }
 
   if (!result.ok || !result.parsedJson) {
-    logStep?.({
-      stage: 'owner_autopilot.codex.retry_relaxed.start',
-      message: 'Primary owner-autopilot output failed; retrying Codex in relaxed text mode.',
-      level: 'WARN',
-      data: {
-        primaryOk: result.ok,
-        primaryExitCode: result.exitCode,
-        primaryParsedJson: Boolean(result.parsedJson),
-      },
-    });
+    // Only owners get the relaxed retry path
+    if (isOwnerAuthor) {
+      logStep?.({
+        stage: 'owner_autopilot.codex.retry_relaxed.start',
+        message: 'Primary owner-autopilot output failed; retrying Codex in relaxed text mode.',
+        level: 'WARN',
+        data: {
+          primaryOk: result.ok,
+          primaryExitCode: result.exitCode,
+          primaryParsedJson: Boolean(result.parsedJson),
+        },
+      });
 
-    const relaxedPrompt = buildOwnerRelaxedPrompt({
-      task,
-      config,
-      workspaceRoot,
-      githubToken,
-      threadContext,
-    });
-    const relaxedResult = await runCodex({
-      cwd: workspaceRoot,
-      prompt: relaxedPrompt,
-      timeoutMs: config.workflowTimeouts.bugFixMs,
-      githubToken,
-      ...highReasoningProfile(getActiveBackendId()),
-      onLog: logStep,
-    });
-
-    logStep?.({
-      stage: 'owner_autopilot.codex.retry_relaxed.finish',
-      message: 'Relaxed owner-autopilot Codex execution finished.',
-      level: relaxedResult.ok ? 'INFO' : 'WARN',
-      data: {
-        ok: relaxedResult.ok,
-        timedOut: relaxedResult.timedOut,
-        exitCode: relaxedResult.exitCode,
-        lastMessageBytes: Buffer.byteLength(relaxedResult.lastMessage),
-      },
-    });
-
-    if (relaxedResult.ok) {
-      const relaxedSummaryRaw = relaxedResult.lastMessage || relaxedResult.stdout;
-      const relaxedSummary = sanitizeOwnerSummary(relaxedSummaryRaw || '');
-      const messageText = relaxedSummary || 'Workflow completed but the agent returned empty output. Verify the configured backend CLI is installed and working.';
-
-      await slack.chat.postMessage({
-        channel: task.event.channelId,
-        thread_ts: task.event.threadTs,
-        text: messageText,
+      const relaxedPrompt = buildOwnerRelaxedPrompt({
+        task,
+        config,
+        workspaceRoot: cwd,
+        githubToken,
+        threadContext,
+        imageContext,
+      });
+      const relaxedResult = await runCodex({
+        cwd,
+        prompt: relaxedPrompt,
+        timeoutMs: config.workflowTimeouts.bugFixMs,
+        githubToken,
+        imagePaths: imagePaths.length > 0 && backend.supportsImages() ? imagePaths : undefined,
+        ...highReasoningProfile(getActiveBackendId()),
+        onLog: logStep,
       });
 
       logStep?.({
-        stage: 'owner_autopilot.slack.relaxed_success_posted',
-        message: 'Posted relaxed-mode owner-autopilot response in Slack thread.',
+        stage: 'owner_autopilot.codex.retry_relaxed.finish',
+        message: 'Relaxed owner-autopilot Codex execution finished.',
+        level: relaxedResult.ok ? 'INFO' : 'WARN',
+        data: {
+          ok: relaxedResult.ok,
+          timedOut: relaxedResult.timedOut,
+          exitCode: relaxedResult.exitCode,
+          lastMessageBytes: Buffer.byteLength(relaxedResult.lastMessage),
+        },
       });
 
-      return {
-        workflow: 'OWNER_AUTOPILOT',
-        status: 'SUCCESS',
-        message: messageText,
-        notifyDesktop: false,
-        slackPosted: true,
-      };
+      if (relaxedResult.ok) {
+        const relaxedSummaryRaw = relaxedResult.lastMessage || relaxedResult.stdout;
+        const relaxedSummary = sanitizeOwnerSummary(relaxedSummaryRaw || '');
+        const messageText = relaxedSummary || 'Workflow completed but the agent returned empty output. Verify the configured backend CLI is installed and working.';
+
+        await slack.chat.postMessage({
+          channel: task.event.channelId,
+          thread_ts: task.event.threadTs,
+          text: messageText,
+        });
+
+        logStep?.({
+          stage: 'owner_autopilot.slack.relaxed_success_posted',
+          message: 'Posted relaxed-mode owner-autopilot response in Slack thread.',
+        });
+
+        return {
+          workflow: 'OWNER_AUTOPILOT',
+          status: 'SUCCESS',
+          message: messageText,
+          notifyDesktop: false,
+          slackPosted: true,
+        };
+      }
     }
 
     const technicalError = result.timedOut

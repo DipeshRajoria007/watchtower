@@ -139,8 +139,6 @@ export type AppSettings = {
   failureNotificationAudioDefaultSound: NotificationAudioDefaultSoundId;
   failureNotificationAudioCustomPath: string;
   agentBackend: AgentBackendId;
-  pmSlackUserIds: string;
-  pmTaskTimeoutMs: number;
 };
 
 export type SaveSettingsResponse = {

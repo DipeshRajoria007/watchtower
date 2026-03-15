@@ -8,7 +8,6 @@ import type {
 import type { JobStore } from '../state/jobStore.js';
 
 const REVIEW_KEYWORDS = [/review/i, /pr\b/i, /pull request/i, /code review/i];
-const BUG_KEYWORDS = [/bug/i, /fix/i, /broken/i, /error/i, /failing/i, /regression/i, /crash/i, /issue/i];
 const CORRECTION_CUE = /\b(actually|instead|wrong|not this|no,|retry|again)\b/i;
 
 export type LearningResult = {
@@ -92,9 +91,6 @@ export function applyLearning(input: {
 function detectExplicitIntent(text: string, channelId: string, config: AppConfig): WorkflowIntent | undefined {
   if (REVIEW_KEYWORDS.some(regex => regex.test(text))) {
     return 'PR_REVIEW';
-  }
-  if (BUG_KEYWORDS.some(regex => regex.test(text)) && config.allowedChannelsForBugFix.includes(channelId)) {
-    return 'BUG_FIX';
   }
   return undefined;
 }

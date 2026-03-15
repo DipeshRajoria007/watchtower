@@ -126,7 +126,6 @@ function App() {
     useState<SlackCommandTarget>("miniog");
   const [slackComposerFocusToken, setSlackComposerFocusToken] = useState(0);
   const [reviewJobId, setReviewJobId] = useState<string | null>(null);
-  const [pmMode, setPmMode] = useState(false);
 
   const openReview = (jobId: string) => {
     setReviewJobId(jobId);
@@ -458,14 +457,11 @@ function App() {
     setSubmittingLaunchpadTask(true);
 
     try {
-      const promptToSend = pmMode
-        ? `[PM_TASK] ${slackComposerDraft}`
-        : slackComposerDraft;
       const result = await invoke<LaunchpadSubmitResponse>(
         "submit_launchpad_task",
         {
           target: slackCommandTarget,
-          prompt: promptToSend,
+          prompt: slackComposerDraft,
         },
       );
 
@@ -591,8 +587,6 @@ function App() {
           onDraftChange={setSlackComposerDraft}
           onSubmit={submitLaunchpadTask}
           onTargetChange={setSlackCommandTarget}
-          pmMode={pmMode}
-          onPmModeChange={setPmMode}
           settingsRequired={settingsIncomplete}
           submitting={submittingLaunchpadTask}
           target={slackCommandTarget}
