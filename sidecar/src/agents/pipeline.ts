@@ -12,6 +12,7 @@ import type { WorkflowStepLogger } from '../types/contracts.js';
 import { buildPromptForRole } from './prompts.js';
 import { profileForAgentRole } from '../codex/modelProfiles.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
+import { fetchThreadContext } from '../slack/threadContext.js';
 
 export type PipelineStore = {
   createPipelineRun(input: {
@@ -66,47 +67,33 @@ function determineStepStatus(output: Record<string, unknown>, findings: AgentFin
 }
 
 const ROLE_START_MESSAGES: Record<AgentRole, string> = {
-  planner: 'Planning agent is analyzing the task and building an execution plan.',
-  coder: 'Coding agent is implementing the changes.',
-  reviewer: 'Review agent is inspecting the code changes for quality and correctness.',
-  security: 'Security agent is scanning for vulnerabilities and unsafe patterns.',
-  performance: 'Performance agent is checking for regressions and bottlenecks.',
-  verifier: 'Verification agent is running final checks to confirm everything works.',
+  planner: 'Thinking through the approach...',
+  coder: 'Writing the code now.',
+  reviewer: 'Reviewing the changes for quality.',
+  security: 'Checking for security issues.',
+  performance: 'Checking for performance issues.',
+  verifier: 'Running final checks.',
 };
 
 function buildCompletionMessage(role: AgentRole, status: string, nextRole?: AgentRole): string {
-  const roleName: Record<AgentRole, string> = {
-    planner: 'Planning',
-    coder: 'Implementation',
-    reviewer: 'Code review',
-    security: 'Security scan',
-    performance: 'Performance check',
-    verifier: 'Verification',
-  };
-
-  const done = `${roleName[role]} ${status === 'passed' ? 'complete' : 'flagged issues'}.`;
-
-  if (!nextRole) return `${done} Pipeline finishing up.`;
+  if (!nextRole) {
+    return role === 'verifier'
+      ? 'All checks done. Wrapping up.'
+      : 'Done. Wrapping up.';
+  }
 
   const transitions: Record<AgentRole, string> = {
-    planner: 'Handing off the plan — ',
-    coder: 'Code is ready — ',
-    reviewer: 'Review wrapped up — ',
-    security: 'Security check done — ',
-    performance: 'Performance check done — ',
-    verifier: 'All checks done — ',
+    planner: "Got a plan. Starting the code changes.",
+    coder: "Code's done — running it through review.",
+    reviewer: status === 'passed'
+      ? 'Review looks good. Running final checks.'
+      : 'Review flagged some things. Running final checks.',
+    security: 'Security check done. Moving on.',
+    performance: 'Performance check done. Moving on.',
+    verifier: 'All checks done. Wrapping up.',
   };
 
-  const nextAction: Record<AgentRole, string> = {
-    planner: 'building the execution plan.',
-    coder: 'starting implementation.',
-    reviewer: 'moving to code review.',
-    security: 'running security scan.',
-    performance: 'checking performance.',
-    verifier: 'running final verification.',
-  };
-
-  return `${done} ${transitions[role]}${nextAction[nextRole]}`;
+  return transitions[role];
 }
 
 async function postSlackProgress(params: {
@@ -147,8 +134,16 @@ async function updateSlackMessage(params: {
   }
 }
 
-function formatPlanMessage(planSteps: string[], affectedFiles: string[], scope: string, completedSteps?: Set<number>): string {
-  const header = `*Execution Plan* (scope: ${scope}, ${affectedFiles.length} files affected)`;
+function stripRepoPrefix(filePath: string, repoPath: string): string {
+  if (filePath.startsWith(repoPath)) {
+    const relative = filePath.slice(repoPath.length);
+    return relative.startsWith('/') ? relative.slice(1) : relative;
+  }
+  return filePath;
+}
+
+function formatPlanMessage(planSteps: string[], affectedFiles: string[], scope: string, completedSteps?: Set<number>, repoPath?: string): string {
+  const header = `*Plan* (scope: ${scope}, ${affectedFiles.length} files affected)`;
   const stepLines = planSteps.map((step, i) => {
     const num = `${i + 1}.`;
     if (completedSteps?.has(i)) {
@@ -156,10 +151,75 @@ function formatPlanMessage(planSteps: string[], affectedFiles: string[], scope: 
     }
     return `${num} ${step}`;
   });
-  const filesSection = affectedFiles.length > 0
-    ? `\n\n*Affected files:*\n${affectedFiles.map(f => `• \`${f}\``).join('\n')}`
+  const displayFiles = repoPath
+    ? affectedFiles.map(f => stripRepoPrefix(f, repoPath))
+    : affectedFiles;
+  const filesSection = displayFiles.length > 0
+    ? `\n\n*Affected files:*\n${displayFiles.map(f => `• \`${f}\``).join('\n')}`
     : '';
   return `${header}\n${stepLines.join('\n')}${filesSection}`;
+}
+
+const APPROVE_PATTERNS = /^(yes|go|proceed|do it|go ahead|ship it|lgtm)$/i;
+const REJECT_PATTERNS = /^(no|stop|cancel|abort|nevermind|never mind)$/i;
+
+async function waitForApproval(params: {
+  slack: WebClient;
+  channelId: string;
+  threadTs: string;
+  triggerUserId: string;
+  approvalPromptTs: string;
+  logStep: WorkflowStepLogger;
+}): Promise<{ approved: boolean; userReply: string }> {
+  const { slack, channelId, threadTs, triggerUserId, approvalPromptTs, logStep } = params;
+  const pollIntervalMs = 5_000;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+
+    let messages: Array<{ text: string; user: string; ts: string }>;
+    try {
+      messages = await fetchThreadContext(slack, channelId, threadTs);
+    } catch {
+      // Transient Slack error — retry on next tick
+      continue;
+    }
+
+    // Find messages from the trigger user that are newer than the approval prompt
+    const userReplies = messages.filter(
+      m => m.user === triggerUserId && m.ts > approvalPromptTs,
+    );
+
+    if (userReplies.length === 0) continue;
+
+    const latestReply = userReplies[userReplies.length - 1];
+    const text = latestReply.text.trim();
+
+    if (APPROVE_PATTERNS.test(text)) {
+      logStep({
+        stage: 'pipeline.approval.approved',
+        message: `User approved the plan: "${text}"`,
+      });
+      return { approved: true, userReply: text };
+    }
+
+    if (REJECT_PATTERNS.test(text)) {
+      logStep({
+        stage: 'pipeline.approval.rejected',
+        message: `User rejected the plan: "${text}"`,
+      });
+      return { approved: false, userReply: text };
+    }
+
+    // Anything else is modification feedback — treat as approval with feedback
+    // (the caller can append this to context and re-run planner if desired)
+    logStep({
+      stage: 'pipeline.approval.feedback',
+      message: `User provided feedback: "${text}"`,
+    });
+    return { approved: true, userReply: text };
+  }
 }
 
 export async function runAgentPipeline(params: {
@@ -201,7 +261,7 @@ export async function runAgentPipeline(params: {
   await postSlackProgress({
     slack,
     ctx,
-    text: `Multi-agent pipeline started (${agents.length} agents: ${agents.join(' → ')}). I'll keep you updated as each phase completes.`,
+    text: `On it — planning the approach first, then I'll code it up, get it reviewed, and verify everything works.`,
   });
 
   // Track plan message so we can update it with strikethroughs during execution
@@ -298,8 +358,34 @@ export async function runAgentPipeline(params: {
         planMessageTs = await postSlackProgress({
           slack,
           ctx,
-          text: formatPlanMessage(planSteps, planAffectedFiles, planScope),
+          text: formatPlanMessage(planSteps, planAffectedFiles, planScope, undefined, ctx.repoPath),
         });
+      }
+
+      // Approval gate: wait for user to confirm the plan before proceeding
+      if (ctx.pipelineConfig.requireApproval && planMessageTs) {
+        const approvalPromptTs = await postSlackProgress({
+          slack,
+          ctx,
+          text: "Here's my plan. Should I go ahead? Reply in this thread:\n• \"yes\" or \"go\" — I'll start coding\n• \"no\" or \"stop\" — I'll cancel\n• Or reply with changes you'd like and I'll adjust",
+        });
+
+        if (approvalPromptTs) {
+          const approval = await waitForApproval({
+            slack,
+            channelId: ctx.task.event.channelId,
+            threadTs: ctx.task.event.threadTs,
+            triggerUserId: ctx.task.event.userId,
+            approvalPromptTs,
+            logStep,
+          });
+
+          if (!approval.approved) {
+            await postSlackProgress({ slack, ctx, text: "Got it, cancelling." });
+            aborted = true;
+            break;
+          }
+        }
       }
     }
 
@@ -310,7 +396,7 @@ export async function runAgentPipeline(params: {
         slack,
         ctx,
         ts: planMessageTs,
-        text: formatPlanMessage(planSteps, planAffectedFiles, planScope, allCompleted),
+        text: formatPlanMessage(planSteps, planAffectedFiles, planScope, allCompleted, ctx.repoPath),
       });
     }
 
@@ -403,10 +489,10 @@ export async function runAgentPipeline(params: {
 
   const durationSec = Math.round(totalDurationMs / 1000);
   const finishText = finalStatus === 'passed'
-    ? `All ${agents.length} agents finished successfully in ${durationSec}s. Preparing final output.`
+    ? `Done in ${durationSec}s. Preparing the summary.`
     : finalStatus === 'aborted'
-      ? `Pipeline aborted after ${durationSec}s due to a critical finding.`
-      : `Pipeline completed in ${durationSec}s with issues flagged by one or more agents.`;
+      ? `Finished in ${durationSec}s. Review flagged some concerns — see the summary below.`
+      : `Finished in ${durationSec}s with some issues flagged — details below.`;
   await postSlackProgress({ slack, ctx, text: finishText });
 
   if (store && jobId) {

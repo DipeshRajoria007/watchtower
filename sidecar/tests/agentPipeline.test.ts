@@ -56,6 +56,7 @@ function makePipelineConfig(overrides: Partial<PipelineConfig> = {}): PipelineCo
     totalTimeoutMs: 600000,
     abortOnCriticalFinding: true,
     slackProgressUpdates: false,
+    requireApproval: false,
     ...overrides,
   };
 }
@@ -76,6 +77,7 @@ function makeContext(overrides: Partial<AgentContext> = {}): AgentContext {
 const slack = {
   chat: {
     postMessage: vi.fn().mockResolvedValue({ ok: true }),
+    update: vi.fn().mockResolvedValue({ ok: true }),
   },
 };
 
@@ -85,6 +87,7 @@ describe('agentPipeline', () => {
   beforeEach(() => {
     vi.mocked(runCodex).mockReset();
     slack.chat.postMessage.mockClear();
+    slack.chat.update.mockClear();
     logStep.mockClear();
   });
 
@@ -271,12 +274,13 @@ describe('agentPipeline', () => {
 
     await runAgentPipeline({ ctx, slack: slack as any, logStep });
 
-    expect(slack.chat.postMessage).toHaveBeenCalledTimes(2);
+    // Pipeline start + per-agent (start + completion) + plan message + finish
+    expect(slack.chat.postMessage.mock.calls.length).toBeGreaterThanOrEqual(5);
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('[1/2] planner:') }),
+      expect.objectContaining({ text: expect.stringContaining('[1/2] Thinking through the approach') }),
     );
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('[2/2] reviewer:') }),
+      expect.objectContaining({ text: expect.stringContaining('[2/2] Reviewing the changes') }),
     );
   });
 

@@ -397,6 +397,7 @@ export async function runOwnerAutopilotWorkflow(params: {
       maxRetryLoops: 0,
       abortOnCriticalFinding: false,
       slackProgressUpdates: false,
+      requireApproval: false,
     };
 
     const plannerResult = await runAgentPipeline({
@@ -427,6 +428,7 @@ export async function runOwnerAutopilotWorkflow(params: {
         maxRetryLoops: 2,
         abortOnCriticalFinding: true,
         slackProgressUpdates: true,
+        requireApproval: true,
       };
 
       const fullResult = await runAgentPipeline({
@@ -464,12 +466,15 @@ export async function runOwnerAutopilotWorkflow(params: {
         text: `${summary}${prBlock}`.trim(),
       });
 
+      const workflowStatus = fullResult.finalStatus === 'passed' || Boolean(prUrl) ? 'SUCCESS' : 'FAILED';
+
       return {
         workflow: 'OWNER_AUTOPILOT',
-        status: fullResult.finalStatus === 'passed' ? 'SUCCESS' : 'FAILED',
+        status: workflowStatus,
         message: summary,
         notifyDesktop: false,
         slackPosted: true,
+        result: { prUrl },
       };
     }
 

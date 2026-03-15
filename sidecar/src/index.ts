@@ -632,8 +632,9 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
           jobId,
           logStep,
         });
+        const hasPrInResult = result.result?.prUrl && typeof result.result.prUrl === 'string' && result.result.prUrl !== '';
         const diagnosis =
-          result.status === 'FAILED'
+          result.status === 'FAILED' && !hasPrInResult
             ? diagnoseFailure({
                 workflow: routedTask.intent,
                 message: result.message,
