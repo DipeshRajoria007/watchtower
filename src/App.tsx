@@ -10,6 +10,7 @@ import { IntelligencePage } from "./pages/IntelligencePage";
 import { LaunchpadPage } from "./pages/LaunchpadPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { RunsPage } from "./pages/RunsPage";
+import { ReviewPage } from "./pages/ReviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import type {
   AppSettings,
@@ -124,6 +125,14 @@ function App() {
   const [slackCommandTarget, setSlackCommandTarget] =
     useState<SlackCommandTarget>("miniog");
   const [slackComposerFocusToken, setSlackComposerFocusToken] = useState(0);
+  const [reviewJobId, setReviewJobId] = useState<string | null>(null);
+  const [pmMode, setPmMode] = useState(false);
+
+  const openReview = (jobId: string) => {
+    setReviewJobId(jobId);
+    setView("review");
+    setNavDrawerOpen(false);
+  };
 
   const settingsIncomplete = useMemo(() => {
     return data ? !data.settingsConfigured : false;
@@ -449,11 +458,14 @@ function App() {
     setSubmittingLaunchpadTask(true);
 
     try {
+      const promptToSend = pmMode
+        ? `[PM_TASK] ${slackComposerDraft}`
+        : slackComposerDraft;
       const result = await invoke<LaunchpadSubmitResponse>(
         "submit_launchpad_task",
         {
           target: slackCommandTarget,
-          prompt: slackComposerDraft,
+          prompt: promptToSend,
         },
       );
 
@@ -579,6 +591,8 @@ function App() {
           onDraftChange={setSlackComposerDraft}
           onSubmit={submitLaunchpadTask}
           onTargetChange={setSlackCommandTarget}
+          pmMode={pmMode}
+          onPmModeChange={setPmMode}
           settingsRequired={settingsIncomplete}
           submitting={submittingLaunchpadTask}
           target={slackCommandTarget}
@@ -589,6 +603,7 @@ function App() {
         <RunsPage
           data={data}
           liveSidecarLogs={liveSidecarLogs}
+          onReviewChanges={openReview}
           onSelectRun={setSelectedRunId}
           onSubViewChange={setRunsSubView}
           runsSubView={runsSubView}
@@ -599,6 +614,16 @@ function App() {
       ) : null}
 
       {view === "intelligence" ? <IntelligencePage data={data} /> : null}
+
+      {view === "review" && reviewJobId ? (
+        <ReviewPage
+          jobId={reviewJobId}
+          onBack={() => {
+            setView("runs");
+            setReviewJobId(null);
+          }}
+        />
+      ) : null}
 
       {view === "settings" ? (
         <SettingsPage

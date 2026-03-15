@@ -31,6 +31,7 @@ export interface AgentContext {
   previousSteps: AgentStepResult[];
   pipelineConfig: PipelineConfig;
   policyPack?: { packName: string; rules: string[] };
+  imagePaths?: string[];
 }
 
 export interface PipelineConfig {

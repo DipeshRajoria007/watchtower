@@ -58,6 +58,10 @@ export const cursorBackend: AgentBackend = {
     }
   },
 
+  supportsImages(): boolean {
+    return false;
+  },
+
   buildArgs(request: AgentRunRequest, outputPath: string): string[] {
     const args = [
       '--prompt', request.prompt,

@@ -27,6 +27,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
     "react": "^19.1.1",
+    "react-diff-viewer-continued": "^4.2.0",
     "react-dom": "^19.1.1",
     "sonner": "^2.0.7"
   },

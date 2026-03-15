@@ -3,7 +3,8 @@ export type AppView =
   | "launchpad"
   | "runs"
   | "intelligence"
-  | "settings";
+  | "settings"
+  | "review";
 
 export type RunsSubView = "active" | "failures" | "recent" | "diagnostics";
 
@@ -138,6 +139,8 @@ export type AppSettings = {
   failureNotificationAudioDefaultSound: NotificationAudioDefaultSoundId;
   failureNotificationAudioCustomPath: string;
   agentBackend: AgentBackendId;
+  pmSlackUserIds: string;
+  pmTaskTimeoutMs: number;
 };
 
 export type SaveSettingsResponse = {
@@ -157,4 +160,31 @@ export type AppNotificationPayload = {
   title: string;
   body: string;
   tone: NotificationAudioTone;
+};
+
+export type DiffFileEntry = {
+  path: string;
+  status: "added" | "modified" | "deleted";
+  insertions: number;
+  deletions: number;
+};
+
+export type JobDiff = {
+  jobId: string;
+  branchName: string;
+  repoPath: string;
+  diffText: string;
+  files: DiffFileEntry[];
+  insertions: number;
+  deletions: number;
+};
+
+export type CreatePrRequest = {
+  jobId: string;
+  title: string;
+  body: string;
+};
+
+export type CreatePrResponse = {
+  prUrl: string;
 };

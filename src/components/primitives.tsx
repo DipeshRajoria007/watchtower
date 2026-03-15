@@ -219,9 +219,11 @@ export function RunList({
 
 export function RunInspector({
   logs,
+  onReviewChanges,
   run,
 }: {
   logs: JobLogEntry[];
+  onReviewChanges?: (runId: string) => void;
   run: RunSummary | null;
 }) {
   if (!run) {
@@ -272,6 +274,18 @@ export function RunInspector({
 
         {run.errorMessage ? (
           <p className="detail-error">{run.errorMessage}</p>
+        ) : null}
+
+        {run.workflow === "PM_TASK" &&
+        run.status === "SUCCESS" &&
+        onReviewChanges ? (
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => onReviewChanges(run.id)}
+          >
+            Review Changes
+          </button>
         ) : null}
       </article>
 

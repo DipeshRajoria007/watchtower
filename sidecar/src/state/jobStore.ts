@@ -248,11 +248,91 @@ export class JobStore {
         updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_agent_pipeline_runs_job_id ON agent_pipeline_runs(job_id);
+
+      CREATE TABLE IF NOT EXISTS job_diffs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL UNIQUE,
+        branch_name TEXT NOT NULL,
+        repo_path TEXT NOT NULL,
+        diff_text TEXT NOT NULL,
+        files_json TEXT NOT NULL,
+        insertions INTEGER NOT NULL DEFAULT 0,
+        deletions INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_job_diffs_job_id ON job_diffs(job_id);
     `);
+
+    // Add PM config columns to app_settings if missing
+    try {
+      this.db.exec(`ALTER TABLE app_settings ADD COLUMN pm_slack_user_ids TEXT NOT NULL DEFAULT ''`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE app_settings ADD COLUMN pm_task_timeout_ms INTEGER NOT NULL DEFAULT 600000`);
+    } catch { /* column already exists */ }
   }
 
   close(): void {
     this.db.close();
+  }
+
+  saveDiff(params: {
+    jobId: string;
+    branchName: string;
+    repoPath: string;
+    diffText: string;
+    files: Array<{ path: string; status: string; insertions: number; deletions: number }>;
+    insertions: number;
+    deletions: number;
+  }): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO job_diffs(
+          job_id, branch_name, repo_path, diff_text, files_json, insertions, deletions, created_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        params.jobId,
+        params.branchName,
+        params.repoPath,
+        params.diffText,
+        JSON.stringify(params.files),
+        params.insertions,
+        params.deletions,
+        now,
+      );
+  }
+
+  getDiff(jobId: string): {
+    jobId: string;
+    branchName: string;
+    repoPath: string;
+    diffText: string;
+    files: Array<{ path: string; status: string; insertions: number; deletions: number }>;
+    insertions: number;
+    deletions: number;
+    createdAt: string;
+  } | null {
+    const row = this.db
+      .prepare(
+        `SELECT job_id, branch_name, repo_path, diff_text, files_json, insertions, deletions, created_at
+         FROM job_diffs WHERE job_id = ? LIMIT 1`
+      )
+      .get(jobId) as Record<string, unknown> | undefined;
+
+    if (!row) return null;
+
+    return {
+      jobId: row.job_id as string,
+      branchName: row.branch_name as string,
+      repoPath: row.repo_path as string,
+      diffText: row.diff_text as string,
+      files: JSON.parse(row.files_json as string),
+      insertions: row.insertions as number,
+      deletions: row.deletions as number,
+      createdAt: row.created_at as string,
+    };
   }
 
   hasEvent(eventId: string): boolean {

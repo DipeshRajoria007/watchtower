@@ -61,14 +61,24 @@ export const claudeCodeBackend: AgentBackend = {
     }
   },
 
+  supportsImages(): boolean {
+    return true;
+  },
+
   buildArgs(request: AgentRunRequest, outputPath: string): string[] {
     const args = [
       '-p', request.prompt,
       '--output-format', 'json',
       '--max-turns', '50',
+      '--dangerously-skip-permissions',
     ];
     if (request.model) {
       args.push('--model', request.model);
+    }
+    if (request.imagePaths) {
+      for (const imagePath of request.imagePaths) {
+        args.push('--image', imagePath);
+      }
     }
     // Claude Code writes JSON to stdout when --output-format json is set.
     // The generic runner captures stdout and falls back to it when the
