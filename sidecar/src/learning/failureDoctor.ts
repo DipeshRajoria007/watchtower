@@ -99,6 +99,62 @@ export function diagnoseFailure(input: {
     };
   }
 
+  // --- Pipeline-specific error patterns (must come before generic timeout) ---
+
+  if (haystack.includes('pipeline.abort') && haystack.includes('critical finding')) {
+    return {
+      errorKind: 'PIPELINE_CRITICAL_FINDING',
+      summary: 'The pipeline was aborted because an agent found a critical issue.',
+      actions: [
+        'Review the critical findings in the pipeline results.',
+        'Fix the identified issues before re-running the task.',
+        'Set abortOnCriticalFinding to false if the finding is a false positive.',
+      ],
+    };
+  }
+
+  if (haystack.includes('pipeline.timeout') || haystack.includes('pipeline total timeout')) {
+    return {
+      errorKind: 'PIPELINE_TOTAL_TIMEOUT',
+      summary: 'The multi-agent pipeline exceeded its total execution timeout.',
+      actions: [
+        'Increase totalTimeoutMs in pipeline configuration.',
+        'Reduce the number of agents in the pipeline.',
+        'Narrow the task scope for faster agent execution.',
+      ],
+    };
+  }
+
+  if (haystack.includes('feedback_loop') && (haystack.includes('exhausted') || haystack.includes('max'))) {
+    return {
+      errorKind: 'REVIEWER_LOOP_EXHAUSTED',
+      summary: 'The reviewer-coder feedback loop reached maximum retries without approval.',
+      actions: [
+        'Review the reviewer findings to understand recurring issues.',
+        'Increase maxRetryLoops if the task is complex.',
+        'Simplify the task scope to reduce iteration cycles.',
+      ],
+    };
+  }
+
+  const agentTimeoutCount = input.logs.filter(
+    entry => entry.stage.includes('pipeline.agent') && entry.message.toLowerCase().includes('timeout'),
+  ).length;
+
+  if (agentTimeoutCount > 0) {
+    return {
+      errorKind: 'AGENT_TIMEOUT',
+      summary: 'One or more pipeline agents timed out during execution.',
+      actions: [
+        'Increase perAgentTimeoutMs in pipeline configuration.',
+        'Check if the agent task is too complex for the allocated time.',
+        'Consider using a faster model profile for non-critical agents.',
+      ],
+    };
+  }
+
+  // --- Generic error patterns ---
+
   if (haystack.includes('timeout') || haystack.includes('timed out')) {
     return {
       errorKind: 'WORKFLOW_TIMEOUT',
@@ -129,60 +185,6 @@ export function diagnoseFailure(input: {
       actions: [
         'Retry with backoff and lower parallelism.',
         'Reduce redundant retries for non-critical follow-up actions.',
-      ],
-    };
-  }
-
-  // --- Pipeline-specific error patterns ---
-
-  if (haystack.includes('pipeline.timeout') || haystack.includes('pipeline total timeout')) {
-    return {
-      errorKind: 'PIPELINE_TOTAL_TIMEOUT',
-      summary: 'The multi-agent pipeline exceeded its total execution timeout.',
-      actions: [
-        'Increase totalTimeoutMs in pipeline configuration.',
-        'Reduce the number of agents in the pipeline.',
-        'Narrow the task scope for faster agent execution.',
-      ],
-    };
-  }
-
-  if (haystack.includes('pipeline.abort') || haystack.includes('security_abort')) {
-    return {
-      errorKind: 'SECURITY_ABORT',
-      summary: 'The pipeline was aborted due to a critical security finding.',
-      actions: [
-        'Review the critical security finding in the pipeline results.',
-        'Fix the identified vulnerability before re-running.',
-        'Set abortOnCriticalFinding to false if the finding is a false positive.',
-      ],
-    };
-  }
-
-  if (haystack.includes('feedback_loop') && (haystack.includes('exhausted') || haystack.includes('max'))) {
-    return {
-      errorKind: 'REVIEWER_LOOP_EXHAUSTED',
-      summary: 'The reviewer-coder feedback loop reached maximum retries without approval.',
-      actions: [
-        'Review the reviewer findings to understand recurring issues.',
-        'Increase maxRetryLoops if the task is complex.',
-        'Simplify the task scope to reduce iteration cycles.',
-      ],
-    };
-  }
-
-  const agentTimeoutCount = input.logs.filter(
-    entry => entry.stage.includes('pipeline.agent') && entry.message.toLowerCase().includes('timeout'),
-  ).length;
-
-  if (agentTimeoutCount > 0) {
-    return {
-      errorKind: 'AGENT_TIMEOUT',
-      summary: 'One or more pipeline agents timed out during execution.',
-      actions: [
-        'Increase perAgentTimeoutMs in pipeline configuration.',
-        'Check if the agent task is too complex for the allocated time.',
-        'Consider using a faster model profile for non-critical agents.',
       ],
     };
   }
