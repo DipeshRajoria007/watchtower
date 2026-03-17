@@ -273,6 +273,19 @@ export async function runOwnerAutopilotWorkflow(params: {
     data: { isOwnerAuthor },
   });
 
+  // Resolve Slack display name for the requesting user
+  let requestedBy: string | undefined;
+  try {
+    const userInfo = await slack.users.info({ user: task.event.userId });
+    requestedBy =
+      userInfo.user?.profile?.display_name ||
+      userInfo.user?.profile?.real_name ||
+      userInfo.user?.real_name ||
+      userInfo.user?.name;
+  } catch {
+    // Non-fatal — PR will just omit the requester name
+  }
+
   const threadMessages = await fetchThreadContext(slack, task.event.channelId, task.event.threadTs).catch(() => []);
   const threadContext = formatThreadContext(task, threadMessages);
 
@@ -435,6 +448,7 @@ export async function runOwnerAutopilotWorkflow(params: {
         previousSteps: [],
         pipelineConfig: plannerPipelineConfig,
         imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
+        requestedBy,
       },
       slack,
       logStep: logStep ?? (() => {}),
@@ -595,6 +609,7 @@ export async function runOwnerAutopilotWorkflow(params: {
           previousSteps: plannerStep ? [plannerStep] : [],
           pipelineConfig: fullPipelineConfig,
           imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
+          requestedBy,
         },
         slack,
         logStep: logStep ?? (() => {}),
@@ -624,6 +639,7 @@ export async function runOwnerAutopilotWorkflow(params: {
             repoPath: pipelineCwd,
             threadTs: task.event.threadTs,
             summary,
+            requestedBy,
             onLog: msg =>
               logStep?.({
                 stage: 'owner_autopilot.pr.progress',
