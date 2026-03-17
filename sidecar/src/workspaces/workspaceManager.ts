@@ -5,7 +5,7 @@ import { execSync } from 'node:child_process';
 import { logger } from '../logging/logger.js';
 
 const WORKSPACES_ROOT = path.join(os.homedir(), '.watchtower', 'workspaces');
-const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function sanitizeThreadTs(threadTs: string): string {
   return threadTs.replace(/[^a-zA-Z0-9.-]/g, '_');
