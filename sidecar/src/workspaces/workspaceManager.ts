@@ -21,9 +21,27 @@ function workspacePath(repoPath: string, threadTs: string): string {
   return path.join(WORKSPACES_ROOT, repoName, safeThread);
 }
 
+function resolveDefaultRemoteBranch(repoPath: string): string {
+  try {
+    const ref = execSync('git symbolic-ref refs/remotes/origin/HEAD --short', {
+      cwd: repoPath,
+      stdio: 'pipe',
+      timeout: 10_000,
+    })
+      .toString()
+      .trim();
+    // ref is like "origin/master" or "origin/main"
+    return ref;
+  } catch {
+    return 'origin/master';
+  }
+}
+
 /**
  * Resolves an isolated workspace for the given repo + thread.
- * Uses `git worktree` to create a lightweight checkout.
+ * Uses `git worktree` to create a lightweight checkout starting from
+ * the default remote branch (origin/master or origin/main), NOT from
+ * the local HEAD which may be on an unrelated feature branch.
  * Returns the original repoPath if worktree creation fails.
  */
 export function resolveWorkspace(repoPath: string, threadTs: string): string {
@@ -38,19 +56,31 @@ export function resolveWorkspace(repoPath: string, threadTs: string): string {
   try {
     fs.mkdirSync(path.dirname(wsPath), { recursive: true });
 
-    // Create a detached worktree from HEAD
-    const branchName = `watchtower/${sanitizeThreadTs(threadTs)}`;
-    execSync(
-      `git worktree add --detach "${wsPath}"`,
-      { cwd: repoPath, stdio: 'pipe', timeout: 30_000 }
-    );
+    // Fetch latest from origin so the worktree starts from up-to-date code
+    try {
+      execSync('git fetch origin --quiet', {
+        cwd: repoPath,
+        stdio: 'pipe',
+        timeout: 30_000,
+      });
+    } catch {
+      logger.warn({ repoPath }, 'git fetch failed before worktree creation, proceeding with local state');
+    }
 
-    logger.info({ repoPath, threadTs, wsPath, branchName }, 'created workspace via git worktree');
+    // Create a detached worktree from the default remote branch (not local HEAD)
+    const defaultBranch = resolveDefaultRemoteBranch(repoPath);
+    execSync(`git worktree add --detach "${wsPath}" ${defaultBranch}`, {
+      cwd: repoPath,
+      stdio: 'pipe',
+      timeout: 30_000,
+    });
+
+    logger.info({ repoPath, threadTs, wsPath, startPoint: defaultBranch }, 'created workspace via git worktree');
     return wsPath;
   } catch (error) {
     logger.warn(
       { repoPath, threadTs, wsPath, error: String(error) },
-      'failed to create workspace, falling back to shared repo path'
+      'failed to create workspace, falling back to shared repo path',
     );
     return repoPath;
   }
@@ -75,10 +105,7 @@ export function cleanupWorkspace(repoPath: string, threadTs: string): void {
     });
     logger.info({ repoPath, threadTs, wsPath }, 'cleaned up workspace');
   } catch (error) {
-    logger.warn(
-      { repoPath, threadTs, wsPath, error: String(error) },
-      'failed to remove workspace worktree'
-    );
+    logger.warn({ repoPath, threadTs, wsPath, error: String(error) }, 'failed to remove workspace worktree');
     // Best-effort fallback: remove directory
     try {
       fs.rmSync(wsPath, { recursive: true, force: true });
