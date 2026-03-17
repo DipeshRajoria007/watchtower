@@ -1,43 +1,35 @@
-export type AppView =
-  | "overview"
-  | "launchpad"
-  | "runs"
-  | "intelligence"
-  | "settings"
-  | "review";
+export type AppView = 'overview' | 'launchpad' | 'runs' | 'intelligence' | 'settings' | 'review';
 
-export type RunsSubView = "active" | "failures" | "recent" | "diagnostics";
+export type RunsSubView = 'active' | 'failures' | 'recent' | 'diagnostics';
 
-export type SlackCommandTarget = "miniog" | "watchtower";
+export type SlackCommandTarget = 'miniog' | 'watchtower';
 
-export type ThemePresetId =
-  | "watchtower-midnight"
-  | "signal-paper"
-  | "ember-terminal"
-  | "harbor-mint"
-  | "custom";
+export type ThemePresetId = 'watchtower-midnight' | 'signal-paper' | 'ember-terminal' | 'harbor-mint' | 'custom';
 
 export type ThemeFontFamilyId =
-  | "ibm-plex"
-  | "sf-pro"
-  | "avenir-next"
-  | "georgia"
-  | "menlo";
+  | 'inter'
+  | 'jetbrains-mono'
+  | 'system-ui'
+  | 'ibm-plex'
+  | 'sf-pro'
+  | 'avenir-next'
+  | 'georgia'
+  | 'menlo';
 
-export type NotificationAudioMode = "off" | "default" | "custom";
+export type NotificationAudioMode = 'off' | 'default' | 'custom';
 
-export type NotificationAudioTone = "success" | "failure";
+export type NotificationAudioTone = 'success' | 'failure';
 
 export type NotificationAudioDefaultSoundId =
-  | "basso"
-  | "glass"
-  | "hero"
-  | "ping"
-  | "pop"
-  | "purr"
-  | "sosumi"
-  | "submarine"
-  | "tink";
+  | 'basso'
+  | 'glass'
+  | 'hero'
+  | 'ping'
+  | 'pop'
+  | 'purr'
+  | 'sosumi'
+  | 'submarine'
+  | 'tink';
 
 export type RunSummary = {
   id: string;
@@ -64,7 +56,7 @@ export type DashboardMetrics = {
 
 export type DashboardRecommendation = {
   id: string;
-  priority: "HIGH" | "MEDIUM" | "LOW" | string;
+  priority: 'HIGH' | 'MEDIUM' | 'LOW' | string;
   title: string;
   detail: string;
 };
@@ -106,14 +98,14 @@ export type DashboardData = {
 export type JobLogEntry = {
   id: number;
   jobId: string;
-  level: "INFO" | "WARN" | "ERROR" | string;
+  level: 'INFO' | 'WARN' | 'ERROR' | string;
   stage: string;
   message: string;
   dataJson: string | null;
   createdAt: string;
 };
 
-export type AgentBackendId = "codex" | "claude-code" | "cursor";
+export type AgentBackendId = 'codex' | 'claude-code' | 'cursor';
 
 export type AppSettings = {
   slackBotToken: string;
@@ -160,7 +152,7 @@ export type AppNotificationPayload = {
 
 export type DiffFileEntry = {
   path: string;
-  status: "added" | "modified" | "deleted";
+  status: 'added' | 'modified' | 'deleted';
   insertions: number;
   deletions: number;
 };
