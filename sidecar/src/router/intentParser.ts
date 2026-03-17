@@ -3,7 +3,6 @@ import { hasDevAssistPrefix, hasNaturalDevAssistAlias } from './devAssistParser.
 
 const PR_REVIEW_KEYWORDS = [
   /review/i,
-  /pr\b/i,
   /pull request/i,
   /code review/i,
 ];
@@ -76,10 +75,14 @@ function inferIntent(
     return 'DEV_ASSIST';
   }
 
-  // PR review keywords take priority — PR_REVIEW is a specialized workflow.
+  // PR review: requires explicit review language OR a GitHub PR URL in the text.
+  // Bare "PR" mentions (e.g. "give me the PR link") should NOT trigger review.
   const text = event.text ?? '';
-  const isReview = PR_REVIEW_KEYWORDS.some(regex => regex.test(text));
-  if (isReview) {
+  const hasReviewKeyword = PR_REVIEW_KEYWORDS.some(regex => regex.test(text));
+  const hasGithubPrUrl = GITHUB_PR_REGEX.test(text);
+  // Reset lastIndex since GITHUB_PR_REGEX has the global flag
+  GITHUB_PR_REGEX.lastIndex = 0;
+  if (hasReviewKeyword || hasGithubPrUrl) {
     return 'PR_REVIEW';
   }
 

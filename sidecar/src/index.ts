@@ -14,15 +14,21 @@ import { startLaunchpadRequestPoller } from './launchpad/launchpadIntake.js';
 import { logger } from './logging/logger.js';
 import { notifyDesktop } from './notify/desktopNotifier.js';
 import { assertMacOS } from './platform.js';
+import { evaluatePolicy, loadPolicies } from './policies/evaluator.js';
 import { normalizeTask } from './router/intentParser.js';
 import { routeTask } from './router/taskRouter.js';
 import { startMentionCatchup } from './slack/mentionCatchup.js';
 import { SocketSlackClient } from './slack/socketClient.js';
+import { cleanupStaleWorkspaces } from './workspaces/workspaceManager.js';
+import { loadWorkflowTemplates } from './workflows/registry.js';
 import { fetchThreadContext } from './slack/threadContext.js';
+import { registerActiveJob, unregisterActiveJob } from './state/activeJobs.js';
 import { JobStore } from './state/jobStore.js';
 import type { SlackEventEnvelope, SlackReactionEvent, WorkflowStepLog } from './types/contracts.js';
 
 assertMacOS();
+loadPolicies();
+loadWorkflowTemplates();
 
 const dbPath = process.env.WATCHTOWER_DB_PATH ?? path.resolve(process.cwd(), 'watchtower.db');
 const config = loadConfigFromDb(dbPath);
@@ -31,6 +37,7 @@ const store = new JobStore(dbPath);
 
 const queue: Array<{ event: SlackEventEnvelope; client: WebClient }> = [];
 let running = 0;
+
 const OPS_FEED_INTERVAL_MS = 30 * 60 * 1000;
 const DAILY_DIGEST_TICK_MS = 60 * 1000;
 const INCIDENT_TICK_MS = 5 * 60 * 1000;
@@ -40,6 +47,22 @@ const nonActionableSubtypes = new Set(['message_changed', 'message_deleted', 'bo
 
 function dedupeKey(event: SlackEventEnvelope, intent: string): string {
   return `${event.channelId}:${event.threadTs}:${event.eventTs}:${intent}`;
+}
+
+async function addReaction(client: WebClient, channel: string, timestamp: string, name: string): Promise<void> {
+  try {
+    await client.reactions.add({ channel, timestamp, name });
+  } catch (error) {
+    logger.warn({ channel, timestamp, name, error: String(error) }, 'failed to add reaction (non-fatal)');
+  }
+}
+
+async function removeReaction(client: WebClient, channel: string, timestamp: string, name: string): Promise<void> {
+  try {
+    await client.reactions.remove({ channel, timestamp, name });
+  } catch (error) {
+    logger.warn({ channel, timestamp, name, error: String(error) }, 'failed to remove reaction (non-fatal)');
+  }
 }
 
 function isTransientError(message: string): boolean {
@@ -472,6 +495,9 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
 
   const eventClient = buildEventAwareClient(client, event);
 
+  // Add :eyes: reaction to signal processing has started
+  await addReaction(client, event.channelId, event.eventTs, 'eyes');
+
   logger.info({ eventId: event.eventId }, 'fetching thread context for intake');
   const threadMessages = await fetchThreadContext(eventClient, event.channelId, event.threadTs).catch(() => []);
   const threadTexts = threadMessages.map(message => message.text);
@@ -490,6 +516,24 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
 
   if (!task.mentionDetected) {
     logger.info({ eventId: event.eventId }, 'skip non-mention message');
+    await removeReaction(client, event.channelId, event.eventTs, 'eyes');
+    return;
+  }
+
+  // Policy engine check — block requests that violate critical or non-master rules
+  const policyDecision = evaluatePolicy(event.userId, event.text, config.ownerSlackUserIds);
+  if (!policyDecision.allowed) {
+    logger.warn(
+      { eventId: event.eventId, userId: event.userId, tier: policyDecision.tier, ruleId: policyDecision.ruleId },
+      'request blocked by policy engine'
+    );
+    await eventClient.chat.postMessage({
+      channel: event.channelId,
+      thread_ts: event.threadTs,
+      text: policyDecision.reason,
+    }).catch(() => {});
+    await removeReaction(client, event.channelId, event.eventTs, 'eyes');
+    await addReaction(client, event.channelId, event.eventTs, 'no_entry_sign');
     return;
   }
 
@@ -531,6 +575,9 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       launchpadRequestId: event.launchpadRequestId ?? null,
     },
   });
+
+  const abortController = new AbortController();
+  registerActiveJob(jobId, abortController);
 
   const stepLogs: WorkflowStepLog[] = [];
 
@@ -631,6 +678,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
           store,
           jobId,
           logStep,
+          signal: abortController.signal,
         });
         const hasPrInResult = result.result?.prUrl && typeof result.result.prUrl === 'string' && result.result.prUrl !== '';
         const diagnosis =
@@ -712,6 +760,13 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
           logStep,
         });
 
+        unregisterActiveJob(jobId);
+
+        // Swap :eyes: for outcome reaction
+        await removeReaction(client, event.channelId, event.eventTs, 'eyes');
+        await addReaction(client, event.channelId, event.eventTs,
+          result.status === 'SUCCESS' || result.status === 'SKIPPED' ? 'white_check_mark' : 'x');
+
         return;
       } catch (error) {
         lastError = error;
@@ -791,6 +846,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       level: 'ERROR',
     });
 
+    unregisterActiveJob(jobId);
     notifyDesktop('Watchtower workflow failed', errorMessage);
     failLaunchpadWorkflow({
       event,
@@ -799,6 +855,11 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       logStep,
     });
     store.markJob(jobId, 'FAILED', { errorMessage });
+
+    // Swap :eyes: for :x: on retry exhaustion
+    await removeReaction(client, event.channelId, event.eventTs, 'eyes');
+    await addReaction(client, event.channelId, event.eventTs, 'x');
+
     try {
       store.recordLearningSignal({
         jobId,
@@ -838,6 +899,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       });
     }
 
+    unregisterActiveJob(jobId);
     logger.error({ jobId, eventId: event.eventId, error: errorMessage }, 'unexpected processEvent failure');
     notifyDesktop('Watchtower job failure', errorMessage);
     failLaunchpadWorkflow({
@@ -847,6 +909,11 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       logStep,
     });
     store.markJob(jobId, 'FAILED', { errorMessage });
+
+    // Swap :eyes: for :x: on unexpected failure
+    await removeReaction(client, event.channelId, event.eventTs, 'eyes');
+    await addReaction(client, event.channelId, event.eventTs, 'x');
+
     try {
       store.recordLearningSignal({
         jobId,
@@ -867,6 +934,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
 
 async function main(): Promise<void> {
   logger.info({ dbPath, maxConcurrentJobs: config.maxConcurrentJobs }, 'watchtower sidecar starting');
+  cleanupStaleWorkspaces();
 
   const client = new SocketSlackClient(
     config,

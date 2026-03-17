@@ -4,6 +4,9 @@ import type { WebClient } from '@slack/web-api';
 import type { AppConfig, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
 import { diagnoseFailure } from '../learning/failureDoctor.js';
 import { parseDevAssistCommand } from '../router/devAssistParser.js';
+import { cancelJob, getActiveJobIds } from '../state/activeJobs.js';
+import { loadPolicies, getPolicySnapshot } from '../policies/evaluator.js';
+import { loadWorkflowTemplates, getWorkflowTemplates } from './registry.js';
 import type { JobStore } from '../state/jobStore.js';
 
 const HELP_TEXT = [
@@ -14,6 +17,7 @@ const HELP_TEXT = [
   '- `wt failures [n]` -> show latest failed runs (default 5)',
   '- `wt trace <jobId> [lines]` -> show recent trace lines for a job',
   '- `wt diagnose <jobId>` -> run Failure Doctor diagnosis on a job',
+  '- `wt cancel <jobId>` -> cancel a running job',
   '- `wt learn` -> show learning engine stats',
   '- `wt heat [n]` -> show top active channels in last 7 days',
   '- `wt mission start <goal>` -> start/update mission state for this thread',
@@ -28,7 +32,10 @@ const HELP_TEXT = [
   '- `wt digest HH:MM` / `wt digest off` -> configure daily autopilot digest',
   '- `wt policy import <frontend|backend|release>` -> attach policy pack to this channel',
   '- `wt policy show` -> show current policy pack and active rules',
+  '- `wt policy reload` -> reload markdown policy engine rules from .policies/',
   '- `wt incident on|off` -> enable/disable incident commander cadence in this channel',
+  '- `wt workflow list` -> list registered file-based workflow templates',
+  '- `wt workflow reload` -> reload workflow templates from .workflows/',
   '- `wt my queue [n]` -> show your prioritized pending work queue',
   '',
   'More commands are being added in the next updates.',
@@ -360,6 +367,63 @@ export async function runDevAssistWorkflow(params: {
         jobId: resolvedJobId,
         diagnosed: Boolean(diagnosis),
         errorKind: diagnosis?.errorKind,
+      },
+    };
+  }
+
+  if (command.type === 'CANCEL') {
+    const resolvedJobId = store.resolveJobId(command.jobId);
+    if (!resolvedJobId) {
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: `Could not find job \`${command.jobId}\`. Use \`wt runs\` to copy a valid job id.`,
+      });
+
+      return {
+        workflow: 'DEV_ASSIST',
+        status: 'SKIPPED',
+        message: 'Cancel lookup failed: unknown job id.',
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+
+    const cancelled = cancelJob(resolvedJobId);
+    if (cancelled) {
+      store.markJob(resolvedJobId, 'CANCELLED', { errorMessage: 'Cancelled by user via wt cancel.' });
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: `Job \`${resolvedJobId.slice(0, 8)}\` has been cancelled.`,
+      });
+    } else {
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: `Job \`${resolvedJobId.slice(0, 8)}\` is not currently running. Active jobs: ${getActiveJobIds().map(id => id.slice(0, 8)).join(', ') || 'none'}`,
+      });
+    }
+
+    logStep?.({
+      stage: 'dev_assist.cancel.posted',
+      message: cancelled ? 'Job cancelled successfully.' : 'Job not found in active set.',
+      data: {
+        jobId: resolvedJobId,
+        cancelled,
+      },
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: cancelled ? 'Job cancelled.' : 'Job not active.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'CANCEL',
+        jobId: resolvedJobId,
+        cancelled,
       },
     };
   }
@@ -841,6 +905,33 @@ export async function runDevAssistWorkflow(params: {
     };
   }
 
+  if (command.type === 'POLICY_RELOAD') {
+    loadPolicies();
+    const snapshot = getPolicySnapshot();
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: [
+        'Policy engine reloaded.',
+        `- Loaded: ${snapshot.loaded}`,
+        `- Critical-deny rules: ${snapshot.criticalDenyCount}`,
+        `- Non-master rules: ${snapshot.nonMasterCount}`,
+      ].join('\n'),
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Policy engine reloaded.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'POLICY_RELOAD',
+        ...snapshot,
+      },
+    };
+  }
+
   if (command.type === 'INCIDENT_SET') {
     store.setIncidentMode({
       channelId: task.event.channelId,
@@ -865,6 +956,56 @@ export async function runDevAssistWorkflow(params: {
       result: {
         command: 'INCIDENT_SET',
         enabled: command.enabled,
+      },
+    };
+  }
+
+  if (command.type === 'WORKFLOW_LIST') {
+    const templates = getWorkflowTemplates();
+    const text = templates.length > 0
+      ? [
+          `Registered workflow templates (${templates.length}):`,
+          ...templates.map((t, i) => `${i + 1}. *${t.name}* — ${t.description || 'no description'} (triggers: ${t.triggers.join(', ') || 'none'})`),
+        ].join('\n')
+      : 'No workflow templates registered. Add templates to `.workflows/` directory.';
+
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text,
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Workflow templates listed.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'WORKFLOW_LIST',
+        count: templates.length,
+      },
+    };
+  }
+
+  if (command.type === 'WORKFLOW_RELOAD') {
+    loadWorkflowTemplates();
+    const templates = getWorkflowTemplates();
+    await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: `Workflow template registry reloaded. ${templates.length} template(s) loaded.`,
+    });
+
+    return {
+      workflow: 'DEV_ASSIST',
+      status: 'SUCCESS',
+      message: 'Workflow templates reloaded.',
+      notifyDesktop: false,
+      slackPosted: true,
+      result: {
+        command: 'WORKFLOW_RELOAD',
+        count: templates.length,
       },
     };
   }

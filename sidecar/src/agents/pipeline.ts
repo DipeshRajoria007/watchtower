@@ -142,7 +142,7 @@ function stripRepoPrefix(filePath: string, repoPath: string): string {
   return filePath;
 }
 
-function formatPlanMessage(planSteps: string[], affectedFiles: string[], scope: string, completedSteps?: Set<number>, repoPath?: string): string {
+export function formatPlanMessage(planSteps: string[], affectedFiles: string[], scope: string, completedSteps?: Set<number>, repoPath?: string): string {
   const header = `*Plan* (scope: ${scope}, ${affectedFiles.length} files affected)`;
   const stepLines = planSteps.map((step, i) => {
     const num = `${i + 1}.`;
@@ -163,7 +163,7 @@ function formatPlanMessage(planSteps: string[], affectedFiles: string[], scope: 
 const APPROVE_PATTERNS = /^(yes|go|proceed|do it|go ahead|ship it|lgtm)$/i;
 const REJECT_PATTERNS = /^(no|stop|cancel|abort|nevermind|never mind)$/i;
 
-async function waitForApproval(params: {
+export async function waitForApproval(params: {
   slack: WebClient;
   channelId: string;
   threadTs: string;
@@ -258,11 +258,11 @@ export async function runAgentPipeline(params: {
     data: { agents, maxRetryLoops, totalTimeoutMs },
   });
 
-  await postSlackProgress({
-    slack,
-    ctx,
-    text: `On it — planning the approach first, then I'll code it up, get it reviewed, and verify everything works.`,
-  });
+  const hasPlanner = agents.includes('planner');
+  const introText = hasPlanner
+    ? `On it — planning the approach first, then I'll code it up, get it reviewed, and verify everything works.`
+    : `Plan approved — coding it up, then review and verification.`;
+  await postSlackProgress({ slack, ctx, text: introText });
 
   // Track plan message so we can update it with strikethroughs during execution
   let planMessageTs: string | undefined;
