@@ -80,11 +80,7 @@ function extractSlackErrorCode(error: unknown): string | undefined {
   return undefined;
 }
 
-async function postViaResponseUrl(params: {
-  responseUrl: string;
-  text: string;
-  threadTs?: string;
-}): Promise<void> {
+async function postViaResponseUrl(params: { responseUrl: string; text: string; threadTs?: string }): Promise<void> {
   const { responseUrl, text, threadTs } = params;
   const payload: Record<string, unknown> = {
     response_type: 'in_channel',
@@ -160,7 +156,10 @@ async function postFailureDoctorHint(params: {
   logStep: (step: WorkflowStepLog) => void;
 }): Promise<void> {
   const { client, event, errorKind, summary, actions, logStep } = params;
-  const actionLines = actions.slice(0, 3).map(action => `- ${action}`).join('\n');
+  const actionLines = actions
+    .slice(0, 3)
+    .map(action => `- ${action}`)
+    .join('\n');
   const text = [`Failure Doctor: ${summary}`, `Type: ${errorKind}`];
   if (actionLines) {
     text.push('Suggested fixes:', actionLines);
@@ -235,7 +234,7 @@ async function processReactionFeedback(event: SlackReactionEvent): Promise<void>
       sentiment,
       itemUserId: event.itemUserId ?? null,
     },
-    'reaction feedback ingested'
+    'reaction feedback ingested',
   );
 }
 
@@ -275,7 +274,7 @@ function buildOpsFeedAlert(): string | undefined {
     .join('\n');
 }
 
-function startProactiveOpsFeed(client: WebClient): void {
+function _startProactiveOpsFeed(client: WebClient): void {
   const tick = async (): Promise<void> => {
     try {
       const channels = store.listOpsFeedChannels();
@@ -335,7 +334,7 @@ function buildDailyDigestMessage(): string {
   ].join('\n');
 }
 
-function startDailyDigestTicker(client: WebClient): void {
+function _startDailyDigestTicker(client: WebClient): void {
   const tick = async (): Promise<void> => {
     try {
       const schedules = store.listDailyDigestSchedules();
@@ -400,7 +399,7 @@ function shouldPostIncidentCadence(channelId: string, nowMs: number): boolean {
   return true;
 }
 
-function startIncidentCommanderFeed(client: WebClient): void {
+function _startIncidentCommanderFeed(client: WebClient): void {
   const tick = async (): Promise<void> => {
     try {
       const channels = store.listIncidentChannels();
@@ -436,7 +435,7 @@ function startIncidentCommanderFeed(client: WebClient): void {
 async function enqueueSlackEvent(
   event: SlackEventEnvelope,
   client: WebClient,
-  source: 'socket' | 'catchup' | 'launchpad'
+  source: 'socket' | 'catchup' | 'launchpad',
 ): Promise<void> {
   queue.push({ event, client });
   logger.info({ queueDepth: queue.length, eventId: event.eventId, source }, 'event queued for processing');
@@ -469,7 +468,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       threadTs: event.threadTs,
       subtype: event.messageSubtype ?? null,
     },
-    'slack event received'
+    'slack event received',
   );
 
   if (event.messageSubtype && nonActionableSubtypes.has(event.messageSubtype)) {
@@ -489,7 +488,10 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
 
   if (store.hasJobForEventTs(event.channelId, event.eventTs)) {
     store.recordEvent(event.eventId, event.channelId, event.threadTs);
-    logger.info({ eventId: event.eventId, channelId: event.channelId, eventTs: event.eventTs }, 'duplicate channel/eventTs ignored');
+    logger.info(
+      { eventId: event.eventId, channelId: event.channelId, eventTs: event.eventTs },
+      'duplicate channel/eventTs ignored',
+    );
     return;
   }
 
@@ -511,7 +513,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       mentionType: task.mentionType,
       intent: task.intent,
     },
-    'task normalized from slack event'
+    'task normalized from slack event',
   );
 
   if (!task.mentionDetected) {
@@ -525,13 +527,15 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
   if (!policyDecision.allowed) {
     logger.warn(
       { eventId: event.eventId, userId: event.userId, tier: policyDecision.tier, ruleId: policyDecision.ruleId },
-      'request blocked by policy engine'
+      'request blocked by policy engine',
     );
-    await eventClient.chat.postMessage({
-      channel: event.channelId,
-      thread_ts: event.threadTs,
-      text: policyDecision.reason,
-    }).catch(() => {});
+    await eventClient.chat
+      .postMessage({
+        channel: event.channelId,
+        thread_ts: event.threadTs,
+        text: policyDecision.reason,
+      })
+      .catch(() => {});
     await removeReaction(client, event.channelId, event.eventTs, 'eyes');
     await addReaction(client, event.channelId, event.eventTs, 'no_entry_sign');
     return;
@@ -548,7 +552,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       correctionApplied: learning.correctionApplied,
       learningNotes: learning.notes,
     },
-    'learning engine evaluated task'
+    'learning engine evaluated task',
   );
 
   const key = dedupeKey(event, routedTask.intent);
@@ -622,7 +626,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
           stage: step.stage,
           error: String(error),
         },
-        'failed to persist workflow step log'
+        'failed to persist workflow step log',
       );
     }
   };
@@ -680,7 +684,8 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
           logStep,
           signal: abortController.signal,
         });
-        const hasPrInResult = result.result?.prUrl && typeof result.result.prUrl === 'string' && result.result.prUrl !== '';
+        const hasPrInResult =
+          result.result?.prUrl && typeof result.result.prUrl === 'string' && result.result.prUrl !== '';
         const diagnosis =
           result.status === 'FAILED' && !hasPrInResult
             ? diagnoseFailure({
@@ -764,8 +769,12 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
 
         // Swap :eyes: for outcome reaction
         await removeReaction(client, event.channelId, event.eventTs, 'eyes');
-        await addReaction(client, event.channelId, event.eventTs,
-          result.status === 'SUCCESS' || result.status === 'SKIPPED' ? 'white_check_mark' : 'x');
+        await addReaction(
+          client,
+          event.channelId,
+          event.eventTs,
+          result.status === 'SUCCESS' || result.status === 'SKIPPED' ? 'white_check_mark' : 'x',
+        );
 
         return;
       } catch (error) {
@@ -823,11 +832,13 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
       },
     });
 
-    await eventClient.chat.postMessage({
-      channel: event.channelId,
-      thread_ts: event.threadTs,
-      text: `${errorMessage}`,
-    }).catch(() => {});
+    await eventClient.chat
+      .postMessage({
+        channel: event.channelId,
+        thread_ts: event.threadTs,
+        text: `${errorMessage}`,
+      })
+      .catch(() => {});
 
     if (diagnosis) {
       await postFailureDoctorHint({
@@ -936,6 +947,12 @@ async function main(): Promise<void> {
   logger.info({ dbPath, maxConcurrentJobs: config.maxConcurrentJobs }, 'watchtower sidecar starting');
   cleanupStaleWorkspaces();
 
+  // Mark any leftover RUNNING jobs as FAILED — their processes are gone after restart
+  const orphaned = store.cleanupOrphanedRunningJobs();
+  if (orphaned > 0) {
+    logger.warn({ orphaned }, 'cleaned up orphaned RUNNING jobs from previous session');
+  }
+
   const client = new SocketSlackClient(
     config,
     async (event, webClient) => {
@@ -943,7 +960,7 @@ async function main(): Promise<void> {
     },
     async event => {
       await processReactionFeedback(event);
-    }
+    },
   );
 
   process.on('SIGINT', () => {

@@ -266,10 +266,14 @@ export class JobStore {
     // Add PM config columns to app_settings if missing
     try {
       this.db.exec(`ALTER TABLE app_settings ADD COLUMN pm_slack_user_ids TEXT NOT NULL DEFAULT ''`);
-    } catch { /* column already exists */ }
+    } catch {
+      /* column already exists */
+    }
     try {
       this.db.exec(`ALTER TABLE app_settings ADD COLUMN pm_task_timeout_ms INTEGER NOT NULL DEFAULT 600000`);
-    } catch { /* column already exists */ }
+    } catch {
+      /* column already exists */
+    }
   }
 
   close(): void {
@@ -290,7 +294,7 @@ export class JobStore {
       .prepare(
         `INSERT OR REPLACE INTO job_diffs(
           job_id, branch_name, repo_path, diff_text, files_json, insertions, deletions, created_at
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.jobId,
@@ -317,7 +321,7 @@ export class JobStore {
     const row = this.db
       .prepare(
         `SELECT job_id, branch_name, repo_path, diff_text, files_json, insertions, deletions, created_at
-         FROM job_diffs WHERE job_id = ? LIMIT 1`
+         FROM job_diffs WHERE job_id = ? LIMIT 1`,
       )
       .get(jobId) as Record<string, unknown> | undefined;
 
@@ -336,9 +340,9 @@ export class JobStore {
   }
 
   hasEvent(eventId: string): boolean {
-    const row = this.db
-      .prepare('SELECT event_id FROM events WHERE event_id = ? LIMIT 1')
-      .get(eventId) as { event_id?: string } | undefined;
+    const row = this.db.prepare('SELECT event_id FROM events WHERE event_id = ? LIMIT 1').get(eventId) as
+      | { event_id?: string }
+      | undefined;
     return Boolean(row?.event_id);
   }
 
@@ -346,7 +350,7 @@ export class JobStore {
     this.db
       .prepare(
         `INSERT OR IGNORE INTO events(event_id, channel_id, thread_ts, created_at)
-         VALUES(?, ?, ?, ?)`
+         VALUES(?, ?, ?, ?)`,
       )
       .run(eventId, channelId, threadTs, new Date().toISOString());
   }
@@ -359,7 +363,7 @@ export class JobStore {
          WHERE channel_id = ?
            AND json_extract(payload_json, '$.eventTs') = ?
            AND status IN ('RUNNING', 'SUCCESS', 'PAUSED', 'SKIPPED')
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(channelId, eventTs) as { id?: string } | undefined;
     return Boolean(row?.id);
@@ -372,7 +376,7 @@ export class JobStore {
        WHERE channel_id IS NOT NULL AND channel_id != ''
        GROUP BY channel_id
        ORDER BY MAX(created_at) DESC
-       LIMIT ?`
+       LIMIT ?`,
     ) as unknown as {
       all: (limitArg: number) => Array<{
         channel_id: string;
@@ -383,9 +387,9 @@ export class JobStore {
   }
 
   getState(key: string): string | undefined {
-    const row = this.db
-      .prepare('SELECT value FROM sidecar_state WHERE key = ? LIMIT 1')
-      .get(key) as { value?: string } | undefined;
+    const row = this.db.prepare('SELECT value FROM sidecar_state WHERE key = ? LIMIT 1').get(key) as
+      | { value?: string }
+      | undefined;
     return row?.value;
   }
 
@@ -397,7 +401,7 @@ export class JobStore {
          VALUES(?, ?, ?)
          ON CONFLICT(key) DO UPDATE SET
            value = excluded.value,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at`,
       )
       .run(key, value, now);
   }
@@ -416,7 +420,7 @@ export class JobStore {
       .prepare(
         `INSERT INTO launchpad_requests(
            id, target, prompt, owner_user_id, status, slack_channel_id, anchor_ts, created_at, updated_at
-         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -441,7 +445,7 @@ export class JobStore {
          FROM launchpad_requests
          WHERE status = 'PENDING'
          ORDER BY created_at ASC
-         LIMIT ?`
+         LIMIT ?`,
       ) as unknown as {
         all: (limitArg: number) => Array<{
           id: string;
@@ -466,7 +470,7 @@ export class JobStore {
        SET status = 'CLAIMED',
            error_message = NULL,
            updated_at = ?
-       WHERE id = ? AND status = 'PENDING'`
+       WHERE id = ? AND status = 'PENDING'`,
     );
 
     for (const row of rows) {
@@ -493,11 +497,7 @@ export class JobStore {
     return claimed;
   }
 
-  markLaunchpadRequestQueued(input: {
-    id: string;
-    slackChannelId: string;
-    anchorTs: string;
-  }): void {
+  markLaunchpadRequestQueued(input: { id: string; slackChannelId: string; anchorTs: string }): void {
     this.db
       .prepare(
         `UPDATE launchpad_requests
@@ -506,14 +506,9 @@ export class JobStore {
              anchor_ts = ?,
              error_message = NULL,
              updated_at = ?
-         WHERE id = ?`
+         WHERE id = ?`,
       )
-      .run(
-        input.slackChannelId,
-        input.anchorTs,
-        new Date().toISOString(),
-        input.id,
-      );
+      .run(input.slackChannelId, input.anchorTs, new Date().toISOString(), input.id);
   }
 
   markLaunchpadRequestRunning(input: { id: string; jobId: string }): void {
@@ -524,7 +519,7 @@ export class JobStore {
              job_id = ?,
              error_message = NULL,
              updated_at = ?
-         WHERE id = ?`
+         WHERE id = ?`,
       )
       .run(input.jobId, new Date().toISOString(), input.id);
   }
@@ -542,7 +537,7 @@ export class JobStore {
              result_json = ?,
              error_message = ?,
              updated_at = ?
-         WHERE id = ?`
+         WHERE id = ?`,
       )
       .run(
         input.status,
@@ -560,7 +555,7 @@ export class JobStore {
                 result_json, error_message, created_at, updated_at
          FROM launchpad_requests
          WHERE id = ?
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(id) as
       | {
@@ -599,7 +594,10 @@ export class JobStore {
     };
   }
 
-  latestJobForThread(channelId: string, threadTs: string): { workflow: WorkflowIntent; status: JobRecord['status']; updatedAt: string } | undefined {
+  latestJobForThread(
+    channelId: string,
+    threadTs: string,
+  ): { workflow: WorkflowIntent; status: JobRecord['status']; updatedAt: string } | undefined {
     const row = this.db
       .prepare(
         `SELECT workflow, status, updated_at
@@ -607,7 +605,7 @@ export class JobStore {
          WHERE channel_id = ?
            AND thread_ts = ?
          ORDER BY updated_at DESC
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(channelId, threadTs) as
       | {
@@ -630,7 +628,9 @@ export class JobStore {
 
   hasDedupeKey(dedupeKey: string): boolean {
     const row = this.db
-      .prepare('SELECT id FROM jobs WHERE dedupe_key = ? AND status IN (\'RUNNING\', \'SUCCESS\', \'PAUSED\', \'SKIPPED\') LIMIT 1')
+      .prepare(
+        "SELECT id FROM jobs WHERE dedupe_key = ? AND status IN ('RUNNING', 'SUCCESS', 'PAUSED', 'SKIPPED') LIMIT 1",
+      )
       .get(dedupeKey) as { id?: string } | undefined;
     return Boolean(row?.id);
   }
@@ -650,7 +650,7 @@ export class JobStore {
         `INSERT INTO jobs(
            id, event_id, dedupe_key, workflow, status, channel_id, thread_ts,
            payload_json, attempts, created_at, updated_at
-         ) VALUES(?, ?, ?, ?, 'RUNNING', ?, ?, ?, 0, ?, ?)`
+         ) VALUES(?, ?, ?, ?, 'RUNNING', ?, ?, ?, 0, ?, ?)`,
       )
       .run(
         input.id,
@@ -670,17 +670,40 @@ export class JobStore {
       .prepare(
         `UPDATE jobs
          SET attempts = attempts + 1, updated_at = ?
-         WHERE id = ?`
+         WHERE id = ?`,
       )
       .run(new Date().toISOString(), jobId);
   }
 
-  markJob(jobId: string, status: JobRecord['status'], options?: { errorMessage?: string; result?: Record<string, unknown> }): void {
+  /**
+   * On startup, mark any leftover RUNNING jobs as FAILED.
+   * Their processes are gone (sidecar restarted) but SQLite still has them as RUNNING.
+   * Returns the number of orphaned jobs cleaned up.
+   */
+  cleanupOrphanedRunningJobs(): number {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE jobs
+         SET status = 'FAILED',
+             error_message = 'Process lost during sidecar restart',
+             updated_at = ?
+         WHERE status = 'RUNNING'`,
+      )
+      .run(now);
+    return result.changes;
+  }
+
+  markJob(
+    jobId: string,
+    status: JobRecord['status'],
+    options?: { errorMessage?: string; result?: Record<string, unknown> },
+  ): void {
     this.db
       .prepare(
         `UPDATE jobs
          SET status = ?, error_message = ?, result_json = ?, updated_at = ?
-         WHERE id = ?`
+         WHERE id = ?`,
       )
       .run(
         status,
@@ -701,7 +724,7 @@ export class JobStore {
     this.db
       .prepare(
         `INSERT INTO job_logs(job_id, level, stage, message, data_json, created_at)
-         VALUES(?, ?, ?, ?, ?, ?)`
+         VALUES(?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.jobId,
@@ -719,9 +742,12 @@ export class JobStore {
        FROM job_logs
        WHERE job_id = ?
        ORDER BY id ASC
-       LIMIT ?`
+       LIMIT ?`,
     ) as unknown as {
-      all: (jobIdArg: string, limitArg: number) => Array<{
+      all: (
+        jobIdArg: string,
+        limitArg: number,
+      ) => Array<{
         id: number;
         job_id: string;
         level: JobLogLevel;
@@ -760,16 +786,12 @@ export class JobStore {
          ON CONFLICT(channel_id, user_id, phrase_key) DO UPDATE SET
            corrected_intent = excluded.corrected_intent,
            hits = intent_corrections.hits + 1,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at`,
       )
       .run(input.channelId, input.userId, input.phraseKey, input.correctedIntent, now, now);
   }
 
-  findIntentCorrection(input: {
-    channelId: string;
-    userId: string;
-    phraseKey: string;
-  }): WorkflowIntent | undefined {
+  findIntentCorrection(input: { channelId: string; userId: string; phraseKey: string }): WorkflowIntent | undefined {
     const exact = this.db
       .prepare(
         `SELECT corrected_intent
@@ -777,7 +799,7 @@ export class JobStore {
          WHERE channel_id = ?
            AND user_id = ?
            AND phrase_key = ?
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(input.channelId, input.userId, input.phraseKey) as { corrected_intent?: WorkflowIntent } | undefined;
     if (exact?.corrected_intent) {
@@ -797,7 +819,7 @@ export class JobStore {
            AND user_id = ?
            AND phrase_key LIKE ?
          ORDER BY hits DESC, updated_at DESC
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(input.channelId, input.userId, `${stem}%`) as { corrected_intent?: WorkflowIntent } | undefined;
 
@@ -818,21 +840,18 @@ export class JobStore {
          ON CONFLICT(scope, scope_id) DO UPDATE SET
            mode = excluded.mode,
            source = excluded.source,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at`,
       )
       .run(input.scope, input.scopeId, input.mode, input.source, now);
   }
 
-  getPersonalityMode(input: {
-    channelId: string;
-    userId: string;
-  }): PersonalityMode {
+  getPersonalityMode(input: { channelId: string; userId: string }): PersonalityMode {
     const userRow = this.db
       .prepare(
         `SELECT mode
          FROM personality_profiles
          WHERE scope = 'user' AND scope_id = ?
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(input.userId) as { mode?: PersonalityMode } | undefined;
     if (userRow?.mode) {
@@ -844,7 +863,7 @@ export class JobStore {
         `SELECT mode
          FROM personality_profiles
          WHERE scope = 'channel' AND scope_id = ?
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(input.channelId) as { mode?: PersonalityMode } | undefined;
     if (channelRow?.mode) {
@@ -854,27 +873,19 @@ export class JobStore {
     return 'normal';
   }
 
-  getPersonalityProfile(input: {
-    scope: 'channel' | 'user';
-    scopeId: string;
-  }): PersonalityMode | undefined {
+  getPersonalityProfile(input: { scope: 'channel' | 'user'; scopeId: string }): PersonalityMode | undefined {
     const row = this.db
       .prepare(
         `SELECT mode
          FROM personality_profiles
          WHERE scope = ? AND scope_id = ?
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(input.scope, input.scopeId) as { mode?: PersonalityMode } | undefined;
     return row?.mode ? normalizeStoredPersonalityMode(row.mode) : undefined;
   }
 
-  upsertMissionStart(input: {
-    channelId: string;
-    threadTs: string;
-    goal: string;
-    ownerUserId: string;
-  }): {
+  upsertMissionStart(input: { channelId: string; threadTs: string; goal: string; ownerUserId: string }): {
     id: string;
     status: string;
   } {
@@ -889,7 +900,7 @@ export class JobStore {
            goal = excluded.goal,
            owner_user_id = excluded.owner_user_id,
            status = excluded.status,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at`,
       )
       .run(
         id,
@@ -903,7 +914,7 @@ export class JobStore {
         'TBD',
         'ACTIVE',
         now,
-        now
+        now,
       );
 
     return {
@@ -912,26 +923,25 @@ export class JobStore {
     };
   }
 
-  getMissionThread(input: {
-    channelId: string;
-    threadTs: string;
-  }): {
-    id: string;
-    goal: string;
-    plan: string;
-    progress: string;
-    blockers: string;
-    ownerUserId: string;
-    eta: string;
-    status: string;
-    updatedAt: string;
-  } | undefined {
+  getMissionThread(input: { channelId: string; threadTs: string }):
+    | {
+        id: string;
+        goal: string;
+        plan: string;
+        progress: string;
+        blockers: string;
+        ownerUserId: string;
+        eta: string;
+        status: string;
+        updatedAt: string;
+      }
+    | undefined {
     const row = this.db
       .prepare(
         `SELECT id, goal, plan, progress, blockers, owner_user_id, eta, status, updated_at
          FROM mission_threads
          WHERE channel_id = ? AND thread_ts = ?
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(input.channelId, input.threadTs) as
       | {
@@ -947,7 +957,17 @@ export class JobStore {
         }
       | undefined;
 
-    if (!row?.id || !row.goal || !row.plan || !row.progress || !row.blockers || !row.owner_user_id || !row.eta || !row.status || !row.updated_at) {
+    if (
+      !row?.id ||
+      !row.goal ||
+      !row.plan ||
+      !row.progress ||
+      !row.blockers ||
+      !row.owner_user_id ||
+      !row.eta ||
+      !row.status ||
+      !row.updated_at
+    ) {
       return undefined;
     }
 
@@ -985,7 +1005,7 @@ export class JobStore {
       .prepare(
         `UPDATE mission_threads
          SET plan = ?, progress = ?, blockers = ?, eta = ?, status = ?, updated_at = ?
-         WHERE channel_id = ? AND thread_ts = ?`
+         WHERE channel_id = ? AND thread_ts = ?`,
       )
       .run(
         input.plan ?? mission.plan,
@@ -995,21 +1015,19 @@ export class JobStore {
         input.status ?? mission.status,
         new Date().toISOString(),
         input.channelId,
-        input.threadTs
+        input.threadTs,
       );
 
     return true;
   }
 
-  startMissionSwarmRun(input: {
-    channelId: string;
-    threadTs: string;
-    requestedBy: string;
-  }): {
-    runId: string;
-    missionId: string;
-    roles: string[];
-  } | undefined {
+  startMissionSwarmRun(input: { channelId: string; threadTs: string; requestedBy: string }):
+    | {
+        runId: string;
+        missionId: string;
+        roles: string[];
+      }
+    | undefined {
     const mission = this.getMissionThread({
       channelId: input.channelId,
       threadTs: input.threadTs,
@@ -1024,14 +1042,14 @@ export class JobStore {
       roles.map(role => ({
         role,
         status: 'queued',
-      }))
+      })),
     );
 
     this.db
       .prepare(
         `INSERT INTO mission_swarm_runs(
            run_id, mission_id, channel_id, thread_ts, requested_by, roles_json, status, created_at
-         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         runId,
@@ -1041,7 +1059,7 @@ export class JobStore {
         input.requestedBy,
         rolesJson,
         'STARTED',
-        new Date().toISOString()
+        new Date().toISOString(),
       );
 
     this.updateMissionThread({
@@ -1072,31 +1090,24 @@ export class JobStore {
          ON CONFLICT(target_type, target_id) DO UPDATE SET
            trust_level = excluded.trust_level,
            updated_by = excluded.updated_by,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at`,
       )
-      .run(
-        input.targetType,
-        input.targetId,
-        input.trustLevel,
-        input.updatedBy,
-        new Date().toISOString()
-      );
+      .run(input.targetType, input.targetId, input.trustLevel, input.updatedBy, new Date().toISOString());
   }
 
-  getTrustPolicy(input: {
-    targetType: 'channel' | 'user';
-    targetId: string;
-  }): {
-    trustLevel: 'observe' | 'suggest' | 'execute' | 'merge';
-    updatedBy: string;
-    updatedAt: string;
-  } | undefined {
+  getTrustPolicy(input: { targetType: 'channel' | 'user'; targetId: string }):
+    | {
+        trustLevel: 'observe' | 'suggest' | 'execute' | 'merge';
+        updatedBy: string;
+        updatedAt: string;
+      }
+    | undefined {
     const row = this.db
       .prepare(
         `SELECT trust_level, updated_by, updated_at
          FROM trust_policies
          WHERE target_type = ? AND target_id = ?
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(input.targetType, input.targetId) as
       | {
@@ -1132,7 +1143,7 @@ export class JobStore {
       .prepare(
         `INSERT INTO replay_requests(
            request_id, source_job_id, mode, requested_by, channel_id, thread_ts, status, created_at
-         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         requestId,
@@ -1142,7 +1153,7 @@ export class JobStore {
         input.channelId,
         input.threadTs,
         'QUEUED',
-        new Date().toISOString()
+        new Date().toISOString(),
       );
 
     return {
@@ -1163,7 +1174,7 @@ export class JobStore {
       .prepare(
         `INSERT INTO reaction_feedback(
            event_id, channel_id, thread_ts, user_id, reaction, sentiment, created_at
-         ) VALUES(?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES(?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.eventId,
@@ -1172,7 +1183,7 @@ export class JobStore {
         input.userId,
         input.reaction,
         input.sentiment,
-        new Date().toISOString()
+        new Date().toISOString(),
       );
   }
 
@@ -1186,7 +1197,7 @@ export class JobStore {
         `SELECT sentiment, COUNT(*) as count
          FROM reaction_feedback
          WHERE channel_id = ?
-         GROUP BY sentiment`
+         GROUP BY sentiment`,
       ) as unknown as {
         all: (channelIdArg: string) => Array<{ sentiment: number; count: number }>;
       }
@@ -1208,11 +1219,7 @@ export class JobStore {
     return { positive, negative, neutral };
   }
 
-  registerSkill(input: {
-    name: string;
-    path: string;
-    version: string;
-  }): void {
+  registerSkill(input: { name: string; path: string; version: string }): void {
     const now = new Date().toISOString();
     this.db
       .prepare(
@@ -1221,22 +1228,24 @@ export class JobStore {
          ON CONFLICT(skill_name) DO UPDATE SET
            skill_path = excluded.skill_path,
            version = excluded.version,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at`,
       )
       .run(input.name, input.path, input.version, now, now);
   }
 
-  getSkill(name: string): {
-    name: string;
-    path: string;
-    version: string;
-  } | undefined {
+  getSkill(name: string):
+    | {
+        name: string;
+        path: string;
+        version: string;
+      }
+    | undefined {
     const row = this.db
       .prepare(
         `SELECT skill_name, skill_path, version
          FROM skill_registry
          WHERE skill_name = ?
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(name) as { skill_name?: string; skill_path?: string; version?: string } | undefined;
 
@@ -1251,17 +1260,14 @@ export class JobStore {
     };
   }
 
-  setChannelSkill(input: {
-    channelId: string;
-    skillName: string;
-  }): void {
+  setChannelSkill(input: { channelId: string; skillName: string }): void {
     this.db
       .prepare(
         `INSERT INTO skill_channel_preferences(channel_id, active_skill, updated_at)
          VALUES(?, ?, ?)
          ON CONFLICT(channel_id) DO UPDATE SET
            active_skill = excluded.active_skill,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at`,
       )
       .run(input.channelId, input.skillName, new Date().toISOString());
   }
@@ -1272,17 +1278,13 @@ export class JobStore {
         `SELECT active_skill
          FROM skill_channel_preferences
          WHERE channel_id = ?
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(channelId) as { active_skill?: string } | undefined;
     return row?.active_skill;
   }
 
-  setOpsFeedSubscription(input: {
-    channelId: string;
-    enabled: boolean;
-    updatedBy: string;
-  }): void {
+  setOpsFeedSubscription(input: { channelId: string; enabled: boolean; updatedBy: string }): void {
     this.db
       .prepare(
         `INSERT INTO ops_feed_subscriptions(channel_id, enabled, updated_by, updated_at)
@@ -1290,14 +1292,9 @@ export class JobStore {
          ON CONFLICT(channel_id) DO UPDATE SET
            enabled = excluded.enabled,
            updated_by = excluded.updated_by,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at`,
       )
-      .run(
-        input.channelId,
-        input.enabled ? 1 : 0,
-        input.updatedBy,
-        new Date().toISOString()
-      );
+      .run(input.channelId, input.enabled ? 1 : 0, input.updatedBy, new Date().toISOString());
   }
 
   isOpsFeedEnabled(channelId: string): boolean {
@@ -1306,7 +1303,7 @@ export class JobStore {
         `SELECT enabled
          FROM ops_feed_subscriptions
          WHERE channel_id = ?
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(channelId) as { enabled?: number } | undefined;
     return Boolean(row?.enabled);
@@ -1317,7 +1314,7 @@ export class JobStore {
       this.db.prepare(
         `SELECT channel_id
          FROM ops_feed_subscriptions
-         WHERE enabled = 1`
+         WHERE enabled = 1`,
       ) as unknown as {
         all: () => Array<{ channel_id: string }>;
       }
@@ -1325,18 +1322,13 @@ export class JobStore {
     return rows.map(row => row.channel_id);
   }
 
-  setDailyDigestSchedule(input: {
-    channelId: string;
-    enabled: boolean;
-    digestTime?: string;
-    updatedBy: string;
-  }): void {
+  setDailyDigestSchedule(input: { channelId: string; enabled: boolean; digestTime?: string; updatedBy: string }): void {
     const existing = this.db
       .prepare(
         `SELECT digest_time
          FROM daily_digest_settings
          WHERE channel_id = ?
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(input.channelId) as { digest_time?: string } | undefined;
     const digestTime = (input.digestTime ?? existing?.digest_time ?? '09:30').trim();
@@ -1349,15 +1341,9 @@ export class JobStore {
            enabled = excluded.enabled,
            digest_time = excluded.digest_time,
            updated_by = excluded.updated_by,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at`,
       )
-      .run(
-        input.channelId,
-        input.enabled ? 1 : 0,
-        digestTime,
-        input.updatedBy,
-        new Date().toISOString()
-      );
+      .run(input.channelId, input.enabled ? 1 : 0, digestTime, input.updatedBy, new Date().toISOString());
   }
 
   listDailyDigestSchedules(): Array<{
@@ -1368,7 +1354,7 @@ export class JobStore {
       this.db.prepare(
         `SELECT channel_id, digest_time
          FROM daily_digest_settings
-         WHERE enabled = 1`
+         WHERE enabled = 1`,
       ) as unknown as {
         all: () => Array<{ channel_id: string; digest_time: string }>;
       }
@@ -1387,11 +1373,7 @@ export class JobStore {
     this.setState(`digest:last_sent:${channelId}`, dateKey);
   }
 
-  importPolicyPack(input: {
-    channelId: string;
-    packName: 'frontend' | 'backend' | 'release';
-    updatedBy: string;
-  }): {
+  importPolicyPack(input: { channelId: string; packName: 'frontend' | 'backend' | 'release'; updatedBy: string }): {
     packName: 'frontend' | 'backend' | 'release';
     description: string;
     rules: string[];
@@ -1434,7 +1416,7 @@ export class JobStore {
          ON CONFLICT(pack_name) DO UPDATE SET
            description = excluded.description,
            rules_json = excluded.rules_json,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at`,
       )
       .run(input.packName, selected.description, rulesJson, now);
 
@@ -1445,7 +1427,7 @@ export class JobStore {
          ON CONFLICT(channel_id) DO UPDATE SET
            pack_name = excluded.pack_name,
            updated_by = excluded.updated_by,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at`,
       )
       .run(input.channelId, input.packName, input.updatedBy, now);
 
@@ -1456,19 +1438,21 @@ export class JobStore {
     };
   }
 
-  getChannelPolicyPack(channelId: string): {
-    packName: 'frontend' | 'backend' | 'release';
-    description: string;
-    rules: string[];
-    updatedAt: string;
-  } | undefined {
+  getChannelPolicyPack(channelId: string):
+    | {
+        packName: 'frontend' | 'backend' | 'release';
+        description: string;
+        rules: string[];
+        updatedAt: string;
+      }
+    | undefined {
     const row = this.db
       .prepare(
         `SELECT c.pack_name, c.updated_at, p.description, p.rules_json
          FROM channel_policy_packs c
          JOIN policy_packs p ON p.pack_name = c.pack_name
          WHERE c.channel_id = ?
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(channelId) as
       | {
@@ -1501,11 +1485,7 @@ export class JobStore {
     };
   }
 
-  setIncidentMode(input: {
-    channelId: string;
-    enabled: boolean;
-    updatedBy: string;
-  }): void {
+  setIncidentMode(input: { channelId: string; enabled: boolean; updatedBy: string }): void {
     this.db
       .prepare(
         `INSERT INTO incident_modes(channel_id, enabled, updated_by, updated_at)
@@ -1513,7 +1493,7 @@ export class JobStore {
          ON CONFLICT(channel_id) DO UPDATE SET
            enabled = excluded.enabled,
            updated_by = excluded.updated_by,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at`,
       )
       .run(input.channelId, input.enabled ? 1 : 0, input.updatedBy, new Date().toISOString());
   }
@@ -1523,7 +1503,7 @@ export class JobStore {
       this.db.prepare(
         `SELECT channel_id
          FROM incident_modes
-         WHERE enabled = 1`
+         WHERE enabled = 1`,
       ) as unknown as {
         all: () => Array<{ channel_id: string }>;
       }
@@ -1538,37 +1518,43 @@ export class JobStore {
     topWorkflow: string;
   } {
     const running = Number(
-      (this.db
-        .prepare(
-          `SELECT COUNT(*) as count
+      (
+        this.db
+          .prepare(
+            `SELECT COUNT(*) as count
            FROM jobs
-           WHERE channel_id = ? AND status = 'RUNNING'`
-        )
-        .get(channelId) as { count?: number } | undefined)?.count ?? 0
+           WHERE channel_id = ? AND status = 'RUNNING'`,
+          )
+          .get(channelId) as { count?: number } | undefined
+      )?.count ?? 0,
     );
 
     const failed60m = Number(
-      (this.db
-        .prepare(
-          `SELECT COUNT(*) as count
+      (
+        this.db
+          .prepare(
+            `SELECT COUNT(*) as count
            FROM jobs
            WHERE channel_id = ?
              AND status = 'FAILED'
-             AND julianday(created_at) >= julianday('now', '-60 minute')`
-        )
-        .get(channelId) as { count?: number } | undefined)?.count ?? 0
+             AND julianday(created_at) >= julianday('now', '-60 minute')`,
+          )
+          .get(channelId) as { count?: number } | undefined
+      )?.count ?? 0,
     );
 
     const paused60m = Number(
-      (this.db
-        .prepare(
-          `SELECT COUNT(*) as count
+      (
+        this.db
+          .prepare(
+            `SELECT COUNT(*) as count
            FROM jobs
            WHERE channel_id = ?
              AND status = 'PAUSED'
-             AND julianday(created_at) >= julianday('now', '-60 minute')`
-        )
-        .get(channelId) as { count?: number } | undefined)?.count ?? 0
+             AND julianday(created_at) >= julianday('now', '-60 minute')`,
+          )
+          .get(channelId) as { count?: number } | undefined
+      )?.count ?? 0,
     );
 
     const topWorkflow =
@@ -1582,7 +1568,7 @@ export class JobStore {
                AND julianday(created_at) >= julianday('now', '-60 minute')
              GROUP BY workflow
              ORDER BY COUNT(*) DESC, workflow ASC
-             LIMIT 1`
+             LIMIT 1`,
           )
           .get(channelId) as { workflow?: string } | undefined
       )?.workflow ?? 'none';
@@ -1611,7 +1597,7 @@ export class JobStore {
         `INSERT INTO learning_signals(
            job_id, event_id, channel_id, user_id, workflow, status, intent,
            correction_applied, personality_mode, error_kind, created_at
-         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.jobId,
@@ -1624,7 +1610,7 @@ export class JobStore {
         input.correctionApplied ? 1 : 0,
         'normal',
         input.errorKind ?? null,
-        new Date().toISOString()
+        new Date().toISOString(),
       );
   }
 
@@ -1641,9 +1627,12 @@ export class JobStore {
          AND channel_id = ?
          AND thread_ts = ?
        ORDER BY updated_at DESC
-       LIMIT 50`
+       LIMIT 50`,
     ) as unknown as {
-      all: (channelIdArg: string, threadTsArg: string) => Array<{
+      all: (
+        channelIdArg: string,
+        threadTsArg: string,
+      ) => Array<{
         id: string;
         result_json?: string | null;
         updated_at: string;
@@ -1682,37 +1671,45 @@ export class JobStore {
     successRate24h: number;
   } {
     const activeJobs = Number(
-      (this.db
-        .prepare(`SELECT COUNT(*) as count FROM jobs WHERE status = 'RUNNING'`)
-        .get() as { count?: number } | undefined)?.count ?? 0
+      (
+        this.db.prepare(`SELECT COUNT(*) as count FROM jobs WHERE status = 'RUNNING'`).get() as
+          | { count?: number }
+          | undefined
+      )?.count ?? 0,
     );
 
     const runs24h = Number(
-      (this.db
-        .prepare(`SELECT COUNT(*) as count FROM jobs WHERE julianday(created_at) >= julianday('now', '-1 day')`)
-        .get() as { count?: number } | undefined)?.count ?? 0
+      (
+        this.db
+          .prepare(`SELECT COUNT(*) as count FROM jobs WHERE julianday(created_at) >= julianday('now', '-1 day')`)
+          .get() as { count?: number } | undefined
+      )?.count ?? 0,
     );
 
     const failures24h = Number(
-      (this.db
-        .prepare(
-          `SELECT COUNT(*) as count
+      (
+        this.db
+          .prepare(
+            `SELECT COUNT(*) as count
            FROM jobs
            WHERE status = 'FAILED'
-             AND julianday(created_at) >= julianday('now', '-1 day')`
-        )
-        .get() as { count?: number } | undefined)?.count ?? 0
+             AND julianday(created_at) >= julianday('now', '-1 day')`,
+          )
+          .get() as { count?: number } | undefined
+      )?.count ?? 0,
     );
 
     const success24h = Number(
-      (this.db
-        .prepare(
-          `SELECT COUNT(*) as count
+      (
+        this.db
+          .prepare(
+            `SELECT COUNT(*) as count
            FROM jobs
            WHERE status = 'SUCCESS'
-             AND julianday(created_at) >= julianday('now', '-1 day')`
-        )
-        .get() as { count?: number } | undefined)?.count ?? 0
+             AND julianday(created_at) >= julianday('now', '-1 day')`,
+          )
+          .get() as { count?: number } | undefined
+      )?.count ?? 0,
     );
 
     const successRate24h = runs24h > 0 ? Math.round((success24h / runs24h) * 1000) / 10 : 100;
@@ -1725,7 +1722,10 @@ export class JobStore {
     };
   }
 
-  listDevRuns(limit: number, status?: JobRecord['status']): Array<{
+  listDevRuns(
+    limit: number,
+    status?: JobRecord['status'],
+  ): Array<{
     id: string;
     workflow: WorkflowIntent;
     status: JobRecord['status'];
@@ -1734,38 +1734,42 @@ export class JobStore {
   }> {
     const safeLimit = Math.min(Math.max(limit, 1), 50);
     const rows = status
-      ? ((this.db.prepare(
-          `SELECT id, workflow, status, updated_at, error_message
+      ? (
+          this.db.prepare(
+            `SELECT id, workflow, status, updated_at, error_message
            FROM jobs
            WHERE status = ?
            ORDER BY updated_at DESC
-           LIMIT ?`
-        ) as unknown as {
-          all: (
-            statusArg: JobRecord['status'],
-            limitArg: number
-          ) => Array<{
-            id: string;
-            workflow: WorkflowIntent;
-            status: JobRecord['status'];
-            updated_at: string;
-            error_message?: string | null;
-          }>;
-        }).all(status, safeLimit))
-      : ((this.db.prepare(
-          `SELECT id, workflow, status, updated_at, error_message
+           LIMIT ?`,
+          ) as unknown as {
+            all: (
+              statusArg: JobRecord['status'],
+              limitArg: number,
+            ) => Array<{
+              id: string;
+              workflow: WorkflowIntent;
+              status: JobRecord['status'];
+              updated_at: string;
+              error_message?: string | null;
+            }>;
+          }
+        ).all(status, safeLimit)
+      : (
+          this.db.prepare(
+            `SELECT id, workflow, status, updated_at, error_message
            FROM jobs
            ORDER BY updated_at DESC
-           LIMIT ?`
-        ) as unknown as {
-          all: (limitArg: number) => Array<{
-            id: string;
-            workflow: WorkflowIntent;
-            status: JobRecord['status'];
-            updated_at: string;
-            error_message?: string | null;
-          }>;
-        }).all(safeLimit));
+           LIMIT ?`,
+          ) as unknown as {
+            all: (limitArg: number) => Array<{
+              id: string;
+              workflow: WorkflowIntent;
+              status: JobRecord['status'];
+              updated_at: string;
+              error_message?: string | null;
+            }>;
+          }
+        ).all(safeLimit);
 
     return rows.map(row => ({
       id: row.id,
@@ -1776,11 +1780,7 @@ export class JobStore {
     }));
   }
 
-  getPersonalQueue(input: {
-    channelId: string;
-    userId: string;
-    limit: number;
-  }): Array<{
+  getPersonalQueue(input: { channelId: string; userId: string; limit: number }): Array<{
     id: string;
     workflow: WorkflowIntent;
     status: JobRecord['status'];
@@ -1806,13 +1806,13 @@ export class JobStore {
              ELSE 3
            END ASC,
            updated_at DESC
-         LIMIT ?`
+         LIMIT ?`,
       ) as unknown as {
         all: (
           channelIdArg: string,
           userIdArg: string,
           mentionPatternArg: string,
-          limitArg: number
+          limitArg: number,
         ) => Array<{
           id: string;
           workflow: WorkflowIntent;
@@ -1828,7 +1828,9 @@ export class JobStore {
       let summary = '';
       try {
         const payload = row.payload_json ? (JSON.parse(row.payload_json) as Record<string, unknown>) : {};
-        summary = String(payload.text ?? '').replace(/\s+/g, ' ').trim();
+        summary = String(payload.text ?? '')
+          .replace(/\s+/g, ' ')
+          .trim();
       } catch {
         summary = '';
       }
@@ -1863,9 +1865,7 @@ export class JobStore {
       return undefined;
     }
 
-    const exact = this.db
-      .prepare(`SELECT id FROM jobs WHERE id = ? LIMIT 1`)
-      .get(value) as { id?: string } | undefined;
+    const exact = this.db.prepare(`SELECT id FROM jobs WHERE id = ? LIMIT 1`).get(value) as { id?: string } | undefined;
     if (exact?.id) {
       return exact.id;
     }
@@ -1876,7 +1876,7 @@ export class JobStore {
          FROM jobs
          WHERE id LIKE ?
          ORDER BY updated_at DESC
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(`${value}%`) as { id?: string } | undefined;
     return fuzzy?.id;
@@ -1889,9 +1889,12 @@ export class JobStore {
        FROM job_logs
        WHERE job_id = ?
        ORDER BY id DESC
-       LIMIT ?`
+       LIMIT ?`,
     ) as unknown as {
-      all: (jobIdArg: string, limitArg: number) => Array<{
+      all: (
+        jobIdArg: string,
+        limitArg: number,
+      ) => Array<{
         id: number;
         job_id: string;
         level: JobLogLevel;
@@ -1914,12 +1917,14 @@ export class JobStore {
     }));
   }
 
-  getJobSummary(jobId: string): {
-    id: string;
-    workflow: WorkflowIntent;
-    status: JobRecord['status'];
-    errorMessage?: string;
-  } | undefined {
+  getJobSummary(jobId: string):
+    | {
+        id: string;
+        workflow: WorkflowIntent;
+        status: JobRecord['status'];
+        errorMessage?: string;
+      }
+    | undefined {
     const row = this.db
       .prepare(`SELECT id, workflow, status, error_message FROM jobs WHERE id = ? LIMIT 1`)
       .get(jobId) as
@@ -1951,32 +1956,36 @@ export class JobStore {
     topErrorKind: string;
   } {
     const signals24h = Number(
-      (this.db
-        .prepare(`SELECT COUNT(*) as count FROM learning_signals WHERE julianday(created_at) >= julianday('now', '-1 day')`)
-        .get() as { count?: number } | undefined)?.count ?? 0
+      (
+        this.db
+          .prepare(
+            `SELECT COUNT(*) as count FROM learning_signals WHERE julianday(created_at) >= julianday('now', '-1 day')`,
+          )
+          .get() as { count?: number } | undefined
+      )?.count ?? 0,
     );
 
     const correctionsLearned = Number(
-      (this.db
-        .prepare(`SELECT COUNT(*) as count FROM intent_corrections`)
-        .get() as { count?: number } | undefined)?.count ?? 0
+      (this.db.prepare(`SELECT COUNT(*) as count FROM intent_corrections`).get() as { count?: number } | undefined)
+        ?.count ?? 0,
     );
 
     const correctionsApplied24h = Number(
-      (this.db
-        .prepare(
-          `SELECT COUNT(*) as count
+      (
+        this.db
+          .prepare(
+            `SELECT COUNT(*) as count
            FROM learning_signals
            WHERE correction_applied = 1
-             AND julianday(created_at) >= julianday('now', '-1 day')`
-        )
-        .get() as { count?: number } | undefined)?.count ?? 0
+             AND julianday(created_at) >= julianday('now', '-1 day')`,
+          )
+          .get() as { count?: number } | undefined
+      )?.count ?? 0,
     );
 
     const personalityProfiles = Number(
-      (this.db
-        .prepare(`SELECT COUNT(*) as count FROM personality_profiles`)
-        .get() as { count?: number } | undefined)?.count ?? 0
+      (this.db.prepare(`SELECT COUNT(*) as count FROM personality_profiles`).get() as { count?: number } | undefined)
+        ?.count ?? 0,
     );
 
     const topErrorKind =
@@ -1988,7 +1997,7 @@ export class JobStore {
              WHERE error_kind IS NOT NULL AND error_kind != ''
              GROUP BY error_kind
              ORDER BY COUNT(*) DESC, error_kind ASC
-             LIMIT 1`
+             LIMIT 1`,
           )
           .get() as { error_kind?: string } | undefined
       )?.error_kind ?? 'none';
@@ -2016,7 +2025,7 @@ export class JobStore {
        WHERE julianday(created_at) >= julianday('now', '-7 day')
        GROUP BY channel_id
        ORDER BY runs DESC, failures DESC, channel_id ASC
-       LIMIT ?`
+       LIMIT ?`,
     ) as unknown as {
       all: (limitArg: number) => Array<{
         channel_id: string;
@@ -2098,17 +2107,19 @@ export class JobStore {
     this.db.prepare(`UPDATE agent_pipeline_runs SET ${sets.join(', ')} WHERE id = ?`).run(...values);
   }
 
-  getPipelineRunByJobId(jobId: string): {
-    id: string;
-    jobId: string;
-    pipelineConfigJson: string;
-    status: string;
-    stepsJson: string;
-    retryLoops: number;
-    totalDurationMs: number | null;
-    createdAt: string;
-    updatedAt: string;
-  } | undefined {
+  getPipelineRunByJobId(jobId: string):
+    | {
+        id: string;
+        jobId: string;
+        pipelineConfigJson: string;
+        status: string;
+        stepsJson: string;
+        retryLoops: number;
+        totalDurationMs: number | null;
+        createdAt: string;
+        updatedAt: string;
+      }
+    | undefined {
     const row = this.db
       .prepare(
         `SELECT id, job_id, pipeline_config_json, status, steps_json,
