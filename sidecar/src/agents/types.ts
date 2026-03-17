@@ -1,4 +1,4 @@
-import type { AppConfig, NormalizedTask, PrContext, WorkflowIntent, WorkflowStepLogger } from '../types/contracts.js';
+import type { AppConfig, NormalizedTask, PrContext, WorkflowIntent } from '../types/contracts.js';
 
 export type AgentRole = 'planner' | 'coder' | 'reviewer' | 'security' | 'performance' | 'verifier';
 export type AgentStepStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
@@ -32,6 +32,7 @@ export interface AgentContext {
   pipelineConfig: PipelineConfig;
   policyPack?: { packName: string; rules: string[] };
   imagePaths?: string[];
+  requestedBy?: string;
 }
 
 export interface PipelineConfig {
