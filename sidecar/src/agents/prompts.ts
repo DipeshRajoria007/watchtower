@@ -68,7 +68,7 @@ ${ctx.threadContext}
 
 Requirements:
 1. Work only in repo path ${ctx.repoPath}
-2. Create branch named codex/<short-task-name>
+2. Create a NEW branch named codex/<short-task-name>-${ctx.task.event.threadTs.replace('.', '-')} (the suffix ensures uniqueness — do NOT reuse or checkout an existing branch)
 3. Implement changes with tests
 4. Commit and open a PR to the default branch
 5. Do not run destructive git commands
