@@ -17,7 +17,9 @@ import { fetchThreadContext } from '../slack/threadContext.js';
 import { downloadSlackImages } from '../slack/imageDownloader.js';
 import { classifyRepo } from '../router/repoClassifier.js';
 import { getBackend } from '../backends/registry.js';
-import { runAgentPipeline } from '../agents/pipeline.js';
+import { runAgentPipeline, formatPlanMessage, waitForApproval } from '../agents/pipeline.js';
+import { resolveWorkspace } from '../workspaces/workspaceManager.js';
+import { createPrFromWorkspace } from '../github/postPipelinePr.js';
 import type { PipelineStore } from '../agents/pipeline.js';
 import type { PipelineConfig } from '../agents/types.js';
 
@@ -248,8 +250,9 @@ export async function runOwnerAutopilotWorkflow(params: {
   store?: PipelineStore;
   jobId?: string;
   logStep?: WorkflowStepLogger;
+  signal?: AbortSignal;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, store, jobId, logStep } = params;
+  const { task, config, slack, store, jobId, logStep, signal } = params;
   const isOwnerAuthor = config.ownerSlackUserIds.includes(task.event.userId);
 
   logStep?.({
@@ -299,9 +302,10 @@ export async function runOwnerAutopilotWorkflow(params: {
     }
 
     repoName = classification.selectedRepo;
-    cwd = classification.selectedRepo === 'newton-web'
+    const baseRepoPath = classification.selectedRepo === 'newton-web'
       ? config.repoPaths.newtonWeb
       : config.repoPaths.newtonApi;
+    cwd = resolveWorkspace(baseRepoPath, task.event.threadTs);
   }
 
   logStep?.({
@@ -418,17 +422,117 @@ export async function runOwnerAutopilotWorkflow(params: {
       jobId,
     });
 
-    const plannerOutput = plannerResult.steps[0]?.output ?? {};
+    const plannerStep = plannerResult.steps[0];
+    const plannerOutput = plannerStep?.output ?? {};
     const requiresCodeChanges = Boolean(plannerOutput.requiresCodeChanges);
 
     if (requiresCodeChanges) {
-      // Full pipeline: planner -> coder -> reviewer -> verifier
+      // Post the plan and ask for approval BEFORE running the full pipeline
+      const planSteps = Array.isArray(plannerOutput.plan) ? plannerOutput.plan.map(String) : [];
+      const planAffectedFiles = Array.isArray(plannerOutput.affectedFiles) ? plannerOutput.affectedFiles.map(String) : [];
+      const planScope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : 'unknown';
+
+      // For owner tasks, resolve a worktree so the coder agent runs inside a real git repo.
+      // Determine target repo from planner's affected files, falling back to repo classification.
+      let pipelineCwd = cwd;
+      if (isOwnerAuthor) {
+        const hasWebFiles = planAffectedFiles.some(f => f.includes('newton-web'));
+        const hasApiFiles = planAffectedFiles.some(f => f.includes('newton-api'));
+        let targetRepoPath: string | undefined;
+
+        if (hasWebFiles && !hasApiFiles) {
+          targetRepoPath = config.repoPaths.newtonWeb;
+        } else if (hasApiFiles && !hasWebFiles) {
+          targetRepoPath = config.repoPaths.newtonApi;
+        } else {
+          // Fall back to repo classification from thread text
+          const texts = [task.event.text, ...threadMessages.map(m => m.text)];
+          const classification = classifyRepo(texts, config.repoClassifierThreshold);
+          if (!classification.uncertain && classification.selectedRepo) {
+            targetRepoPath = classification.selectedRepo === 'newton-web'
+              ? config.repoPaths.newtonWeb
+              : config.repoPaths.newtonApi;
+          }
+        }
+
+        if (targetRepoPath) {
+          pipelineCwd = resolveWorkspace(targetRepoPath, task.event.threadTs);
+          logStep?.({
+            stage: 'owner_autopilot.workspace.resolved',
+            message: `Resolved owner pipeline workspace to isolated worktree.`,
+            data: { targetRepoPath, pipelineCwd },
+          });
+        }
+      }
+
+      let planMessageTs: string | undefined;
+      if (planSteps.length > 0) {
+        try {
+          const planResult = await slack.chat.postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: formatPlanMessage(planSteps, planAffectedFiles, planScope, undefined, pipelineCwd),
+          });
+          planMessageTs = planResult.ts ?? undefined;
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      // Approval gate: wait for the user to confirm before coding
+      if (planMessageTs) {
+        let approvalPromptTs: string | undefined;
+        try {
+          const promptResult = await slack.chat.postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: "Here's my plan. Should I go ahead? Reply in this thread:\n• \"yes\" or \"go\" — I'll start coding\n• \"no\" or \"stop\" — I'll cancel\n• Or reply with changes you'd like and I'll adjust",
+          });
+          approvalPromptTs = promptResult.ts ?? undefined;
+        } catch {
+          // Non-fatal
+        }
+
+        if (approvalPromptTs) {
+          logStep?.({
+            stage: 'owner_autopilot.approval.waiting',
+            message: 'Waiting for user approval of plan before proceeding.',
+          });
+
+          const approval = await waitForApproval({
+            slack,
+            channelId: task.event.channelId,
+            threadTs: task.event.threadTs,
+            triggerUserId: task.event.userId,
+            approvalPromptTs,
+            logStep: logStep ?? (() => {}),
+          });
+
+          if (!approval.approved) {
+            await slack.chat.postMessage({
+              channel: task.event.channelId,
+              thread_ts: task.event.threadTs,
+              text: "Got it, cancelling.",
+            }).catch(() => {});
+
+            return {
+              workflow: 'OWNER_AUTOPILOT',
+              status: 'SKIPPED',
+              message: 'Plan rejected by user.',
+              notifyDesktop: false,
+              slackPosted: true,
+            };
+          }
+        }
+      }
+
+      // Run the execution pipeline (coder -> reviewer -> verifier) — skip planner since it already ran
       const fullPipelineConfig: PipelineConfig = {
-        agents: ['planner', 'coder', 'reviewer', 'verifier'],
+        agents: ['coder', 'reviewer', 'verifier'],
         maxRetryLoops: 2,
         abortOnCriticalFinding: true,
         slackProgressUpdates: true,
-        requireApproval: true,
+        requireApproval: false,
       };
 
       const fullResult = await runAgentPipeline({
@@ -436,10 +540,10 @@ export async function runOwnerAutopilotWorkflow(params: {
           workflowIntent: 'OWNER_AUTOPILOT',
           task,
           config,
-          repoPath: cwd,
+          repoPath: pipelineCwd,
           githubToken,
           threadContext,
-          previousSteps: [],
+          previousSteps: plannerStep ? [plannerStep] : [],
           pipelineConfig: fullPipelineConfig,
           imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
         },
@@ -457,7 +561,27 @@ export async function runOwnerAutopilotWorkflow(params: {
         || (fullResult.finalStatus === 'passed'
           ? 'Pipeline completed but the agent did not return a summary. Check the repo for changes.'
           : `Pipeline finished with status: ${fullResult.finalStatus}. The agent did not produce output — it may not be installed or may have timed out.`);
-      const prUrl = coderStep?.output?.prUrl ? String(coderStep.output.prUrl) : '';
+
+      // Use PR URL from coder output if available, otherwise create one from workspace changes
+      let prUrl = coderStep?.output?.prUrl ? String(coderStep.output.prUrl) : '';
+
+      if (!prUrl && fullResult.finalStatus === 'passed') {
+        logStep?.({
+          stage: 'owner_autopilot.pr.creating',
+          message: 'Coder did not produce a PR — creating one from workspace changes.',
+        });
+
+        prUrl = await createPrFromWorkspace({
+          repoPath: pipelineCwd,
+          threadTs: task.event.threadTs,
+          summary,
+          onLog: (msg) => logStep?.({
+            stage: 'owner_autopilot.pr.progress',
+            message: msg,
+          }),
+        }) ?? '';
+      }
+
       const prBlock = prUrl ? `\n${prUrl}` : '';
 
       await slack.chat.postMessage({
@@ -528,6 +652,7 @@ export async function runOwnerAutopilotWorkflow(params: {
     imagePaths: imagePaths.length > 0 && backend.supportsImages() ? imagePaths : undefined,
     ...highReasoningProfile(getActiveBackendId()),
     onLog: logStep,
+    signal,
   };
 
   logStep?.({
@@ -609,11 +734,12 @@ export async function runOwnerAutopilotWorkflow(params: {
       const relaxedResult = await runCodex({
         cwd,
         prompt: relaxedPrompt,
-    
+
         githubToken,
         imagePaths: imagePaths.length > 0 && backend.supportsImages() ? imagePaths : undefined,
         ...highReasoningProfile(getActiveBackendId()),
         onLog: logStep,
+        signal,
       });
 
       logStep?.({

@@ -20,6 +20,10 @@ vi.mock('../src/notify/desktopNotifier.js', () => ({
   notifyDesktop: vi.fn(),
 }));
 
+vi.mock('../src/workspaces/workspaceManager.js', () => ({
+  resolveWorkspace: vi.fn((repoPath: string) => repoPath),
+}));
+
 const config = {
   platformPolicy: 'macos_only' as const,
   bundleTargets: ['app', 'dmg'] as const,

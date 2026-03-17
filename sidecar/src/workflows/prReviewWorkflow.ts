@@ -19,6 +19,7 @@ import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/github
 import { runAgentPipeline } from '../agents/pipeline.js';
 import type { PipelineStore } from '../agents/pipeline.js';
 import type { PipelineConfig } from '../agents/types.js';
+import { resolveWorkspace } from '../workspaces/workspaceManager.js';
 
 const SUPPORTED_PR_REPOS = ['newton-web', 'newton-api'] as const;
 
@@ -100,8 +101,9 @@ export async function runPrReviewWorkflow(params: {
   }) => Promise<string | undefined>;
   jobId?: string;
   logStep?: WorkflowStepLogger;
+  signal?: AbortSignal;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, store, resolvePrHeadSha, jobId, logStep } = params;
+  const { task, config, slack, store, resolvePrHeadSha, jobId, logStep, signal } = params;
 
   logStep?.({
     stage: 'pr_review.context.fetch.start',
@@ -201,8 +203,8 @@ export async function runPrReviewWorkflow(params: {
     };
   }
 
-  const repoPath = mapRepoPath(config, prContext);
-  if (!repoPath) {
+  const baseRepoPath = mapRepoPath(config, prContext);
+  if (!baseRepoPath) {
     logStep?.({
       stage: 'pr_review.guard.repo_unmapped',
       message: 'PR repository is not mapped to a configured local path.',
@@ -225,6 +227,8 @@ export async function runPrReviewWorkflow(params: {
       slackPosted: false,
     };
   }
+
+  const repoPath = resolveWorkspace(baseRepoPath, task.event.threadTs);
 
   const githubToken = await resolveGithubTokenForCodex();
 
@@ -404,6 +408,7 @@ Requirements:
     githubToken,
     ...highReasoningProfile(getActiveBackendId()),
     onLog: logStep,
+    signal,
   };
 
   logStep?.({

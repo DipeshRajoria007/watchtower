@@ -1,6 +1,6 @@
 export type AgentBackendId = 'codex' | 'claude-code' | 'cursor';
 export type WorkflowIntent = 'PR_REVIEW' | 'OWNER_AUTOPILOT' | 'DEV_ASSIST' | 'UNKNOWN';
-export type WorkflowStatus = 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED';
+export type WorkflowStatus = 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED' | 'CANCELLED';
 export type JobLogLevel = 'INFO' | 'WARN' | 'ERROR';
 export type PersonalityMode = 'normal';
 export type EventIngestSource = 'socket' | 'catchup' | 'launchpad';
@@ -116,12 +116,14 @@ export interface CodexRunRequest {
   reasoningEffort?: CodexReasoningEffort;
   imagePaths?: string[];
   onLog?: WorkflowStepLogger;
+  signal?: AbortSignal;
 }
 
 export interface CodexRunResult {
   ok: boolean;
   exitCode: number | null;
   timedOut: boolean;
+  cancelled?: boolean;
   stdout: string;
   stderr: string;
   lastMessage: string;
@@ -142,7 +144,7 @@ export interface JobRecord {
   eventId: string;
   dedupeKey: string;
   workflow: WorkflowIntent;
-  status: 'RUNNING' | 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED';
+  status: 'RUNNING' | 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED' | 'CANCELLED';
   channelId: string;
   threadTs: string;
   attempts: number;

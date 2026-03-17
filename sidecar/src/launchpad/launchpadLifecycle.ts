@@ -90,11 +90,13 @@ export async function finalizeLaunchpadWorkflowResult(params: {
     }
   }
 
+  // Map CANCELLED to FAILED for launchpad status (launchpad does not have a CANCELLED state)
+  const launchpadStatus = result.status === 'CANCELLED' ? 'FAILED' as const : result.status;
   store.markLaunchpadRequestFinished({
     id: event.launchpadRequestId,
-    status: result.status,
+    status: launchpadStatus,
     result: result.result,
-    errorMessage: result.status === "FAILED" ? result.message : undefined,
+    errorMessage: result.status === "FAILED" || result.status === "CANCELLED" ? result.message : undefined,
   });
 
   logStep?.({

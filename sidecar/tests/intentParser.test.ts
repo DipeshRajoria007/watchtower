@@ -207,6 +207,34 @@ describe('intentParser', () => {
     expect(task.intent).toBe('DEV_ASSIST');
   });
 
+  it('routes bare PR mention without review context to owner-autopilot', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        userId: 'UOWNER1',
+        text: '<@UBOT1> can you give me the PR link',
+      },
+      config,
+      [],
+    );
+
+    expect(task.intent).toBe('OWNER_AUTOPILOT');
+  });
+
+  it('routes GitHub PR URL without review keyword to PR_REVIEW', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        text: '<@UBOT1> https://github.com/Newton-School/newton-web/pull/99',
+      },
+      config,
+      [],
+    );
+
+    expect(task.intent).toBe('PR_REVIEW');
+    expect(task.prContext?.number).toBe(99);
+  });
+
   it('routes numbered wt command from owner to dev-assist', () => {
     const task = normalizeTask(
       {

@@ -14,6 +14,10 @@ vi.mock('../src/github/githubAuth.js', () => ({
   githubAuthModeHint: vi.fn().mockReturnValue('none'),
 }));
 
+vi.mock('../src/workspaces/workspaceManager.js', () => ({
+  resolveWorkspace: vi.fn((repoPath: string) => repoPath),
+}));
+
 const config: AppConfig = {
   platformPolicy: 'macos_only',
   bundleTargets: ['app', 'dmg'],

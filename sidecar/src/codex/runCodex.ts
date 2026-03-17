@@ -186,11 +186,36 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
   const env = { ...process.env, ...envOverrides };
 
   let timedOut = false;
+  let cancelled = false;
   const child = spawn(executable, args, {
     cwd: request.cwd,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+
+  // Listen for abort signal to support task cancellation
+  if (request.signal) {
+    const onAbort = (): void => {
+      cancelled = true;
+      request.onLog?.({
+        stage: 'agent.cancelled',
+        message: `${backend.displayName} execution cancelled by user request.`,
+        level: 'WARN',
+      });
+      child.kill('SIGTERM');
+      // Force kill after 5 seconds if SIGTERM doesn't work
+      setTimeout(() => {
+        if (!child.killed) {
+          child.kill('SIGKILL');
+        }
+      }, 5000);
+    };
+    if (request.signal.aborted) {
+      onAbort();
+    } else {
+      request.signal.addEventListener('abort', onAbort, { once: true });
+    }
+  }
 
   request.onLog?.({
     stage: 'agent.spawned',
@@ -316,9 +341,10 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
     }
 
     return {
-      ok: !timedOut && exitCode === 0,
+      ok: !timedOut && !cancelled && exitCode === 0,
       exitCode,
       timedOut,
+      cancelled,
       stdout,
       stderr,
       lastMessage,
@@ -338,6 +364,7 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
       ok: false,
       exitCode: null,
       timedOut,
+      cancelled,
       stdout,
       stderr: `${stderr}\n${String(error)}${
         String(error).includes('ENOENT')

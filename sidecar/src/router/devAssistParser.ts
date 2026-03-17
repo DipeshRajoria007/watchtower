@@ -7,6 +7,7 @@ export type DevAssistCommand =
   | { type: 'DIAGNOSE'; jobId: string }
   | { type: 'LEARN' }
   | { type: 'HEAT'; limit: number }
+  | { type: 'CANCEL'; jobId: string }
   | { type: 'MISSION_START'; goal: string }
   | { type: 'MISSION_SHOW' }
   | { type: 'MISSION_RUN_SWARM' }
@@ -19,8 +20,11 @@ export type DevAssistCommand =
   | { type: 'DIGEST_SET'; enabled: boolean; time?: string }
   | { type: 'POLICY_IMPORT'; pack: 'frontend' | 'backend' | 'release' }
   | { type: 'POLICY_SHOW' }
+  | { type: 'POLICY_RELOAD' }
   | { type: 'INCIDENT_SET'; enabled: boolean }
-  | { type: 'MY_QUEUE'; limit: number };
+  | { type: 'MY_QUEUE'; limit: number }
+  | { type: 'WORKFLOW_LIST' }
+  | { type: 'WORKFLOW_RELOAD' };
 
 function stripMentions(text: string): string {
   return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -138,6 +142,14 @@ function parsePrefixedDevAssistCommand(body: string): DevAssistCommand | undefin
     };
   }
 
+  const cancelMatch = body.match(/^cancel\s+([a-z0-9-]{6,})\b/i);
+  if (cancelMatch) {
+    return {
+      type: 'CANCEL',
+      jobId: cancelMatch[1],
+    };
+  }
+
   if (/^learn\b|^learning\b/.test(body.toLowerCase())) {
     return { type: 'LEARN' };
   }
@@ -246,12 +258,24 @@ function parsePrefixedDevAssistCommand(body: string): DevAssistCommand | undefin
     return { type: 'POLICY_SHOW' };
   }
 
+  if (/^policy\s+reload\b/i.test(body)) {
+    return { type: 'POLICY_RELOAD' };
+  }
+
   const incidentMatch = body.match(/^incident\s+(on|off)\b/i);
   if (incidentMatch) {
     return {
       type: 'INCIDENT_SET',
       enabled: incidentMatch[1].toLowerCase() === 'on',
     };
+  }
+
+  if (/^workflow\s+list\b/i.test(body)) {
+    return { type: 'WORKFLOW_LIST' };
+  }
+
+  if (/^workflow\s+reload\b/i.test(body)) {
+    return { type: 'WORKFLOW_RELOAD' };
   }
 
   const myQueueMatch = body.match(/^my\s+queue(?:\s+(\d+))?\b/i);
