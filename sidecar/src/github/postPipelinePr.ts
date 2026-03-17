@@ -28,9 +28,42 @@ async function getDefaultBranch(cwd: string): Promise<string> {
   }
 }
 
+/** Check if the current branch has commits ahead of the base branch. */
+async function hasCommitsAheadOfBase(cwd: string, baseBranch: string): Promise<boolean> {
+  try {
+    const count = await git(cwd, ['rev-list', '--count', `origin/${baseBranch}..HEAD`]);
+    return Number(count) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Check if a PR already exists for the current branch. */
+async function existingPrUrl(cwd: string): Promise<string | undefined> {
+  try {
+    const url = await git(cwd, ['ls-remote', '--get-url', 'origin']);
+    if (!url) return undefined;
+    const branch = await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    if (!branch || branch === 'HEAD') return undefined;
+    const { stdout } = await execFileAsync('gh', ['pr', 'view', branch, '--json', 'url', '-q', '.url'], {
+      cwd,
+      timeout: 15_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const prUrl = stdout.trim();
+    return prUrl || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * After a pipeline run, detect uncommitted changes in the workspace,
- * create a branch, commit, push, and open a PR.
+ * After a pipeline run, detect changes in the workspace and ensure a PR exists.
+ *
+ * Handles three scenarios:
+ * 1. Uncommitted changes → create branch, commit, push, open PR
+ * 2. Committed but unpushed changes → push, open PR
+ * 3. Pushed but no PR → open PR
  *
  * Returns the PR URL if successful, or undefined if no changes or on failure.
  */
@@ -43,44 +76,57 @@ export async function createPrFromWorkspace(params: {
   const { repoPath, threadTs, summary, onLog } = params;
 
   try {
-    const hasChanges = await hasUncommittedChanges(repoPath);
-    if (!hasChanges) {
-      onLog?.('No uncommitted changes in workspace, skipping PR creation.');
+    const baseBranch = await getDefaultBranch(repoPath);
+    const currentBranch = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => 'HEAD');
+    const hasUncommitted = await hasUncommittedChanges(repoPath);
+    const hasAheadCommits = await hasCommitsAheadOfBase(repoPath, baseBranch);
+
+    // Scenario: check if a PR already exists for the current branch
+    if (!hasUncommitted && currentBranch !== 'HEAD' && currentBranch !== baseBranch) {
+      const existing = await existingPrUrl(repoPath);
+      if (existing) {
+        onLog?.(`PR already exists for branch ${currentBranch}: ${existing}`);
+        return existing;
+      }
+    }
+
+    // No uncommitted changes AND no commits ahead of base → nothing to do
+    if (!hasUncommitted && !hasAheadCommits) {
+      onLog?.('No uncommitted or unpushed changes in workspace, skipping PR creation.');
       return undefined;
     }
 
     const safeBranchTs = threadTs.replace(/[^a-zA-Z0-9.-]/g, '-');
-    const branchName = `watchtower/fix-${safeBranchTs}`;
-    const baseBranch = await getDefaultBranch(repoPath);
+    let branchName = currentBranch;
 
-    // Check if we're in a detached HEAD (worktree) and create branch from it
-    const currentBranch = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => 'HEAD');
-
-    if (currentBranch === 'HEAD') {
-      // Detached HEAD — create and checkout a new branch
+    // If we need a new branch (detached HEAD or on base branch)
+    if (currentBranch === 'HEAD' || currentBranch === baseBranch) {
+      branchName = `watchtower/fix-${safeBranchTs}`;
       await git(repoPath, ['checkout', '-b', branchName]);
-    } else {
-      // Already on a branch — create a new one from current
-      await git(repoPath, ['checkout', '-b', branchName]);
+      onLog?.(`Created branch: ${branchName}`);
     }
 
-    onLog?.(`Created branch: ${branchName}`);
+    // Stage and commit any uncommitted changes
+    if (hasUncommitted) {
+      await git(repoPath, ['add', '-A']);
+      const commitTitle = summary.length > 72 ? `${summary.slice(0, 69)}...` : summary;
+      await git(repoPath, ['commit', '-m', commitTitle]);
+      onLog?.('Committed changes.');
+    }
 
-    // Stage all changes
-    await git(repoPath, ['add', '-A']);
-
-    // Commit
-    const commitTitle = summary.length > 72
-      ? `${summary.slice(0, 69)}...`
-      : summary;
-    await git(repoPath, ['commit', '-m', commitTitle]);
-    onLog?.('Committed changes.');
-
-    // Push
+    // Push the branch
     await git(repoPath, ['push', '-u', 'origin', branchName]);
     onLog?.(`Pushed to origin/${branchName}.`);
 
+    // Check again if a PR already exists (coder may have pushed + created one)
+    const existingAfterPush = await existingPrUrl(repoPath);
+    if (existingAfterPush) {
+      onLog?.(`PR already exists after push: ${existingAfterPush}`);
+      return existingAfterPush;
+    }
+
     // Create PR
+    const commitTitle = summary.length > 72 ? `${summary.slice(0, 69)}...` : summary;
     const prBody = [
       '## Summary',
       summary,

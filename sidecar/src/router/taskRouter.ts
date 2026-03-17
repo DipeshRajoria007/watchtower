@@ -4,6 +4,7 @@ import type {
   AppConfig,
   CodexRunRequest,
   NormalizedTask,
+  WorkflowIntent,
   WorkflowResult,
   WorkflowStepLogger,
 } from '../types/contracts.js';
@@ -18,6 +19,7 @@ import { renderPromptTemplate } from '../workflows/renderer.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
 import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { resolveGithubTokenForCodex } from '../github/githubAuth.js';
+import { classifyWorkflowIntent } from './classifyIntent.js';
 
 export async function routeTask(params: {
   task: NormalizedTask;
@@ -30,16 +32,45 @@ export async function routeTask(params: {
 }): Promise<WorkflowResult> {
   const { task, config, slack, store, jobId, logStep, signal } = params;
 
-  if (task.intent === 'PR_REVIEW') {
-    return runPrReviewWorkflow({ task, config, slack, store, jobId, logStep, signal });
-  }
-
-  if (task.intent === 'OWNER_AUTOPILOT') {
-    return runOwnerAutopilotWorkflow({ task, config, slack, store, jobId, logStep, signal });
-  }
-
+  // DEV_ASSIST is deterministic (explicit wt/ prefix or natural alias) — route immediately.
   if (task.intent === 'DEV_ASSIST') {
     return runDevAssistWorkflow({ task, config, slack, store, logStep });
+  }
+
+  // For non-DEV_ASSIST intents, use AI to classify between PR_REVIEW and OWNER_AUTOPILOT.
+  const userMessage = (task.event.text ?? '')
+    .replace(/<@[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const hasPrUrl = Boolean(task.prContext);
+  const classification = await classifyWorkflowIntent({
+    userMessage,
+    hasPrUrl,
+    logStep,
+  });
+
+  if (classification.intent !== task.intent) {
+    logStep?.({
+      stage: 'router.classify.override',
+      message: `AI classifier overrode intent: ${task.intent} → ${classification.intent} (confidence=${classification.confidence.toFixed(2)}).`,
+      data: {
+        originalIntent: task.intent,
+        classifiedIntent: classification.intent,
+        confidence: classification.confidence,
+        reasoning: classification.reasoning,
+      },
+    });
+  }
+
+  const resolvedIntent: WorkflowIntent = classification.intent;
+
+  if (resolvedIntent === 'PR_REVIEW') {
+    const routedTask = resolvedIntent !== task.intent ? { ...task, intent: resolvedIntent } : task;
+    return runPrReviewWorkflow({ task: routedTask, config, slack, store, jobId, logStep, signal });
+  }
+
+  if (resolvedIntent === 'OWNER_AUTOPILOT') {
+    return runOwnerAutopilotWorkflow({ task, config, slack, store, jobId, logStep, signal });
   }
 
   // Check file-based workflow templates before falling through to unknown
@@ -73,11 +104,13 @@ async function runTemplateWorkflow(params: {
   const prompt = renderPromptTemplate(template.promptTemplate, task, config);
   const cwd = config.repoPaths.newtonWeb; // Default to web repo; template environment could override
 
-  await slack.chat.postMessage({
-    channel: task.event.channelId,
-    thread_ts: task.event.threadTs,
-    text: `Running workflow: ${template.name}`,
-  }).catch(() => {});
+  await slack.chat
+    .postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: `Running workflow: ${template.name}`,
+    })
+    .catch(() => {});
 
   const githubToken = await resolveGithubTokenForCodex();
   const request: CodexRunRequest = {
@@ -96,11 +129,13 @@ async function runTemplateWorkflow(params: {
     ? String(result.parsedJson.summary)
     : result.lastMessage || 'Workflow completed.';
 
-  await slack.chat.postMessage({
-    channel: task.event.channelId,
-    thread_ts: task.event.threadTs,
-    text: summary,
-  }).catch(() => {});
+  await slack.chat
+    .postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: summary,
+    })
+    .catch(() => {});
 
   return {
     workflow: 'OWNER_AUTOPILOT',
