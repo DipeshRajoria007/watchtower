@@ -1,15 +1,8 @@
 import type { ReactNode } from 'react';
 import { getSidecarTone, humanizeToken } from '../lib/formatters';
 import type { AppView } from '../types';
-import {
-  CloseIcon,
-  IntelligenceIcon,
-  LaunchpadIcon,
-  MenuIcon,
-  OverviewIcon,
-  RunsIcon,
-  SettingsIcon,
-} from './icons';
+import { AtmosphereStyles, MouseGlow, NoiseOverlay, Scanlines, Vignette } from './Atmosphere';
+import { CloseIcon, IntelligenceIcon, LaunchpadIcon, MenuIcon, OverviewIcon, RunsIcon, SettingsIcon } from './icons';
 
 type AppShellProps = {
   children: ReactNode;
@@ -63,18 +56,19 @@ export function AppShell({
   const sidecarTone = getSidecarTone(sidecarStatus);
 
   const renderNav = (variant: 'rail' | 'drawer') => (
-      <div className={variant === 'drawer' ? 'sidebar-frame expanded' : 'sidebar-frame'}>
-        <div className="sidebar-brand">
-          <div className="brand-title-row">
-            <strong>Watchtower</strong>
-            <div
-              className={`sidebar-status sidebar-status-${sidecarTone}`}
-              aria-label={`Sidecar status: ${humanizeToken(sidecarStatus)}`}
-              title={`Sidecar status: ${humanizeToken(sidecarStatus)}`}
-            >
-              <span className="sidebar-status-dot" />
-            </div>
+    <div className={variant === 'drawer' ? 'sidebar-frame expanded' : 'sidebar-frame'}>
+      <div className="sidebar-brand">
+        <div className="brand-title-row">
+          <div className="brand-diamond" aria-hidden="true" />
+          <strong>Watchtower</strong>
+          <div
+            className={`sidebar-status sidebar-status-${sidecarTone}`}
+            aria-label={`Sidecar status: ${humanizeToken(sidecarStatus)}`}
+            title={`Sidecar status: ${humanizeToken(sidecarStatus)}`}
+          >
+            <span className="sidebar-status-dot" />
           </div>
+        </div>
 
         <button
           className="icon-button sidebar-menu-trigger"
@@ -108,42 +102,52 @@ export function AppShell({
             ) : null}
           </button>
         ))}
-        </nav>
+      </nav>
 
-        <div className="sidebar-footer">
-          <div className="sidebar-footer-pill-row">
-            <span className={`status-badge ${sidecarTone === 'good' ? 'success' : sidecarTone === 'danger' ? 'failed' : sidecarTone === 'warn' ? 'warn' : 'info'}`}>
-              {humanizeToken(sidecarStatus)}
-            </span>
-            <span className={`status-badge ${settingsRequired ? 'warn' : 'success'}`}>
-              {settingsRequired ? 'Setup needed' : 'Runtime ready'}
-            </span>
-          </div>
-          <p>Atmospheric control room for autonomous Slack workflows.</p>
-          <span>Draft commands, inspect traces, follow learned signals, and adjust runtime controls without losing live context.</span>
+      <div className="sidebar-footer">
+        <div className="sidebar-footer-pill-row">
+          <span
+            className={`status-badge ${sidecarTone === 'good' ? 'success' : sidecarTone === 'danger' ? 'failed' : sidecarTone === 'warn' ? 'warn' : 'info'}`}
+          >
+            {humanizeToken(sidecarStatus)}
+          </span>
+          <span className={`status-badge ${settingsRequired ? 'warn' : 'success'}`}>
+            {settingsRequired ? 'Setup needed' : 'Runtime ready'}
+          </span>
         </div>
+        <p>Atmospheric control room for autonomous Slack workflows.</p>
+        <span>
+          Draft commands, inspect traces, follow learned signals, and adjust runtime controls without losing live
+          context.
+        </span>
       </div>
+    </div>
   );
 
   return (
     <main className="desktop-shell">
+      <AtmosphereStyles />
+      <NoiseOverlay />
+
       <aside className="shell-sidebar">{renderNav('rail')}</aside>
 
-      <div
-        className={navDrawerOpen ? 'nav-drawer-overlay open' : 'nav-drawer-overlay'}
-        onClick={onToggleNavDrawer}
-      />
+      <div className={navDrawerOpen ? 'nav-drawer-overlay open' : 'nav-drawer-overlay'} onClick={onToggleNavDrawer} />
 
       <aside className={navDrawerOpen ? 'nav-drawer open' : 'nav-drawer'}>{renderNav('drawer')}</aside>
 
       <section className="shell-content">
+        <Scanlines />
+        <Vignette />
+        <MouseGlow />
         <div className="content-scroll">
           <div className="content-inner">
             {settingsRequired ? (
               <div className="global-banner">
                 <div>
                   <strong>Settings required.</strong>
-                  <span>Runtime config is incomplete, so the sidecar will remain paused until the Settings page is complete.</span>
+                  <span>
+                    Runtime config is incomplete, so the sidecar will remain paused until the Settings page is complete.
+                  </span>
                 </div>
                 <button type="button" onClick={() => onNavigate('settings')}>
                   Open Settings

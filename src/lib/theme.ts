@@ -40,38 +40,26 @@ export type ResolvedAppTheme = {
 };
 
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
-const DEFAULT_MONO_STACK = '"IBM Plex Mono", "SF Mono", monospace';
+const DEFAULT_MONO_STACK = '"JetBrains Mono", monospace';
 
 export const THEME_FONT_OPTIONS: ThemeFontOption[] = [
   {
-    id: 'ibm-plex',
-    label: 'IBM Plex Sans',
-    note: 'Technical and crisp',
-    stack: '"IBM Plex Sans", "Segoe UI", sans-serif',
+    id: 'inter',
+    label: 'Inter',
+    note: 'Clean and modern',
+    stack: '"Inter", system-ui, -apple-system, sans-serif',
   },
   {
-    id: 'sf-pro',
-    label: 'SF Pro',
-    note: 'Native macOS feel',
-    stack: '"SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  },
-  {
-    id: 'avenir-next',
-    label: 'Avenir Next',
-    note: 'Quiet and polished',
-    stack: '"Avenir Next", "Helvetica Neue", sans-serif',
-  },
-  {
-    id: 'georgia',
-    label: 'Georgia',
-    note: 'Editorial serif',
-    stack: 'Georgia, "Times New Roman", serif',
-  },
-  {
-    id: 'menlo',
-    label: 'Menlo',
+    id: 'jetbrains-mono',
+    label: 'JetBrains Mono',
     note: 'Terminal-forward',
-    stack: 'Menlo, Monaco, "Courier New", monospace',
+    stack: '"JetBrains Mono", monospace',
+  },
+  {
+    id: 'system-ui',
+    label: 'System UI',
+    note: 'Native platform feel',
+    stack: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },
 ];
 
@@ -79,11 +67,11 @@ export const THEME_PRESETS: ThemePresetDefinition[] = [
   {
     id: 'watchtower-midnight',
     label: 'Watchtower Midnight',
-    description: 'Cold radar blues with the original control-room darkness.',
-    backgroundColor: '#06090C',
-    foregroundColor: '#F2F7FB',
-    accentColor: '#53D2FF',
-    fontFamily: 'ibm-plex',
+    description: 'Deep dark control-room aesthetic with teal accents.',
+    backgroundColor: '#0A0A0B',
+    foregroundColor: '#E8E8ED',
+    accentColor: '#5EEAD4',
+    fontFamily: 'inter',
   },
   {
     id: 'signal-paper',
@@ -92,7 +80,7 @@ export const THEME_PRESETS: ThemePresetDefinition[] = [
     backgroundColor: '#F5EEDD',
     foregroundColor: '#24180F',
     accentColor: '#D9673B',
-    fontFamily: 'georgia',
+    fontFamily: 'inter',
   },
   {
     id: 'ember-terminal',
@@ -101,7 +89,7 @@ export const THEME_PRESETS: ThemePresetDefinition[] = [
     backgroundColor: '#140E0A',
     foregroundColor: '#FFF0E2',
     accentColor: '#FF7A32',
-    fontFamily: 'menlo',
+    fontFamily: 'jetbrains-mono',
   },
   {
     id: 'harbor-mint',
@@ -110,7 +98,7 @@ export const THEME_PRESETS: ThemePresetDefinition[] = [
     backgroundColor: '#081513',
     foregroundColor: '#E9FFF8',
     accentColor: '#33D5B2',
-    fontFamily: 'sf-pro',
+    fontFamily: 'inter',
   },
 ];
 
@@ -199,43 +187,29 @@ function getThemeCssVariables(theme: ResolvedAppTheme): Record<string, string> {
     '--accent-contrast': relativeLuminance(accent) > 0.58 ? '#0D1418' : '#FFFFFF',
     '--accent-soft': toRgba(accent, 0.16),
     '--bg-canvas': theme.backgroundColor,
-    '--bg-input': toRgba(mixColors(bg, fg, isDarkTheme ? 0.06 : 0.1), 0.94),
+    '--bg-input': isDarkTheme ? '#141416' : toHex(mixColors(bg, fg, 0.06)),
     '--bg-panel': toRgba(mixColors(bg, fg, isDarkTheme ? 0.12 : 0.05), 0.9),
     '--bg-panel-soft': toRgba(mixColors(bg, fg, isDarkTheme ? 0.14 : 0.06), isDarkTheme ? 0.72 : 0.68),
     '--bg-panel-strong': toRgba(mixColors(bg, fg, isDarkTheme ? 0.18 : 0.09), 0.98),
     '--bg-shell': toRgba(mixColors(bg, fg, isDarkTheme ? 0.08 : 0.02), isDarkTheme ? 0.9 : 0.82),
-    '--body-gradient-end': toHex(mixColors(bg, fg, isDarkTheme ? 0.0 : 0.01)),
-    '--body-gradient-start': toHex(mixColors(bg, fg, isDarkTheme ? 0.06 : 0.02)),
-    '--body-radial-primary': toRgba(accent, isDarkTheme ? 0.12 : 0.14),
-    '--body-radial-secondary': toRgba(mixColors(accent, fg, 0.36), isDarkTheme ? 0.07 : 0.08),
-    '--brand-gradient-bottom': toRgba(mixColors(bg, fg, isDarkTheme ? 0.06 : 0.02), 0.94),
-    '--brand-gradient-top': toRgba(mixColors(bg, accent, 0.2), 0.84),
-    '--button-gradient-bottom': toRgba(mixColors(accent, bg, isDarkTheme ? 0.18 : 0.08), 0.98),
-    '--button-gradient-top': toRgba(mixColors(accent, fg, isDarkTheme ? 0.12 : 0.04), 0.96),
-    '--composer-gradient-bottom': toRgba(mixColors(bg, fg, isDarkTheme ? 0.12 : 0.02), 0.98),
-    '--composer-gradient-top': toRgba(mixColors(bg, fg, isDarkTheme ? 0.2 : 0.06), 0.96),
-    '--console-bg': toRgba(mixColors(bg, accent, isDarkTheme ? 0.08 : 0.02), 0.96),
-    '--console-fg': toHex(mixColors(fg, accent, isDarkTheme ? 0.12 : 0.06)),
-    '--content-gradient-bottom': toRgba(mixColors(bg, fg, isDarkTheme ? 0.02 : 0.0), isDarkTheme ? 0.92 : 0.08),
-    '--content-gradient-top': toRgba(mixColors(bg, fg, isDarkTheme ? 0.12 : 0.02), isDarkTheme ? 0.78 : 0.28),
-    '--font-mono': theme.font.id === 'menlo' ? theme.font.stack : DEFAULT_MONO_STACK,
+    '--card': isDarkTheme ? '#0D0D0F' : toHex(mixColors(bg, fg, 0.04)),
+    '--card-gradient': isDarkTheme
+      ? 'linear-gradient(145deg, #0F0F11 0%, #0D0D0F 50%, #0B0B0D 100%)'
+      : `linear-gradient(145deg, ${toHex(mixColors(bg, fg, 0.06))} 0%, ${toHex(mixColors(bg, fg, 0.04))} 50%, ${toHex(mixColors(bg, fg, 0.03))} 100%)`,
+    '--border': isDarkTheme ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)',
+    '--input-bg': isDarkTheme ? '#141416' : toHex(mixColors(bg, fg, 0.06)),
+    '--ring': toRgba(accent, 0.25),
+    '--sidebar-bg': isDarkTheme ? '#0C0C0E' : toHex(mixColors(bg, fg, 0.02)),
+    '--warm': '#D4956B',
+    '--console-bg': isDarkTheme ? 'rgba(5, 8, 12, 0.95)' : toRgba(mixColors(bg, accent, 0.02), 0.96),
+    '--console-fg': isDarkTheme ? '#d0d0d8' : toHex(mixColors(fg, accent, 0.06)),
+    '--font-mono': theme.font.id === 'jetbrains-mono' ? theme.font.stack : DEFAULT_MONO_STACK,
     '--font-sans': theme.font.stack,
-    '--line': toRgba(fg, isDarkTheme ? 0.22 : 0.16),
-    '--line-strong': toRgba(fg, isDarkTheme ? 0.38 : 0.24),
-    '--panel-gradient-bottom': toRgba(mixColors(bg, fg, isDarkTheme ? 0.08 : 0.02), 0.96),
-    '--panel-gradient-top': toRgba(mixColors(bg, fg, isDarkTheme ? 0.16 : 0.05), 0.96),
-    '--raised-gradient-bottom': toRgba(mixColors(bg, fg, isDarkTheme ? 0.1 : 0.03), 0.95),
-    '--raised-gradient-top': toRgba(mixColors(bg, fg, isDarkTheme ? 0.18 : 0.06), 0.95),
-    '--selected-gradient-bottom': toRgba(mixColors(bg, fg, isDarkTheme ? 0.08 : 0.03), 0.98),
-    '--selected-gradient-top': toRgba(mixColors(bg, accent, isDarkTheme ? 0.32 : 0.16), 0.98),
-    '--shadow': isDarkTheme ? '0 24px 60px rgba(0, 0, 0, 0.35)' : '0 24px 60px rgba(37, 29, 20, 0.12)',
-    '--shell-gradient-bottom': toRgba(mixColors(bg, fg, isDarkTheme ? 0.04 : 0.01), 0.98),
-    '--shell-gradient-top': toRgba(mixColors(bg, fg, isDarkTheme ? 0.1 : 0.03), 0.98),
-    '--sticky-gradient-bottom': toRgba(mixColors(bg, fg, isDarkTheme ? 0.06 : 0.02), 0.98),
-    '--sticky-gradient-top': toRgba(mixColors(bg, fg, isDarkTheme ? 0.14 : 0.04), 0.97),
-    '--text-label': toHex(mixColors(bg, fg, isDarkTheme ? 0.68 : 0.56)),
-    '--text-muted': toHex(mixColors(bg, fg, isDarkTheme ? 0.56 : 0.46)),
-    '--text-soft': toHex(mixColors(bg, fg, isDarkTheme ? 0.8 : 0.72)),
+    '--line': isDarkTheme ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)',
+    '--line-strong': isDarkTheme ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.14)',
+    '--text-label': isDarkTheme ? '#3A3A42' : toHex(mixColors(bg, fg, 0.56)),
+    '--text-muted': isDarkTheme ? '#6B6B76' : toHex(mixColors(bg, fg, 0.46)),
+    '--text-soft': isDarkTheme ? '#A0A0AB' : toHex(mixColors(bg, fg, 0.72)),
     '--text-strong': theme.foregroundColor,
   };
 }
