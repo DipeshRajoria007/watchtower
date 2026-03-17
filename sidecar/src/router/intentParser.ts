@@ -1,18 +1,12 @@
 import type { AppConfig, NormalizedTask, PrContext, SlackEventEnvelope, WorkflowIntent } from '../types/contracts.js';
 import { hasDevAssistPrefix, hasNaturalDevAssistAlias } from './devAssistParser.js';
 
-const PR_REVIEW_KEYWORDS = [
-  /review/i,
-  /pull request/i,
-  /code review/i,
-];
-
 const GITHUB_PR_REGEX = /https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)/g;
 
 export function detectMention(
   text: string,
   config: AppConfig,
-  channelType?: string
+  channelType?: string,
 ): { detected: boolean; type: 'bot' | 'owner' | 'none' } {
   if (!text) {
     if (channelType === 'im') {
@@ -63,7 +57,7 @@ export function extractPrContext(texts: string[]): PrContext | undefined {
 function inferIntent(
   event: SlackEventEnvelope,
   config: AppConfig,
-  mention: { detected: boolean; type: 'bot' | 'owner' | 'none' }
+  mention: { detected: boolean; type: 'bot' | 'owner' | 'none' },
 ): WorkflowIntent {
   // Any explicit wt/watchtower prefix is always routed to dev-assist, even for owners.
   if (mention.detected && hasDevAssistPrefix(event.text ?? '')) {
@@ -75,16 +69,9 @@ function inferIntent(
     return 'DEV_ASSIST';
   }
 
-  // PR review: requires explicit review language OR a GitHub PR URL in the text.
-  // Bare "PR" mentions (e.g. "give me the PR link") should NOT trigger review.
-  const text = event.text ?? '';
-  const hasReviewKeyword = PR_REVIEW_KEYWORDS.some(regex => regex.test(text));
-  const hasGithubPrUrl = GITHUB_PR_REGEX.test(text);
-  // Reset lastIndex since GITHUB_PR_REGEX has the global flag
-  GITHUB_PR_REGEX.lastIndex = 0;
-  if (hasReviewKeyword || hasGithubPrUrl) {
-    return 'PR_REVIEW';
-  }
+  // Intent classification for PR_REVIEW vs OWNER_AUTOPILOT is handled by the
+  // AI classifier in routeTask. Here we return OWNER_AUTOPILOT as the default
+  // for any bot mention that is not a DEV_ASSIST command.
 
   // Any bot mention (owner or non-owner) routes to OWNER_AUTOPILOT.
   // The workflow itself determines trust level based on ownerSlackUserIds.
@@ -98,7 +85,7 @@ function inferIntent(
 export function normalizeTask(
   event: SlackEventEnvelope,
   config: AppConfig,
-  threadTexts: string[] = []
+  threadTexts: string[] = [],
 ): NormalizedTask {
   const mention = detectMention(event.text, config, event.channelType);
   const isOwnerAuthor = config.ownerSlackUserIds.includes(event.userId);

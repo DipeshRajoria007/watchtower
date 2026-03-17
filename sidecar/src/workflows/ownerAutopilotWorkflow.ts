@@ -20,6 +20,7 @@ import { getBackend } from '../backends/registry.js';
 import { runAgentPipeline, formatPlanMessage, waitForApproval } from '../agents/pipeline.js';
 import { resolveWorkspace } from '../workspaces/workspaceManager.js';
 import { createPrFromWorkspace } from '../github/postPipelinePr.js';
+import { triageUserIntent } from '../agents/triageIntent.js';
 import type { PipelineStore } from '../agents/pipeline.js';
 import type { PipelineConfig } from '../agents/types.js';
 
@@ -32,7 +33,10 @@ function resolveOwnerWorkspaceRoot(config: AppConfig): string {
   return process.env.HOME ?? os.homedir();
 }
 
-function formatThreadContext(task: NormalizedTask, messages: Array<{ text: string; user: string; ts: string }>): string {
+function formatThreadContext(
+  task: NormalizedTask,
+  messages: Array<{ text: string; user: string; ts: string }>,
+): string {
   const lines: string[] = [];
   lines.push(`[root] user=${task.event.userId} ts=${task.event.eventTs}`);
   lines.push(task.event.text);
@@ -47,7 +51,10 @@ function formatThreadContext(task: NormalizedTask, messages: Array<{ text: strin
 }
 
 function stripMentions(text: string): string {
-  return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  return text
+    .replace(/<@[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function isPresencePing(text: string): boolean {
@@ -117,7 +124,12 @@ function sanitizeOwnerSummary(raw: string): string {
     .filter(Boolean)
     .filter(line => !/^actions?:/i.test(line))
     .filter(line => !/^-\s*/.test(line))
-    .filter(line => !/(channel\s+[A-Z0-9]+|thread\s+\d+\.\d+|timestamp|slack thread|replied in slack|posted in slack|confirmed slack)/i.test(line))
+    .filter(
+      line =>
+        !/(channel\s+[A-Z0-9]+|thread\s+\d+\.\d+|timestamp|slack thread|replied in slack|posted in slack|confirmed slack)/i.test(
+          line,
+        ),
+    )
     .filter(line => !/^on master's command/i.test(line));
 
   const finalText = lines.join(' ').replace(/\s+/g, ' ').trim();
@@ -288,7 +300,7 @@ export async function runOwnerAutopilotWorkflow(params: {
     if (classification.uncertain || !classification.selectedRepo) {
       notifyDesktop(
         'Watchtower uncertain repo classification',
-        `Could not confidently classify task thread ${task.event.threadTs} (confidence=${classification.confidence.toFixed(2)}).`
+        `Could not confidently classify task thread ${task.event.threadTs} (confidence=${classification.confidence.toFixed(2)}).`,
       );
 
       return {
@@ -302,9 +314,8 @@ export async function runOwnerAutopilotWorkflow(params: {
     }
 
     repoName = classification.selectedRepo;
-    const baseRepoPath = classification.selectedRepo === 'newton-web'
-      ? config.repoPaths.newtonWeb
-      : config.repoPaths.newtonApi;
+    const baseRepoPath =
+      classification.selectedRepo === 'newton-web' ? config.repoPaths.newtonWeb : config.repoPaths.newtonApi;
     cwd = resolveWorkspace(baseRepoPath, task.event.threadTs);
   }
 
@@ -375,9 +386,10 @@ export async function runOwnerAutopilotWorkflow(params: {
   }
 
   const backend = getBackend(getActiveBackendId());
-  const imageContext = imagePaths.length > 0 && !backend.supportsImages()
-    ? `\n\n[${imagePaths.length} image(s) attached in thread — this backend does not support image input]`
-    : '';
+  const imageContext =
+    imagePaths.length > 0 && !backend.supportsImages()
+      ? `\n\n[${imagePaths.length} image(s) attached in thread — this backend does not support image input]`
+      : '';
 
   const githubToken = await resolveGithubTokenForCodex();
 
@@ -395,7 +407,15 @@ export async function runOwnerAutopilotWorkflow(params: {
       data: { isOwnerAuthor },
     });
 
-    // Planner runs first to determine if code changes are needed
+    // AI-based triage: classify user intent BEFORE the planner runs.
+    // Runs in os.tmpdir() with no repo context so it can't be confused by existing code.
+    const triageResult = await triageUserIntent({
+      userMessage: userInput,
+      threadContext,
+      logStep,
+    });
+
+    // Planner runs to produce plan steps, affected files, and scope
     const plannerPipelineConfig: PipelineConfig = {
       agents: ['planner'],
       maxRetryLoops: 0,
@@ -424,12 +444,31 @@ export async function runOwnerAutopilotWorkflow(params: {
 
     const plannerStep = plannerResult.steps[0];
     const plannerOutput = plannerStep?.output ?? {};
-    const requiresCodeChanges = Boolean(plannerOutput.requiresCodeChanges);
+    const plannerRequiresCodeChanges = Boolean(plannerOutput.requiresCodeChanges);
+    const requiresCodeChanges = triageResult.requiresCodeChanges;
+
+    // Log when triage and planner disagree for observability
+    if (triageResult.requiresCodeChanges !== plannerRequiresCodeChanges) {
+      logStep?.({
+        stage: 'owner_autopilot.triage.planner_disagree',
+        message: `Triage (${triageResult.intent}) and planner disagree on requiresCodeChanges — using triage decision.`,
+        level: 'WARN',
+        data: {
+          triageIntent: triageResult.intent,
+          triageRequiresCodeChanges: triageResult.requiresCodeChanges,
+          plannerRequiresCodeChanges,
+          triageConfidence: triageResult.confidence,
+          triageReasoning: triageResult.reasoning,
+        },
+      });
+    }
 
     if (requiresCodeChanges) {
       // Post the plan and ask for approval BEFORE running the full pipeline
       const planSteps = Array.isArray(plannerOutput.plan) ? plannerOutput.plan.map(String) : [];
-      const planAffectedFiles = Array.isArray(plannerOutput.affectedFiles) ? plannerOutput.affectedFiles.map(String) : [];
+      const planAffectedFiles = Array.isArray(plannerOutput.affectedFiles)
+        ? plannerOutput.affectedFiles.map(String)
+        : [];
       const planScope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : 'unknown';
 
       // For owner tasks, resolve a worktree so the coder agent runs inside a real git repo.
@@ -449,20 +488,28 @@ export async function runOwnerAutopilotWorkflow(params: {
           const texts = [task.event.text, ...threadMessages.map(m => m.text)];
           const classification = classifyRepo(texts, config.repoClassifierThreshold);
           if (!classification.uncertain && classification.selectedRepo) {
-            targetRepoPath = classification.selectedRepo === 'newton-web'
-              ? config.repoPaths.newtonWeb
-              : config.repoPaths.newtonApi;
+            targetRepoPath =
+              classification.selectedRepo === 'newton-web' ? config.repoPaths.newtonWeb : config.repoPaths.newtonApi;
           }
         }
 
-        if (targetRepoPath) {
-          pipelineCwd = resolveWorkspace(targetRepoPath, task.event.threadTs);
+        // Final fallback: default to newton-web rather than running in the parent dir
+        // (which isn't a git repo and causes PR creation to fail).
+        if (!targetRepoPath) {
+          targetRepoPath = config.repoPaths.newtonWeb;
           logStep?.({
-            stage: 'owner_autopilot.workspace.resolved',
-            message: `Resolved owner pipeline workspace to isolated worktree.`,
-            data: { targetRepoPath, pipelineCwd },
+            stage: 'owner_autopilot.workspace.fallback',
+            message: 'Could not determine target repo from planner or classifier — defaulting to newton-web.',
+            level: 'WARN',
           });
         }
+
+        pipelineCwd = resolveWorkspace(targetRepoPath, task.event.threadTs);
+        logStep?.({
+          stage: 'owner_autopilot.workspace.resolved',
+          message: `Resolved owner pipeline workspace to isolated worktree.`,
+          data: { targetRepoPath, pipelineCwd },
+        });
       }
 
       let planMessageTs: string | undefined;
@@ -486,7 +533,7 @@ export async function runOwnerAutopilotWorkflow(params: {
           const promptResult = await slack.chat.postMessage({
             channel: task.event.channelId,
             thread_ts: task.event.threadTs,
-            text: "Here's my plan. Should I go ahead? Reply in this thread:\n• \"yes\" or \"go\" — I'll start coding\n• \"no\" or \"stop\" — I'll cancel\n• Or reply with changes you'd like and I'll adjust",
+            text: 'Here\'s my plan. Should I go ahead? Reply in this thread:\n• "yes" or "go" — I\'ll start coding\n• "no" or "stop" — I\'ll cancel\n• Or reply with changes you\'d like and I\'ll adjust',
           });
           approvalPromptTs = promptResult.ts ?? undefined;
         } catch {
@@ -509,11 +556,13 @@ export async function runOwnerAutopilotWorkflow(params: {
           });
 
           if (!approval.approved) {
-            await slack.chat.postMessage({
-              channel: task.event.channelId,
-              thread_ts: task.event.threadTs,
-              text: "Got it, cancelling.",
-            }).catch(() => {});
+            await slack.chat
+              .postMessage({
+                channel: task.event.channelId,
+                thread_ts: task.event.threadTs,
+                text: 'Got it, cancelling.',
+              })
+              .catch(() => {});
 
             return {
               workflow: 'OWNER_AUTOPILOT',
@@ -554,11 +603,10 @@ export async function runOwnerAutopilotWorkflow(params: {
       });
 
       const coderStep = fullResult.steps.find(s => s.role === 'coder');
-      const rawCoderSummary = coderStep?.output?.summary
-        ? sanitizeOwnerSummary(String(coderStep.output.summary))
-        : '';
-      const summary = rawCoderSummary
-        || (fullResult.finalStatus === 'passed'
+      const rawCoderSummary = coderStep?.output?.summary ? sanitizeOwnerSummary(String(coderStep.output.summary)) : '';
+      const summary =
+        rawCoderSummary ||
+        (fullResult.finalStatus === 'passed'
           ? 'Pipeline completed but the agent did not return a summary. Check the repo for changes.'
           : `Pipeline finished with status: ${fullResult.finalStatus}. The agent did not produce output — it may not be installed or may have timed out.`);
 
@@ -571,15 +619,17 @@ export async function runOwnerAutopilotWorkflow(params: {
           message: 'Coder did not produce a PR — creating one from workspace changes.',
         });
 
-        prUrl = await createPrFromWorkspace({
-          repoPath: pipelineCwd,
-          threadTs: task.event.threadTs,
-          summary,
-          onLog: (msg) => logStep?.({
-            stage: 'owner_autopilot.pr.progress',
-            message: msg,
-          }),
-        }) ?? '';
+        prUrl =
+          (await createPrFromWorkspace({
+            repoPath: pipelineCwd,
+            threadTs: task.event.threadTs,
+            summary,
+            onLog: msg =>
+              logStep?.({
+                stage: 'owner_autopilot.pr.progress',
+                message: msg,
+              }),
+          })) ?? '';
       }
 
       const prBlock = prUrl ? `\n${prUrl}` : '';
@@ -603,11 +653,11 @@ export async function runOwnerAutopilotWorkflow(params: {
     }
 
     // Planner-only fast path (no code changes needed)
-    const planSummary = plannerOutput.plan
-      ? (plannerOutput.plan as string[]).join('. ')
-      : 'No action needed.';
+    const planSummary = plannerOutput.plan ? (plannerOutput.plan as string[]).join('. ') : 'No action needed.';
     const sanitized = sanitizeOwnerSummary(planSummary);
-    const plannerMessage = sanitized || 'Planner finished but produced no actionable summary. The agent backend may not be installed or returned empty output.';
+    const plannerMessage =
+      sanitized ||
+      'Planner finished but produced no actionable summary. The agent backend may not be installed or returned empty output.';
 
     await slack.chat.postMessage({
       channel: task.event.channelId,
@@ -660,7 +710,7 @@ export async function runOwnerAutopilotWorkflow(params: {
     message: 'Starting owner-autopilot Codex execution with high-reasoning profile.',
     data: {
       cwd,
-  
+
       isOwnerAuthor,
     },
   });
@@ -680,9 +730,7 @@ export async function runOwnerAutopilotWorkflow(params: {
   });
 
   const primaryTextFallback =
-    result.ok && !result.parsedJson
-      ? sanitizeOwnerSummary(result.lastMessage || result.stdout)
-      : '';
+    result.ok && !result.parsedJson ? sanitizeOwnerSummary(result.lastMessage || result.stdout) : '';
 
   if (primaryTextFallback) {
     await slack.chat.postMessage({
@@ -757,7 +805,9 @@ export async function runOwnerAutopilotWorkflow(params: {
       if (relaxedResult.ok) {
         const relaxedSummaryRaw = relaxedResult.lastMessage || relaxedResult.stdout;
         const relaxedSummary = sanitizeOwnerSummary(relaxedSummaryRaw || '');
-        const messageText = relaxedSummary || 'Workflow completed but the agent returned empty output. Verify the configured backend CLI is installed and working.';
+        const messageText =
+          relaxedSummary ||
+          'Workflow completed but the agent returned empty output. Verify the configured backend CLI is installed and working.';
 
         await slack.chat.postMessage({
           channel: task.event.channelId,
@@ -816,9 +866,10 @@ export async function runOwnerAutopilotWorkflow(params: {
 
   const rawStatus = String(result.parsedJson.status ?? 'success');
   const normalizedStatus = rawStatus === 'needs_clarification' ? 'no_action' : rawStatus;
-  const status = normalizedStatus === 'success' || normalizedStatus === 'failed' || normalizedStatus === 'no_action'
-    ? normalizedStatus
-    : 'failed';
+  const status =
+    normalizedStatus === 'success' || normalizedStatus === 'failed' || normalizedStatus === 'no_action'
+      ? normalizedStatus
+      : 'failed';
   const confidence = Number(result.parsedJson.confidence ?? Number.NaN);
   const summaryRaw = String(result.parsedJson.summary ?? 'Owner request completed.');
   const summary = sanitizeOwnerSummary(summaryRaw);

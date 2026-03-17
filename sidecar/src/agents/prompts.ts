@@ -30,6 +30,11 @@ ${ctx.threadContext}
 
 ${ctx.prContext ? `PR context: ${ctx.prContext.url} (${ctx.prContext.owner}/${ctx.prContext.repo}#${ctx.prContext.number})` : ''}
 
+IMPORTANT: "requiresCodeChanges" rules:
+- Set to true when the user requests ANY implementation, feature, fix, change, or modification — even if similar code already exists in the repo.
+- The user's explicit request takes priority. If they say "I want to…", "add…", "implement…", "fix…", "block…", "create…", "change…", or "update…" — that is an implementation request and requiresCodeChanges MUST be true.
+- Only set to false for purely informational requests (explain, describe, list, check status, answer a question) where NO file changes are needed.
+
 Return strict JSON:
 {
   "plan": string[],           // ordered steps for execution
@@ -73,7 +78,8 @@ Return strict JSON:
   "filesChanged": string[],
   "summary": string,
   "testsAdded": string[],
-  "branch": string
+  "branch": string,
+  "prUrl": string          // URL of the PR you created (empty string if PR creation failed)
 }
 `.trim();
 }

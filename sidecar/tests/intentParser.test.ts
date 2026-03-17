@@ -54,7 +54,7 @@ describe('intentParser', () => {
     expect(result?.number).toBe(123);
   });
 
-  it('classifies PR review intent', () => {
+  it('normalizes PR-containing message to OWNER_AUTOPILOT (AI classifier refines in router)', () => {
     const task = normalizeTask(
       {
         ...baseEvent,
@@ -64,7 +64,9 @@ describe('intentParser', () => {
       [],
     );
 
-    expect(task.intent).toBe('PR_REVIEW');
+    // normalizeTask returns OWNER_AUTOPILOT as preliminary intent;
+    // the AI classifier in routeTask refines it to PR_REVIEW.
+    expect(task.intent).toBe('OWNER_AUTOPILOT');
     expect(task.mentionDetected).toBe(true);
     expect(task.isOwnerAuthor).toBe(false);
     expect(task.prContext?.repo).toBe('newton-web');
@@ -95,7 +97,7 @@ describe('intentParser', () => {
     expect(otherChannel.intent).toBe('OWNER_AUTOPILOT');
   });
 
-  it('classifies PR review in any channel when mentioned', () => {
+  it('returns OWNER_AUTOPILOT for PR URL in any channel (AI refines in router)', () => {
     const task = normalizeTask(
       {
         ...baseEvent,
@@ -106,8 +108,9 @@ describe('intentParser', () => {
       [],
     );
 
-    expect(task.intent).toBe('PR_REVIEW');
+    expect(task.intent).toBe('OWNER_AUTOPILOT');
     expect(task.mentionDetected).toBe(true);
+    expect(task.prContext?.number).toBe(22);
   });
 
   it('routes owner-authored bot mention to owner-autopilot', () => {
@@ -221,7 +224,7 @@ describe('intentParser', () => {
     expect(task.intent).toBe('OWNER_AUTOPILOT');
   });
 
-  it('routes GitHub PR URL without review keyword to PR_REVIEW', () => {
+  it('extracts PR context even though intent stays OWNER_AUTOPILOT (AI refines in router)', () => {
     const task = normalizeTask(
       {
         ...baseEvent,
@@ -231,7 +234,7 @@ describe('intentParser', () => {
       [],
     );
 
-    expect(task.intent).toBe('PR_REVIEW');
+    expect(task.intent).toBe('OWNER_AUTOPILOT');
     expect(task.prContext?.number).toBe(99);
   });
 
