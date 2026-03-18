@@ -49,11 +49,14 @@ export async function routeTask(params: {
     return runConversationalWorkflow({ task, config, slack, logStep });
   }
 
-  // For all other intents, use AI to classify into PR_REVIEW, IMPLEMENTATION, INFORMATIONAL, or CONVERSATIONAL.
+  // For all other intents, use AI to classify.
+  // Pass mentionType so the classifier knows if this is a direct @miniOG mention
+  // or an indirect @theOG mention (owner-mention triggers should be filtered for relevance).
   const hasPrUrl = Boolean(task.prContext);
   const classification = await classifyWorkflowIntent({
     userMessage,
     hasPrUrl,
+    mentionType: task.mentionType,
     logStep,
   });
 
@@ -71,6 +74,22 @@ export async function routeTask(params: {
   }
 
   const resolvedIntent: WorkflowIntent = classification.intent;
+
+  // NONE = classifier determined this is human-to-human conversation, miniOG should stay silent
+  if (resolvedIntent === 'NONE') {
+    logStep?.({
+      stage: 'router.silent',
+      message: 'Classifier returned NONE — staying silent for this human-to-human conversation.',
+      data: { reasoning: classification.reasoning },
+    });
+    return {
+      workflow: 'NONE',
+      status: 'SKIPPED',
+      message: 'Staying silent — message is human-to-human conversation.',
+      notifyDesktop: false,
+      slackPosted: false,
+    };
+  }
 
   if (resolvedIntent === 'PR_REVIEW') {
     const routedTask = resolvedIntent !== task.intent ? { ...task, intent: resolvedIntent } : task;

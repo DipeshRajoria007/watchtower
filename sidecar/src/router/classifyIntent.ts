@@ -9,7 +9,7 @@ export interface IntentClassification {
   reasoning: string;
 }
 
-const CLASSIFY_PROMPT = `You are a workflow intent classifier for a developer productivity bot. Your ONLY job is to classify what workflow should handle the user's message.
+const CLASSIFY_PROMPT_BASE = `You are a workflow intent classifier for a developer productivity bot called miniOG. Your ONLY job is to classify what workflow should handle the user's message.
 
 You have NO access to any codebase. Classify based purely on the user's message and thread context.
 
@@ -26,18 +26,33 @@ Classification rules:
 - If the user asks a question or wants to understand something → INFORMATIONAL
 - If the user is just chatting, greeting, or thanking → CONVERSATIONAL
 - If the user says they want something done, that is ALWAYS IMPLEMENTATION regardless of whether it might already exist. The user's explicit request takes absolute priority.
-- When in doubt between IMPLEMENTATION and INFORMATIONAL, prefer IMPLEMENTATION (safer to run the full pipeline than skip a real request).
+- When in doubt between IMPLEMENTATION and INFORMATIONAL, prefer IMPLEMENTATION (safer to run the full pipeline than skip a real request).`;
 
-Return strict JSON:
-{
-  "intent": "PR_REVIEW" | "IMPLEMENTATION" | "INFORMATIONAL" | "CONVERSATIONAL",
-  "confidence": number between 0 and 1,
-  "reasoning": "one sentence explaining why"
-}`;
+const OWNER_MENTION_ADDENDUM = `
+IMPORTANT — INDIRECT MENTION CONTEXT:
+This message was NOT sent directly to miniOG. It was detected because the team owner (@theOG) was mentioned. The message might be a human-to-human conversation where the owner was tagged — NOT a request for AI assistance.
 
-function buildClassifyUserPrompt(params: { userMessage: string; threadContext?: string; hasPrUrl: boolean }): string {
+Additional option:
+- NONE: The message is a human-to-human conversation that does not need AI involvement. The owner was mentioned as part of normal team communication (status updates, FYIs, discussions, tagging for awareness, meeting coordination, etc.). miniOG should stay silent.
+
+Rules for NONE:
+- If people are discussing among themselves and just tagged the owner for visibility/awareness → NONE
+- If the message is an FYI, status update, or team coordination that doesn't ask the AI to do anything → NONE
+- If the message mentions the owner alongside other humans and is clearly a group conversation → NONE
+- Only classify as a workflow (IMPLEMENTATION, INFORMATIONAL, etc.) if the message is clearly asking for AI assistance — e.g., explicitly asking miniOG to do something, or asking a technical question that an AI should answer.
+- When in doubt for indirect mentions, prefer NONE (better to stay silent than interrupt a human conversation).`;
+
+function buildClassifyUserPrompt(params: {
+  userMessage: string;
+  threadContext?: string;
+  hasPrUrl: boolean;
+  mentionType: 'bot' | 'owner' | 'none';
+}): string {
   const lines = [`User message: "${params.userMessage}"`];
   lines.push(`Contains GitHub PR URL: ${params.hasPrUrl}`);
+  lines.push(
+    `Mention type: ${params.mentionType === 'bot' ? 'direct bot mention (@miniOG)' : 'indirect owner mention (@theOG)'}`,
+  );
   if (params.threadContext) {
     lines.push(`\nThread context:\n${params.threadContext}`);
   }
@@ -51,22 +66,36 @@ const SAFE_FALLBACK: IntentClassification = {
   reasoning: 'Classification failed — defaulting to IMPLEMENTATION to avoid skipping a real request.',
 };
 
+const SILENT_FALLBACK: IntentClassification = {
+  intent: 'NONE',
+  confidence: 0.5,
+  reasoning: 'Classification failed for indirect mention — defaulting to NONE to avoid interrupting.',
+};
+
 export async function classifyWorkflowIntent(params: {
   userMessage: string;
   threadContext?: string;
   hasPrUrl: boolean;
+  mentionType?: 'bot' | 'owner' | 'none';
   logStep?: WorkflowStepLogger;
 }): Promise<IntentClassification> {
-  const { userMessage, threadContext, hasPrUrl, logStep } = params;
+  const { userMessage, threadContext, hasPrUrl, mentionType = 'bot', logStep } = params;
+  const isIndirectMention = mentionType === 'owner';
 
   logStep?.({
     stage: 'router.classify.start',
     message: 'Running AI-based workflow intent classification.',
-    data: { userMessage, hasPrUrl },
+    data: { userMessage, hasPrUrl, mentionType },
   });
 
   try {
-    const fullPrompt = `${CLASSIFY_PROMPT}\n\n${buildClassifyUserPrompt({ userMessage, threadContext, hasPrUrl })}`;
+    const prompt = isIndirectMention ? `${CLASSIFY_PROMPT_BASE}\n${OWNER_MENTION_ADDENDUM}` : CLASSIFY_PROMPT_BASE;
+
+    const returnFormat = isIndirectMention
+      ? `\nReturn strict JSON:\n{\n  "intent": "PR_REVIEW" | "IMPLEMENTATION" | "INFORMATIONAL" | "CONVERSATIONAL" | "NONE",\n  "confidence": number between 0 and 1,\n  "reasoning": "one sentence explaining why"\n}`
+      : `\nReturn strict JSON:\n{\n  "intent": "PR_REVIEW" | "IMPLEMENTATION" | "INFORMATIONAL" | "CONVERSATIONAL",\n  "confidence": number between 0 and 1,\n  "reasoning": "one sentence explaining why"\n}`;
+
+    const fullPrompt = `${prompt}${returnFormat}\n\n${buildClassifyUserPrompt({ userMessage, threadContext, hasPrUrl, mentionType })}`;
     const profile = lightweightProfile(getActiveBackendId());
 
     const result = await runCodex({
@@ -80,7 +109,7 @@ export async function classifyWorkflowIntent(params: {
     if (!result.ok || !result.parsedJson) {
       logStep?.({
         stage: 'router.classify.fallback',
-        message: 'Classification AI call failed — using IMPLEMENTATION fallback.',
+        message: `Classification AI call failed — using ${isIndirectMention ? 'NONE' : 'IMPLEMENTATION'} fallback.`,
         level: 'WARN',
         data: {
           ok: result.ok,
@@ -88,14 +117,18 @@ export async function classifyWorkflowIntent(params: {
           parsedJson: Boolean(result.parsedJson),
         },
       });
-      return SAFE_FALLBACK;
+      return isIndirectMention ? SILENT_FALLBACK : SAFE_FALLBACK;
     }
 
     const raw = result.parsedJson;
-    const validIntents: WorkflowIntent[] = ['PR_REVIEW', 'IMPLEMENTATION', 'INFORMATIONAL', 'CONVERSATIONAL'];
+    const validIntents: WorkflowIntent[] = isIndirectMention
+      ? ['PR_REVIEW', 'IMPLEMENTATION', 'INFORMATIONAL', 'CONVERSATIONAL', 'NONE']
+      : ['PR_REVIEW', 'IMPLEMENTATION', 'INFORMATIONAL', 'CONVERSATIONAL'];
+
+    const fallbackIntent = isIndirectMention ? 'NONE' : 'IMPLEMENTATION';
     const intent = validIntents.includes(raw.intent as WorkflowIntent)
       ? (raw.intent as WorkflowIntent)
-      : 'IMPLEMENTATION';
+      : fallbackIntent;
 
     const confidence = typeof raw.confidence === 'number' ? raw.confidence : 0.5;
     const reasoning = typeof raw.reasoning === 'string' ? raw.reasoning : '';
@@ -112,9 +145,9 @@ export async function classifyWorkflowIntent(params: {
   } catch (error) {
     logStep?.({
       stage: 'router.classify.error',
-      message: `Classification threw unexpectedly — using IMPLEMENTATION fallback: ${String(error)}`,
+      message: `Classification threw unexpectedly — using ${isIndirectMention ? 'NONE' : 'IMPLEMENTATION'} fallback: ${String(error)}`,
       level: 'WARN',
     });
-    return SAFE_FALLBACK;
+    return isIndirectMention ? SILENT_FALLBACK : SAFE_FALLBACK;
   }
 }
