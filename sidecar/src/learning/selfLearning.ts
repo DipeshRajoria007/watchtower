@@ -59,7 +59,9 @@ export function applyLearning(input: {
     });
   }
 
-  if (intent !== 'OWNER_AUTOPILOT' && intent !== 'DEV_ASSIST') {
+  // AI-classified intents should not be overridden by the phrase-matching learning engine
+  const AI_CLASSIFIED_INTENTS = new Set(['OWNER_AUTOPILOT', 'IMPLEMENTATION', 'INFORMATIONAL', 'CONVERSATIONAL']);
+  if (!AI_CLASSIFIED_INTENTS.has(intent) && intent !== 'DEV_ASSIST') {
     const corrected = store.findIntentCorrection({
       channelId: task.event.channelId,
       userId: task.event.userId,
@@ -88,7 +90,7 @@ export function applyLearning(input: {
   };
 }
 
-function detectExplicitIntent(text: string, channelId: string, config: AppConfig): WorkflowIntent | undefined {
+function detectExplicitIntent(text: string, _channelId: string, _config: AppConfig): WorkflowIntent | undefined {
   if (REVIEW_KEYWORDS.some(regex => regex.test(text))) {
     return 'PR_REVIEW';
   }

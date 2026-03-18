@@ -10,7 +10,9 @@ import type {
 } from '../types/contracts.js';
 import type { JobStore } from '../state/jobStore.js';
 import { runDevAssistWorkflow } from '../workflows/devAssistWorkflow.js';
-import { runOwnerAutopilotWorkflow } from '../workflows/ownerAutopilotWorkflow.js';
+import { runImplementationWorkflow } from '../workflows/implementationWorkflow.js';
+import { runInformationalWorkflow } from '../workflows/informationalWorkflow.js';
+import { runConversationalWorkflow } from '../workflows/conversationalWorkflow.js';
 import { runPrReviewWorkflow } from '../workflows/prReviewWorkflow.js';
 import { runUnknownTaskWorkflow } from '../workflows/unknownTaskWorkflow.js';
 import { getWorkflowTemplates } from '../workflows/registry.js';
@@ -20,6 +22,7 @@ import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
 import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import { classifyWorkflowIntent } from './classifyIntent.js';
+import { isPresencePing } from '../workflows/shared/workflowUtils.js';
 
 export async function routeTask(params: {
   task: NormalizedTask;
@@ -37,11 +40,16 @@ export async function routeTask(params: {
     return runDevAssistWorkflow({ task, config, slack, store, logStep });
   }
 
-  // For non-DEV_ASSIST intents, use AI to classify between PR_REVIEW and OWNER_AUTOPILOT.
+  // Presence pings: cheap regex check, skip the AI classifier entirely.
   const userMessage = (task.event.text ?? '')
     .replace(/<@[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+  if (isPresencePing(userMessage)) {
+    return runConversationalWorkflow({ task, config, slack, logStep });
+  }
+
+  // For all other intents, use AI to classify into PR_REVIEW, IMPLEMENTATION, INFORMATIONAL, or CONVERSATIONAL.
   const hasPrUrl = Boolean(task.prContext);
   const classification = await classifyWorkflowIntent({
     userMessage,
@@ -52,7 +60,7 @@ export async function routeTask(params: {
   if (classification.intent !== task.intent) {
     logStep?.({
       stage: 'router.classify.override',
-      message: `AI classifier overrode intent: ${task.intent} → ${classification.intent} (confidence=${classification.confidence.toFixed(2)}).`,
+      message: `AI classifier resolved intent: ${task.intent} → ${classification.intent} (confidence=${classification.confidence.toFixed(2)}).`,
       data: {
         originalIntent: task.intent,
         classifiedIntent: classification.intent,
@@ -69,8 +77,16 @@ export async function routeTask(params: {
     return runPrReviewWorkflow({ task: routedTask, config, slack, store, jobId, logStep, signal });
   }
 
-  if (resolvedIntent === 'OWNER_AUTOPILOT') {
-    return runOwnerAutopilotWorkflow({ task, config, slack, store, jobId, logStep, signal });
+  if (resolvedIntent === 'IMPLEMENTATION' || resolvedIntent === 'OWNER_AUTOPILOT') {
+    return runImplementationWorkflow({ task, config, slack, store, jobId, logStep, signal });
+  }
+
+  if (resolvedIntent === 'INFORMATIONAL') {
+    return runInformationalWorkflow({ task, config, slack, logStep, signal });
+  }
+
+  if (resolvedIntent === 'CONVERSATIONAL') {
+    return runConversationalWorkflow({ task, config, slack, logStep });
   }
 
   // Check file-based workflow templates before falling through to unknown
@@ -102,7 +118,7 @@ async function runTemplateWorkflow(params: {
   const { task, config, slack, template, logStep, signal } = params;
 
   const prompt = renderPromptTemplate(template.promptTemplate, task, config);
-  const cwd = config.repoPaths.newtonWeb; // Default to web repo; template environment could override
+  const cwd = config.repoPaths.newtonWeb;
 
   await slack.chat
     .postMessage({
@@ -138,7 +154,7 @@ async function runTemplateWorkflow(params: {
     .catch(() => {});
 
   return {
-    workflow: 'OWNER_AUTOPILOT',
+    workflow: 'IMPLEMENTATION',
     status: result.ok ? 'SUCCESS' : 'FAILED',
     message: summary,
     notifyDesktop: false,

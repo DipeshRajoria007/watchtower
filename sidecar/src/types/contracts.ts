@@ -1,5 +1,12 @@
 export type AgentBackendId = 'codex' | 'claude-code' | 'cursor';
-export type WorkflowIntent = 'PR_REVIEW' | 'OWNER_AUTOPILOT' | 'DEV_ASSIST' | 'UNKNOWN';
+export type WorkflowIntent =
+  | 'PR_REVIEW'
+  | 'OWNER_AUTOPILOT'
+  | 'IMPLEMENTATION'
+  | 'INFORMATIONAL'
+  | 'CONVERSATIONAL'
+  | 'DEV_ASSIST'
+  | 'UNKNOWN';
 export type WorkflowStatus = 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED' | 'CANCELLED';
 export type JobLogLevel = 'INFO' | 'WARN' | 'ERROR';
 export type PersonalityMode = 'normal';
