@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import path from 'node:path';
 import type { WebClient } from '@slack/web-api';
 import type {
@@ -9,17 +11,20 @@ import type {
   WorkflowStepLogger,
 } from '../types/contracts.js';
 import type { JobStore } from '../state/jobStore.js';
+import type { AgentFinding } from '../agents/types.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
 import { extractPrContext } from '../router/intentParser.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
-import { highReasoningProfile } from '../codex/modelProfiles.js';
+import { highReasoningProfile, profileForAgentRole } from '../codex/modelProfiles.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
-import { runAgentPipeline } from '../agents/pipeline.js';
+import { submitPrReview } from '../github/submitPrReview.js';
+import { buildPrReviewerPrompt, buildPrSecurityPrompt, buildPrPerformancePrompt } from '../agents/prReviewPrompts.js';
 import type { PipelineStore } from '../agents/pipeline.js';
-import type { PipelineConfig } from '../agents/types.js';
 import { resolveWorkspace } from '../workspaces/workspaceManager.js';
+
+const execFileAsync = promisify(execFile);
 
 const SUPPORTED_PR_REPOS = ['newton-web', 'newton-api'] as const;
 
@@ -62,7 +67,7 @@ async function fetchPrHeadSha(params: {
       return undefined;
     }
 
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       head?: {
         sha?: unknown;
       };
@@ -80,6 +85,141 @@ async function fetchPrHeadSha(params: {
     });
     return undefined;
   }
+}
+
+interface PrMetadata {
+  headSha?: string;
+  headRef?: string;
+  title?: string;
+  body?: string;
+}
+
+async function fetchPrMetadata(params: {
+  prContext: PrContext;
+  githubToken?: string;
+  logStep?: WorkflowStepLogger;
+}): Promise<PrMetadata> {
+  const { prContext, githubToken, logStep } = params;
+  const url = `https://api.github.com/repos/${prContext.owner}/${prContext.repo}/pulls/${prContext.number}`;
+  const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
+  if (githubToken) headers.Authorization = `Bearer ${githubToken}`;
+
+  try {
+    const response = await fetch(url, { headers });
+    if (!response.ok) return {};
+    const payload = (await response.json()) as Record<string, unknown>;
+    const head = payload.head as Record<string, unknown> | undefined;
+    return {
+      headSha: typeof head?.sha === 'string' ? head.sha : undefined,
+      headRef: typeof head?.ref === 'string' ? head.ref : undefined,
+      title: typeof payload.title === 'string' ? payload.title : undefined,
+      body: typeof payload.body === 'string' ? payload.body : undefined,
+    };
+  } catch (error) {
+    logStep?.({
+      stage: 'pr_review.metadata.error',
+      message: `Failed to fetch PR metadata: ${String(error)}`,
+      level: 'WARN',
+    });
+    return {};
+  }
+}
+
+async function fetchPrDiff(params: { prContext: PrContext; githubToken?: string; maxChars?: number }): Promise<string> {
+  const { prContext, githubToken, maxChars = 100_000 } = params;
+  const url = `https://api.github.com/repos/${prContext.owner}/${prContext.repo}/pulls/${prContext.number}`;
+  const headers: Record<string, string> = { Accept: 'application/vnd.github.diff' };
+  if (githubToken) headers.Authorization = `Bearer ${githubToken}`;
+
+  try {
+    const response = await fetch(url, { headers });
+    if (!response.ok) return '';
+    const diff = await response.text();
+    if (diff.length > maxChars) {
+      return diff.slice(0, maxChars) + '\n\n... [diff truncated — too large for full review]';
+    }
+    return diff;
+  } catch {
+    return '';
+  }
+}
+
+async function checkoutPrBranch(repoPath: string, prNumber: number, logStep?: WorkflowStepLogger): Promise<boolean> {
+  try {
+    // Fetch the PR head ref and checkout
+    await execFileAsync('git', ['fetch', 'origin', `pull/${prNumber}/head`], {
+      cwd: repoPath,
+      timeout: 60_000,
+    });
+    await execFileAsync('git', ['checkout', 'FETCH_HEAD'], {
+      cwd: repoPath,
+      timeout: 15_000,
+    });
+    logStep?.({ stage: 'pr_review.checkout.done', message: `Checked out PR #${prNumber} head in worktree.` });
+    return true;
+  } catch (error) {
+    logStep?.({
+      stage: 'pr_review.checkout.failed',
+      message: `Failed to checkout PR branch: ${String(error)}`,
+      level: 'WARN',
+    });
+    return false;
+  }
+}
+
+function extractFindings(output: Record<string, unknown>): AgentFinding[] {
+  const raw = output.findings;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((f: Record<string, unknown>) => ({
+    severity: (f.severity as AgentFinding['severity']) ?? 'info',
+    category: (f.category as string) ?? 'general',
+    message: (f.message as string) ?? '',
+    file: f.file as string | undefined,
+    line: f.line as number | undefined,
+    suggestion: f.suggestion as string | undefined,
+  }));
+}
+
+function formatSlackReviewSummary(
+  findingsByRole: Array<{ role: string; findings: AgentFinding[] }>,
+  prUrl: string,
+  reviewEvent?: string,
+): string {
+  const allFindings = findingsByRole.flatMap(r => r.findings);
+  if (allFindings.length === 0) {
+    return `*PR Review Complete* — No actionable findings. Good to go. ✅\n${prUrl}`;
+  }
+
+  const bySeverity = new Map<string, Array<{ role: string; finding: AgentFinding }>>();
+  for (const { role, findings } of findingsByRole) {
+    for (const f of findings) {
+      const list = bySeverity.get(f.severity) ?? [];
+      list.push({ role, finding: f });
+      bySeverity.set(f.severity, list);
+    }
+  }
+
+  const severityOrder = ['critical', 'high', 'medium', 'low', 'info'];
+  const emoji: Record<string, string> = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵', info: 'ℹ️' };
+  const lines: string[] = [];
+
+  const verdict = reviewEvent === 'APPROVE' ? '✅' : reviewEvent === 'REQUEST_CHANGES' ? '🚫' : '💬';
+  lines.push(`*PR Review Complete* — ${allFindings.length} finding(s) ${verdict}`);
+
+  for (const severity of severityOrder) {
+    const items = bySeverity.get(severity);
+    if (!items || items.length === 0) continue;
+    lines.push(
+      `\n*${emoji[severity] ?? ''} ${severity.charAt(0).toUpperCase() + severity.slice(1)} (${items.length})*`,
+    );
+    for (const { role, finding } of items) {
+      const loc = finding.file ? `\`${finding.file}${finding.line ? `:${finding.line}` : ''}\`` : '';
+      lines.push(`• ${loc ? `${loc} — ` : ''}${finding.message} _[${role}]_`);
+    }
+  }
+
+  lines.push(`\n${prUrl}`);
+  return lines.join('\n');
 }
 
 const NO_NEW_CHANGES_TEXT =
@@ -103,7 +243,7 @@ export async function runPrReviewWorkflow(params: {
   logStep?: WorkflowStepLogger;
   signal?: AbortSignal;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, store, resolvePrHeadSha, jobId, logStep, signal } = params;
+  const { task, config, slack, store, resolvePrHeadSha, jobId: _jobId, logStep, signal } = params;
 
   logStep?.({
     stage: 'pr_review.context.fetch.start',
@@ -161,7 +301,7 @@ export async function runPrReviewWorkflow(params: {
 
     notifyDesktop(
       'Watchtower PR review skipped',
-      `PR org ${prContext.owner} is not allowed. Only ${config.allowedPrOrg} is supported.`
+      `PR org ${prContext.owner} is not allowed. Only ${config.allowedPrOrg} is supported.`,
     );
     return {
       workflow: 'PR_REVIEW',
@@ -192,7 +332,7 @@ export async function runPrReviewWorkflow(params: {
 
     notifyDesktop(
       'Watchtower PR review skipped',
-      `PR repo ${prContext.owner}/${prContext.repo} is outside supported scope.`
+      `PR repo ${prContext.owner}/${prContext.repo} is outside supported scope.`,
     );
     return {
       workflow: 'PR_REVIEW',
@@ -217,7 +357,7 @@ export async function runPrReviewWorkflow(params: {
 
     notifyDesktop(
       'Watchtower unmapped PR repo',
-      `No local repo mapping for ${prContext.owner}/${prContext.repo}; skipping auto execution.`
+      `No local repo mapping for ${prContext.owner}/${prContext.repo}; skipping auto execution.`,
     );
     return {
       workflow: 'PR_REVIEW',
@@ -307,76 +447,159 @@ export async function runPrReviewWorkflow(params: {
 
   const policyPack = store?.getChannelPolicyPack(task.event.channelId);
   const policyBlock = policyPack
-    ? [
-        `Active policy pack: ${policyPack.packName}`,
-        ...policyPack.rules.map(rule => `- ${rule}`),
-      ].join('\n')
+    ? [`Active policy pack: ${policyPack.packName}`, ...policyPack.rules.map(rule => `- ${rule}`)].join('\n')
     : 'No explicit policy pack assigned for this channel.';
 
   // --- Multi-agent pipeline path ---
   if (config.multiAgentEnabled) {
     logStep?.({
       stage: 'pr_review.pipeline.start',
-      message: 'Running PR review through multi-agent pipeline.',
+      message: 'Running PR review through parallel multi-agent pipeline.',
     });
-
-    const pipelineConfig: PipelineConfig = {
-      agents: ['planner', 'reviewer', 'security', 'performance'],
-      maxRetryLoops: 0,
-      abortOnCriticalFinding: true,
-      slackProgressUpdates: true,
-    };
 
     const threadContext = threadTexts.join('\n---\n');
-    const pipelineResult = await runAgentPipeline({
-      ctx: {
-        workflowIntent: 'PR_REVIEW',
-        task,
-        config,
-        repoPath: repoPath!,
-        githubToken,
-        threadContext,
-        prContext,
-        previousSteps: [],
-        pipelineConfig,
-        policyPack: policyPack ? { packName: policyPack.packName, rules: policyPack.rules } : undefined,
-      },
-      slack,
-      logStep: logStep ?? (() => {}),
-      store: store?.createPipelineRun && store?.updatePipelineRun ? store as PipelineStore : undefined,
-      jobId,
-    });
+    const pipelineStart = Date.now();
 
-    const findings = pipelineResult.aggregatedFindings;
-    const summaryParts: string[] = [];
-    for (const step of pipelineResult.steps) {
-      const tag = `[${step.role.charAt(0).toUpperCase() + step.role.slice(1)}]`;
-      for (const f of step.findings) {
-        summaryParts.push(`${tag} ${f.severity}: ${f.message}`);
-      }
+    // 1. Fetch PR metadata and diff
+    const prMeta = await fetchPrMetadata({ prContext, githubToken, logStep });
+    const prHeadSha = currentPrHeadSha ?? prMeta.headSha;
+
+    const diff = await fetchPrDiff({ prContext, githubToken });
+    if (!diff) {
+      logStep?.({ stage: 'pr_review.diff.empty', message: 'PR diff is empty — cannot run review.', level: 'WARN' });
     }
 
-    const summaryText = summaryParts.length > 0
-      ? `Multi-agent PR review complete. ${findings.length} finding(s):\n${summaryParts.join('\n')}`
-      : 'Multi-agent PR review complete. No actionable findings. Good to go.';
+    logStep?.({
+      stage: 'pr_review.diff.fetched',
+      message: `Fetched PR diff (${diff.length} chars).`,
+      data: { diffChars: diff.length, prTitle: prMeta.title },
+    });
+
+    // 2. Checkout PR branch so agents see the actual PR code
+    await checkoutPrBranch(repoPath, prContext.number, logStep);
+
+    // 3. Build PR-specific prompts with diff included
+    const reviewerPrompt = buildPrReviewerPrompt({
+      diff,
+      prTitle: prMeta.title,
+      prBody: prMeta.body,
+      threadContext,
+      prContext,
+      policyBlock,
+    });
+    const securityPrompt = buildPrSecurityPrompt({ diff, prTitle: prMeta.title, prContext });
+    const performancePrompt = buildPrPerformancePrompt({ diff, prTitle: prMeta.title, prContext });
+
+    // 4. Run all 3 review agents in parallel
+    await slack.chat
+      .postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: 'Running reviewer, security, and performance checks in parallel...',
+      })
+      .catch(() => {});
+
+    const reviewerProfile = profileForAgentRole('reviewer', getActiveBackendId());
+    const securityProfile = profileForAgentRole('security', getActiveBackendId());
+    const performanceProfile = profileForAgentRole('performance', getActiveBackendId());
+
+    const schemaDir = path.resolve(process.cwd(), 'schemas');
+
+    const [reviewerResult, securityResult, performanceResult] = await Promise.all([
+      runCodex({
+        cwd: repoPath,
+        prompt: reviewerPrompt,
+        outputSchemaPath: path.join(schemaDir, 'agent-reviewer-result.schema.json'),
+        githubToken,
+        ...reviewerProfile,
+        onLog: logStep,
+      }),
+      runCodex({
+        cwd: repoPath,
+        prompt: securityPrompt,
+        outputSchemaPath: path.join(schemaDir, 'agent-security-result.schema.json'),
+        githubToken,
+        ...securityProfile,
+        onLog: logStep,
+      }),
+      runCodex({
+        cwd: repoPath,
+        prompt: performancePrompt,
+        outputSchemaPath: path.join(schemaDir, 'agent-performance-result.schema.json'),
+        githubToken,
+        ...performanceProfile,
+        onLog: logStep,
+      }),
+    ]);
+
+    // 5. Extract findings from each agent
+    const findingsByRole: Array<{ role: string; findings: AgentFinding[] }> = [
+      { role: 'reviewer', findings: extractFindings(reviewerResult.parsedJson ?? {}) },
+      { role: 'security', findings: extractFindings(securityResult.parsedJson ?? {}) },
+      { role: 'performance', findings: extractFindings(performanceResult.parsedJson ?? {}) },
+    ];
+    const allFindings = findingsByRole.flatMap(r => r.findings);
+
+    const totalDurationMs = Date.now() - pipelineStart;
+    logStep?.({
+      stage: 'pr_review.pipeline.done',
+      message: `Parallel PR review complete in ${Math.round(totalDurationMs / 1000)}s — ${allFindings.length} finding(s).`,
+      data: {
+        totalDurationMs,
+        reviewer: { ok: reviewerResult.ok, findings: findingsByRole[0].findings.length },
+        security: { ok: securityResult.ok, findings: findingsByRole[1].findings.length },
+        performance: { ok: performanceResult.ok, findings: findingsByRole[2].findings.length },
+      },
+    });
+
+    // 6. Submit formal GitHub PR review with inline comments
+    let reviewEvent: string | undefined;
+    if (prHeadSha) {
+      const reviewSummaryForGh =
+        allFindings.length > 0
+          ? `Watchtower found ${allFindings.length} issue(s) in this PR.`
+          : 'Watchtower review complete — no actionable findings. Good to go.';
+
+      const reviewResult = await submitPrReview({
+        owner: prContext.owner,
+        repo: prContext.repo,
+        pullNumber: prContext.number,
+        commitId: prHeadSha,
+        findingsByRole,
+        summary: reviewSummaryForGh,
+        githubToken,
+      });
+
+      reviewEvent = reviewResult.event;
+      logStep?.({
+        stage: 'pr_review.github_review.submitted',
+        message: `GitHub PR review submitted: ${reviewResult.event} (${reviewResult.commentsPosted} inline comments).`,
+        data: reviewResult,
+      });
+    }
+
+    // 7. Post formatted summary to Slack
+    const slackSummary = formatSlackReviewSummary(findingsByRole, prContext.url, reviewEvent);
 
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
-      text: `${summaryText}\n${prContext.url}`,
+      text: slackSummary,
     });
+
+    const hasCriticalOrHigh = allFindings.some(f => f.severity === 'critical' || f.severity === 'high');
 
     return {
       workflow: 'PR_REVIEW',
-      status: pipelineResult.finalStatus === 'passed' ? 'SUCCESS' : 'FAILED',
-      message: summaryText,
+      status: hasCriticalOrHigh ? 'FAILED' : 'SUCCESS',
+      message: slackSummary,
       notifyDesktop: false,
       slackPosted: true,
       result: {
-        ...( currentPrHeadSha ? { prHeadSha: currentPrHeadSha } : {}),
+        ...(prHeadSha ? { prHeadSha } : {}),
         prUrl: prContext.url,
-        pipelineStatus: pipelineResult.finalStatus,
-        totalFindings: findings.length,
+        totalFindings: allFindings.length,
+        reviewEvent,
       },
     };
   }
