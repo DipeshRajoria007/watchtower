@@ -49,11 +49,12 @@ Slack thread context:
 ${threadContext}${imageContext}
 
 Output rules:
+Your response will be posted to a Slack thread. The "summary" field is what the user sees directly.
+
 Return strict JSON with:
 - status: "success" | "failed"
-- summary: short human-facing outcome message for Slack. Do NOT include operational telemetry like channel IDs, thread IDs, timestamps, or "Actions performed" style audit logs.
-- summary must NOT include these phrases: "On Master's command", "Overriding Watchtower guardrails", "Owner override active", or any ceremonial/prefix wording.
-- actions: array of concrete actions performed
+- summary: a short, clean Slack message describing what you did. This is posted directly to the user — write it as a ready-to-post Slack message. No telemetry, no ceremony, no "Actions performed" lists.
+- actions: array of concrete actions performed (for internal logging only, the user does not see this)
 - prUrl: PR URL if one was created, else empty string
 - confidence: number between 0 and 1
 `.trim();
@@ -84,10 +85,10 @@ Execute the implementation request end-to-end. Use whichever local repos/files/c
 Slack thread context:
 ${threadContext}${imageContext}
 
-Return plain text only (not JSON):
-- One concise human response for Slack.
-- Do not include operational telemetry (channel/thread/timestamp/internal stages).
-- Do not include ceremonial prefixes.
+Your response will be posted DIRECTLY to a Slack thread as-is. Write a ready-to-post Slack message:
+- One concise response describing what you did.
+- Plain text only (not JSON).
+- Use Slack markdown if needed (*bold*, \`code\`).
 `.trim();
 }
 
@@ -121,10 +122,12 @@ Slack thread context:
 ${threadContext}${imageContext}
 
 Output rules:
+Your "summary" field will be posted directly to a Slack thread — write it as a ready-to-post message.
+
 Return strict JSON with:
 - status: "success" | "failed"
-- summary: short human-facing outcome message for Slack
-- actions: array of concrete actions performed
+- summary: a short, clean Slack message describing what you did. No telemetry, no ceremony.
+- actions: array of concrete actions performed (for internal logging only)
 - prUrl: PR URL if one was created, else empty string
 - confidence: number between 0 and 1
 `.trim();
