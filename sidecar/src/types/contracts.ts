@@ -5,6 +5,7 @@ export type WorkflowIntent =
   | 'IMPLEMENTATION'
   | 'INFORMATIONAL'
   | 'CONVERSATIONAL'
+  | 'NONE'
   | 'DEV_ASSIST'
   | 'UNKNOWN';
 export type WorkflowStatus = 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED' | 'CANCELLED';

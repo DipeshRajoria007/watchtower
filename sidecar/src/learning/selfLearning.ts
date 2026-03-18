@@ -60,7 +60,13 @@ export function applyLearning(input: {
   }
 
   // AI-classified intents should not be overridden by the phrase-matching learning engine
-  const AI_CLASSIFIED_INTENTS = new Set(['OWNER_AUTOPILOT', 'IMPLEMENTATION', 'INFORMATIONAL', 'CONVERSATIONAL']);
+  const AI_CLASSIFIED_INTENTS = new Set([
+    'OWNER_AUTOPILOT',
+    'IMPLEMENTATION',
+    'INFORMATIONAL',
+    'CONVERSATIONAL',
+    'NONE',
+  ]);
   if (!AI_CLASSIFIED_INTENTS.has(intent) && intent !== 'DEV_ASSIST') {
     const corrected = store.findIntentCorrection({
       channelId: task.event.channelId,
