@@ -19,7 +19,7 @@ import { resolveWorkspace } from '../workspaces/workspaceManager.js';
 import { createPrFromWorkspace } from '../github/postPipelinePr.js';
 import type { PipelineStore } from '../agents/pipeline.js';
 import type { PipelineConfig } from '../agents/types.js';
-import { prepareWorkflowContext, sanitizeOwnerSummary } from './shared/workflowUtils.js';
+import { prepareWorkflowContext, sanitizeOwnerSummary, extractReplyFromCodexResult } from './shared/workflowUtils.js';
 
 function buildOwnerPrimaryPrompt(params: {
   task: NormalizedTask;
@@ -189,8 +189,63 @@ export async function runImplementationWorkflow(params: {
 
     const plannerStep = plannerResult.steps[0];
     const plannerOutput = plannerStep?.output ?? {};
+    const plannerRequiresCodeChanges = Boolean(plannerOutput.requiresCodeChanges);
 
-    // Post the plan and ask for approval BEFORE running the full pipeline
+    // Quick-action fast path: if the planner says no code changes are needed
+    // (e.g., "merge this PR", "close PR", "deploy", "run tests"), skip the full
+    // pipeline and execute directly with a single codex call. No approval gate needed.
+    if (!plannerRequiresCodeChanges) {
+      logStep?.({
+        stage: 'implementation.quick_action',
+        message: 'Planner says no code changes needed — executing as quick action (no approval, no pipeline).',
+        data: { plan: plannerOutput.plan },
+      });
+
+      const quickPrompt = `
+${buildMentionSystemPrompt({ task, workflow: 'IMPLEMENTATION' })}
+
+Context:
+- You are miniOG, a developer assistant bot in a Slack workspace.
+- Your response will be posted DIRECTLY into a Slack thread as-is.
+- Working directory: ${ctx.cwd}
+- GitHub auth mode: ${githubAuthModeHint(Boolean(ctx.githubToken))}
+
+Task:
+Execute this request directly. No code changes are needed — this is a quick operational action (merge PR, deploy, run command, etc.).
+
+Slack thread context:
+${ctx.threadContext}${ctx.imageContext}
+
+Write your response as a ready-to-post Slack message describing what you did.
+`.trim();
+
+      const quickResult = await runCodex({
+        cwd: ctx.cwd,
+        prompt: quickPrompt,
+        githubToken: ctx.githubToken,
+        ...highReasoningProfile(getActiveBackendId()),
+        onLog: logStep,
+        signal,
+      });
+
+      const reply = extractReplyFromCodexResult(quickResult) || 'Quick action completed.';
+
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: reply,
+      });
+
+      return {
+        workflow: 'IMPLEMENTATION',
+        status: quickResult.ok ? 'SUCCESS' : 'FAILED',
+        message: reply,
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+
+    // Full pipeline path: code changes are needed
     const planSteps = Array.isArray(plannerOutput.plan) ? plannerOutput.plan.map(String) : [];
     const planAffectedFiles = Array.isArray(plannerOutput.affectedFiles) ? plannerOutput.affectedFiles.map(String) : [];
     const planScope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : 'unknown';
