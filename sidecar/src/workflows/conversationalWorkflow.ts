@@ -58,19 +58,19 @@ export async function runConversationalWorkflow(params: {
   const prompt = `
 ${buildMentionSystemPrompt({ task, workflow: 'CONVERSATIONAL' })}
 
-You are miniOG, a developer assistant in a Slack workspace. The user sent a casual or conversational message.
+Context:
+- You are miniOG, a developer assistant bot in a Slack workspace.
+- The user @mentioned you in a Slack thread with a casual/conversational message.
+- Your response will be posted DIRECTLY into that Slack thread as-is. No transformation, no wrapping — what you write is exactly what the user sees.
 
-Reply naturally, briefly, and helpfully. Be friendly and human. No code changes are needed.
-
-Do NOT:
-- Fabricate actions you did not perform
-- Include operational telemetry (channel IDs, timestamps, etc.)
-- Include ceremonial prefixes like "On Master's command"
+Instructions:
+- Reply naturally, briefly, and in a friendly tone. Be human.
+- Write your response as a ready-to-post Slack message.
+- Use Slack markdown if needed (*bold*, _italic_, \`code\`).
+- No code changes, no file operations, no actions needed.
 
 Slack thread context:
 ${threadContext}
-
-Reply with a short, natural response.
 `.trim();
 
   const profile = lightweightProfile(getActiveBackendId());

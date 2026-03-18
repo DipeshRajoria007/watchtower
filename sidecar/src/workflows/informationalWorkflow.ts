@@ -25,25 +25,22 @@ export async function runInformationalWorkflow(params: {
   const prompt = `
 ${buildMentionSystemPrompt({ task, workflow: 'INFORMATIONAL' })}
 
-You are miniOG, a developer assistant. The user is asking a question or requesting information about the codebase.
-
-Environment:
-- Working directory: ${ctx.cwd}
+Context:
+- You are miniOG, a developer assistant bot in a Slack workspace.
+- The user @mentioned you in a Slack thread asking a question about the codebase.
+- Your response will be posted DIRECTLY into that Slack thread as-is. No transformation, no wrapping — what you write is exactly what the user sees.
+- You have READ-ONLY access to the codebase at: ${ctx.cwd}
 - GitHub auth mode: ${githubAuthModeHint(Boolean(ctx.githubToken))}
 
-Task:
-Read the user's message and answer their question. You have READ-ONLY access to the codebase — you can read files, search code, and explain things.
-
-IMPORTANT:
-- Do NOT modify any files, create branches, or make commits
-- Do NOT run destructive commands
-- Answer thoroughly but concisely
-- If you need to reference code, quote the relevant parts
+Instructions:
+- Answer the user's question thoroughly but concisely.
+- You can read files, search code, and explain things. Do NOT modify any files, create branches, or make commits.
+- Write your response as a ready-to-post Slack message.
+- Use Slack markdown for formatting (*bold*, _italic_, \`code\`, \`\`\`code blocks\`\`\`, bullet lists).
+- If you reference code, quote the relevant parts inline.
 
 Slack thread context:
 ${ctx.threadContext}${ctx.imageContext}
-
-Reply with a clear, helpful answer. Plain text only (not JSON).
 `.trim();
 
   const result = await runCodex({
