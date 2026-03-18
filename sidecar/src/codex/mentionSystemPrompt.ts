@@ -12,17 +12,18 @@ function roleLabel(task: NormalizedTask): string {
   return 'channel-user';
 }
 
-function isSeriousContext(
-  task: NormalizedTask,
-  workflow: MentionPromptWorkflow
-): boolean {
-  return workflow !== 'UNKNOWN' || Boolean(task.prContext) || task.isOwnerAuthor;
+function isSeriousContext(task: NormalizedTask, workflow: MentionPromptWorkflow): boolean {
+  return (
+    workflow === 'IMPLEMENTATION' ||
+    workflow === 'PR_REVIEW' ||
+    workflow === 'INFORMATIONAL' ||
+    workflow === 'OWNER_AUTOPILOT' ||
+    Boolean(task.prContext) ||
+    task.isOwnerAuthor
+  );
 }
 
-export function buildMentionSystemPrompt(params: {
-  task: NormalizedTask;
-  workflow: MentionPromptWorkflow;
-}): string {
+export function buildMentionSystemPrompt(params: { task: NormalizedTask; workflow: MentionPromptWorkflow }): string {
   const { task, workflow } = params;
   const seriousContext = isSeriousContext(task, workflow);
   const lines: string[] = [
@@ -43,7 +44,9 @@ export function buildMentionSystemPrompt(params: {
   ];
 
   if (task.isOwnerAuthor) {
-    lines.push('- This request is from the owner. Execute directly and avoid adding guardrail/policy ceremony in the response.');
+    lines.push(
+      '- This request is from the owner. Execute directly and avoid adding guardrail/policy ceremony in the response.',
+    );
   }
 
   return lines.join('\n');

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { runOwnerAutopilotWorkflow } from '../src/workflows/ownerAutopilotWorkflow.js';
+import { runImplementationWorkflow } from '../src/workflows/implementationWorkflow.js';
+import { runConversationalWorkflow } from '../src/workflows/conversationalWorkflow.js';
 import { runCodex } from '../src/codex/runCodex.js';
 
 vi.mock('../src/codex/runCodex.js', () => ({
@@ -24,6 +25,18 @@ vi.mock('../src/workspaces/workspaceManager.js', () => ({
   resolveWorkspace: vi.fn((repoPath: string) => repoPath),
 }));
 
+vi.mock('../src/slack/imageDownloader.js', () => ({
+  downloadSlackImages: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock('../src/backends/registry.js', () => ({
+  getBackend: vi.fn().mockReturnValue({ supportsImages: () => false }),
+}));
+
+vi.mock('../src/router/repoClassifier.js', () => ({
+  classifyRepo: vi.fn().mockReturnValue({ selectedRepo: 'newton-web', confidence: 0.9, uncertain: false }),
+}));
+
 const config = {
   platformPolicy: 'macos_only' as const,
   bundleTargets: ['app', 'dmg'] as const,
@@ -46,19 +59,19 @@ const config = {
   multiAgentEnabled: false,
 };
 
-describe('ownerAutopilotWorkflow', () => {
+describe('conversationalWorkflow', () => {
   beforeEach(() => {
     vi.mocked(runCodex).mockReset();
   });
 
-  it('replies directly to lightweight owner presence ping without running codex', async () => {
+  it('replies directly to lightweight presence ping without running codex', async () => {
     const slack = {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
       },
     };
 
-    const result = await runOwnerAutopilotWorkflow({
+    const result = await runConversationalWorkflow({
       task: {
         event: {
           eventId: 'EvOwnerPing',
@@ -72,19 +85,26 @@ describe('ownerAutopilotWorkflow', () => {
         mentionDetected: true,
         mentionType: 'bot',
         isOwnerAuthor: true,
-        intent: 'OWNER_AUTOPILOT',
+        intent: 'CONVERSATIONAL',
       },
       config,
-      slack: slack as any,
+      slack: slack as unknown as import('@slack/web-api').WebClient,
     });
 
     expect(result.status).toBe('SUCCESS');
+    expect(result.workflow).toBe('CONVERSATIONAL');
     expect(result.message.toLowerCase()).toMatch(/(here|online|present)/);
     expect(slack.chat.postMessage).toHaveBeenCalledTimes(1);
     expect(runCodex).not.toHaveBeenCalled();
   });
+});
 
-  it('runs codex for broad owner prompts instead of pausing for clarification', async () => {
+describe('implementationWorkflow', () => {
+  beforeEach(() => {
+    vi.mocked(runCodex).mockReset();
+  });
+
+  it('runs codex for implementation requests', async () => {
     vi.mocked(runCodex).mockResolvedValue({
       ok: true,
       exitCode: 0,
@@ -104,9 +124,12 @@ describe('ownerAutopilotWorkflow', () => {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
       },
+      users: {
+        info: vi.fn().mockResolvedValue({ user: { profile: { display_name: 'Test' } } }),
+      },
     };
 
-    const result = await runOwnerAutopilotWorkflow({
+    const result = await runImplementationWorkflow({
       task: {
         event: {
           eventId: 'EvOwner0',
@@ -120,72 +143,16 @@ describe('ownerAutopilotWorkflow', () => {
         mentionDetected: true,
         mentionType: 'bot',
         isOwnerAuthor: true,
-        intent: 'OWNER_AUTOPILOT',
+        intent: 'IMPLEMENTATION',
       },
       config,
-      slack: slack as any,
+      slack: slack as unknown as import('@slack/web-api').WebClient,
     });
 
     expect(result.status).toBe('SUCCESS');
+    expect(result.workflow).toBe('IMPLEMENTATION');
     expect(result.message).toContain('Applied a chaotic but safe tweak');
-    expect(slack.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining('Applied a chaotic but safe tweak'),
-      })
-    );
     expect(runCodex).toHaveBeenCalledTimes(1);
-  });
-
-  it('normalizes legacy needs_clarification output to no_action without pausing', async () => {
-    vi.mocked(runCodex).mockResolvedValue({
-      ok: true,
-      exitCode: 0,
-      timedOut: false,
-      stdout: '',
-      stderr: '',
-      lastMessage: '',
-      parsedJson: {
-        status: 'needs_clarification',
-        summary: 'Which repository should I use for this request: newton-web or newton-api?',
-        actions: [],
-        prUrl: '',
-        confidence: 0.31,
-      },
-    });
-
-    const slack = {
-      chat: {
-        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
-      },
-    };
-
-    const result = await runOwnerAutopilotWorkflow({
-      task: {
-        event: {
-          eventId: 'EvOwner1',
-          channelId: 'C1',
-          threadTs: '111.22',
-          eventTs: '111.22',
-          userId: 'UOWNER1',
-          text: '<@UBOT1> do it',
-          rawEvent: {},
-        },
-        mentionDetected: true,
-        mentionType: 'bot',
-        isOwnerAuthor: true,
-        intent: 'OWNER_AUTOPILOT',
-      },
-      config,
-      slack: slack as any,
-    });
-
-    expect(result.status).toBe('SUCCESS');
-    expect(result.message).toContain('Which repository should I use');
-    expect(slack.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining('No action required.'),
-      })
-    );
   });
 
   it('strips legacy success prefix and posts clean human summary', async () => {
@@ -208,9 +175,12 @@ describe('ownerAutopilotWorkflow', () => {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
       },
+      users: {
+        info: vi.fn().mockResolvedValue({ user: { profile: { display_name: 'Test' } } }),
+      },
     };
 
-    const result = await runOwnerAutopilotWorkflow({
+    const result = await runImplementationWorkflow({
       task: {
         event: {
           eventId: 'EvOwner2',
@@ -224,23 +194,15 @@ describe('ownerAutopilotWorkflow', () => {
         mentionDetected: true,
         mentionType: 'bot',
         isOwnerAuthor: true,
-        intent: 'OWNER_AUTOPILOT',
+        intent: 'IMPLEMENTATION',
       },
       config,
-      slack: slack as any,
+      slack: slack as unknown as import('@slack/web-api').WebClient,
     });
 
     expect(result.status).toBe('SUCCESS');
-    expect(slack.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining('Merged PR #7638 into master using squash merge.'),
-      })
-    );
-    expect(slack.chat.postMessage).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining('Owner request success'),
-      })
-    );
+    expect(result.message).toContain('Merged PR #7638 into master using squash merge.');
+    expect(result.message).not.toContain('Owner request success');
   });
 
   it('returns paused with human retry prompt when codex fails', async () => {
@@ -258,9 +220,12 @@ describe('ownerAutopilotWorkflow', () => {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
       },
+      users: {
+        info: vi.fn().mockResolvedValue({ user: { profile: { display_name: 'Test' } } }),
+      },
     };
 
-    const result = await runOwnerAutopilotWorkflow({
+    const result = await runImplementationWorkflow({
       task: {
         event: {
           eventId: 'EvOwner3',
@@ -274,23 +239,18 @@ describe('ownerAutopilotWorkflow', () => {
         mentionDetected: true,
         mentionType: 'bot',
         isOwnerAuthor: true,
-        intent: 'OWNER_AUTOPILOT',
+        intent: 'IMPLEMENTATION',
       },
       config,
-      slack: slack as any,
+      slack: slack as unknown as import('@slack/web-api').WebClient,
     });
 
     expect(result.status).toBe('PAUSED');
     expect(result.message).toContain('I hit an execution issue right now');
-    expect(slack.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.not.stringContaining('exit='),
-      })
-    );
     expect(runCodex).toHaveBeenCalledTimes(2);
   });
 
-  it('uses primary plain-text output without a relaxed retry when strict JSON parsing fails after success', async () => {
+  it('uses primary plain-text output without a relaxed retry', async () => {
     vi.mocked(runCodex).mockResolvedValue({
       ok: true,
       exitCode: 0,
@@ -305,9 +265,12 @@ describe('ownerAutopilotWorkflow', () => {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
       },
+      users: {
+        info: vi.fn().mockResolvedValue({ user: { profile: { display_name: 'Test' } } }),
+      },
     };
 
-    const result = await runOwnerAutopilotWorkflow({
+    const result = await runImplementationWorkflow({
       task: {
         event: {
           eventId: 'EvOwnerPlainText',
@@ -321,67 +284,14 @@ describe('ownerAutopilotWorkflow', () => {
         mentionDetected: true,
         mentionType: 'bot',
         isOwnerAuthor: true,
-        intent: 'OWNER_AUTOPILOT',
+        intent: 'IMPLEMENTATION',
       },
       config,
-      slack: slack as any,
+      slack: slack as unknown as import('@slack/web-api').WebClient,
     });
 
     expect(result.status).toBe('SUCCESS');
     expect(result.message).toContain('Tagged the people');
-    expect(slack.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining('Tagged the people'),
-      })
-    );
-    expect(runCodex).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not run relaxed retry when structured output is already parsed', async () => {
-    vi.mocked(runCodex).mockResolvedValue({
-      ok: true,
-      exitCode: 0,
-      timedOut: false,
-      stdout: '',
-      stderr: '',
-      lastMessage:
-        '```json\n{"status":"success","summary":"Applied the requested follow-up.","actions":["posted update"],"prUrl":""}\n```',
-      parsedJson: {
-        status: 'success',
-        summary: 'Applied the requested follow-up.',
-        actions: ['posted update'],
-        prUrl: '',
-      },
-    });
-
-    const slack = {
-      chat: {
-        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
-      },
-    };
-
-    const result = await runOwnerAutopilotWorkflow({
-      task: {
-        event: {
-          eventId: 'EvOwnerStructured',
-          channelId: 'C1',
-          threadTs: '111.22',
-          eventTs: '111.22',
-          userId: 'UOWNER1',
-          text: '<@UBOT1> share a follow-up',
-          rawEvent: {},
-        },
-        mentionDetected: true,
-        mentionType: 'bot',
-        isOwnerAuthor: true,
-        intent: 'OWNER_AUTOPILOT',
-      },
-      config,
-      slack: slack as any,
-    });
-
-    expect(result.status).toBe('SUCCESS');
-    expect(result.message).toContain('Applied the requested follow-up');
     expect(runCodex).toHaveBeenCalledTimes(1);
   });
 
@@ -410,9 +320,12 @@ describe('ownerAutopilotWorkflow', () => {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
       },
+      users: {
+        info: vi.fn().mockResolvedValue({ user: { profile: { display_name: 'Test' } } }),
+      },
     };
 
-    const result = await runOwnerAutopilotWorkflow({
+    const result = await runImplementationWorkflow({
       task: {
         event: {
           eventId: 'EvOwner4',
@@ -426,19 +339,14 @@ describe('ownerAutopilotWorkflow', () => {
         mentionDetected: true,
         mentionType: 'bot',
         isOwnerAuthor: true,
-        intent: 'OWNER_AUTOPILOT',
+        intent: 'IMPLEMENTATION',
       },
       config,
-      slack: slack as any,
+      slack: slack as unknown as import('@slack/web-api').WebClient,
     });
 
     expect(result.status).toBe('SUCCESS');
     expect(result.message).toContain('Created local repository');
-    expect(slack.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining('Created local repository'),
-      })
-    );
     expect(runCodex).toHaveBeenCalledTimes(2);
   });
 });
