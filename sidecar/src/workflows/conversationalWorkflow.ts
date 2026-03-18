@@ -5,7 +5,13 @@ import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
 import { lightweightProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
-import { formatThreadContext, stripMentions, isPresencePing, buildPresenceReply } from './shared/workflowUtils.js';
+import {
+  formatThreadContext,
+  stripMentions,
+  isPresencePing,
+  buildPresenceReply,
+  extractReplyFromCodexResult,
+} from './shared/workflowUtils.js';
 
 export async function runConversationalWorkflow(params: {
   task: NormalizedTask;
@@ -77,7 +83,7 @@ Reply with a short, natural response.
     onLog: logStep,
   });
 
-  const reply = result.lastMessage?.trim() || result.stdout?.trim() || "I'm here. What do you need?";
+  const reply = extractReplyFromCodexResult(result) || "I'm here. What do you need?";
 
   await slack.chat.postMessage({
     channel: task.event.channelId,

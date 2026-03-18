@@ -132,6 +132,50 @@ export function sanitizeOwnerSummary(raw: string): string {
   return lines.join(' ').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Extract clean reply text from a codex result.
+ * Handles Claude Code JSON wrapper (both success and error), parsedJson, and raw lastMessage.
+ */
+export function extractReplyFromCodexResult(result: {
+  ok: boolean;
+  lastMessage: string;
+  stdout: string;
+  parsedJson?: Record<string, unknown>;
+}): string {
+  // 1. Use parsedJson if available (already unwrapped by backend.parseOutput)
+  if (result.parsedJson) {
+    const summary = result.parsedJson.summary;
+    if (typeof summary === 'string' && summary.trim()) return summary.trim();
+    const resultField = result.parsedJson.result;
+    if (typeof resultField === 'string' && resultField.trim()) return resultField.trim();
+  }
+
+  // 2. Try to unwrap Claude Code JSON wrapper from lastMessage
+  const raw = result.lastMessage || result.stdout || '';
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && parsed.type === 'result') {
+      if (parsed.is_error) {
+        // Error wrapper — extract a clean error message
+        const errorResult = typeof parsed.result === 'string' ? parsed.result : '';
+        if (/overloaded/i.test(errorResult)) {
+          return 'The AI backend is temporarily overloaded. Try again in a moment.';
+        }
+        return 'I hit an execution issue. Try again in a moment.';
+      }
+      // Success wrapper — extract the result field
+      if (typeof parsed.result === 'string' && parsed.result.trim()) {
+        return parsed.result.trim();
+      }
+    }
+  } catch {
+    // Not JSON — use raw text
+  }
+
+  // 3. Fall back to raw text
+  return raw.trim();
+}
+
 export function resolveOwnerWorkspaceRoot(config: AppConfig): string {
   const webParent = path.dirname(config.repoPaths.newtonWeb);
   const apiParent = path.dirname(config.repoPaths.newtonApi);
