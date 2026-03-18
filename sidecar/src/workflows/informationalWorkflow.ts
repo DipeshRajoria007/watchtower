@@ -4,7 +4,7 @@ import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
 import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint } from '../github/githubAuth.js';
-import { prepareWorkflowContext, sanitizeOwnerSummary } from './shared/workflowUtils.js';
+import { prepareWorkflowContext, sanitizeOwnerSummary, extractReplyFromCodexResult } from './shared/workflowUtils.js';
 
 export async function runInformationalWorkflow(params: {
   task: NormalizedTask;
@@ -63,7 +63,7 @@ Reply with a clear, helpful answer. Plain text only (not JSON).
     data: { ok: result.ok, exitCode: result.exitCode },
   });
 
-  const rawReply = result.lastMessage?.trim() || result.stdout?.trim() || '';
+  const rawReply = extractReplyFromCodexResult(result);
   const reply = sanitizeOwnerSummary(rawReply) || 'I could not find a clear answer. Try rephrasing your question.';
 
   await slack.chat.postMessage({
