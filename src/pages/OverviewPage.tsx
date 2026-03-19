@@ -1,5 +1,5 @@
 import { getSidecarTone, humanizeMode, humanizeToken } from '../lib/formatters';
-import type { DashboardData, RunsSubView } from '../types';
+import type { DashboardData } from '../types';
 import {
   ChannelHeatList,
   MetricCard,
@@ -13,18 +13,12 @@ import {
 type OverviewPageProps = {
   data: DashboardData | null;
   onOpenIntelligence: () => void;
-  onOpenRuns: (subView: RunsSubView) => void;
+  onOpenRuns: () => void;
   onOpenSettings: () => void;
   onSelectRun: (runId: string) => void;
 };
 
-export function OverviewPage({
-  data,
-  onOpenIntelligence,
-  onOpenRuns,
-  onOpenSettings,
-  onSelectRun,
-}: OverviewPageProps) {
+export function OverviewPage({ data, onOpenIntelligence, onOpenRuns, onOpenSettings, onSelectRun }: OverviewPageProps) {
   const sidecarStatus = data?.sidecarStatus ?? 'starting';
   const sidecarTone = getSidecarTone(sidecarStatus);
 
@@ -36,7 +30,18 @@ export function OverviewPage({
         description="A centered control-room read on sidecar health, queue pressure, learning activity, and the next places worth your attention."
         actions={
           <div className="header-chip-row">
-            <StatusBadge label={humanizeToken(sidecarStatus)} tone={sidecarTone === 'good' ? 'success' : sidecarTone === 'danger' ? 'failed' : sidecarTone === 'warn' ? 'warn' : 'info'} />
+            <StatusBadge
+              label={humanizeToken(sidecarStatus)}
+              tone={
+                sidecarTone === 'good'
+                  ? 'success'
+                  : sidecarTone === 'danger'
+                    ? 'failed'
+                    : sidecarTone === 'warn'
+                      ? 'warn'
+                      : 'info'
+              }
+            />
             {!data?.settingsConfigured ? (
               <button className="ghost-button" type="button" onClick={onOpenSettings}>
                 Complete Settings
@@ -47,9 +52,25 @@ export function OverviewPage({
       />
 
       <section className="stats-grid overview-stats">
-        <MetricCard label="Sidecar Health" value={humanizeToken(sidecarStatus)} tone={sidecarTone === 'good' ? 'success' : sidecarTone === 'danger' ? 'danger' : sidecarTone === 'warn' ? 'warning' : 'neutral'} />
+        <MetricCard
+          label="Sidecar Health"
+          value={humanizeToken(sidecarStatus)}
+          tone={
+            sidecarTone === 'good'
+              ? 'success'
+              : sidecarTone === 'danger'
+                ? 'danger'
+                : sidecarTone === 'warn'
+                  ? 'warning'
+                  : 'neutral'
+          }
+        />
         <MetricCard label="Active Jobs" value={data?.activeJobs.length ?? 0} tone="accent" />
-        <MetricCard label="Failures" value={data?.failures.length ?? 0} tone={(data?.failures.length ?? 0) > 0 ? 'danger' : 'success'} />
+        <MetricCard
+          label="Failures"
+          value={data?.failures.length ?? 0}
+          tone={(data?.failures.length ?? 0) > 0 ? 'danger' : 'success'}
+        />
         <MetricCard label="24h Success" value={`${data?.metrics.successRate24h ?? 0}%`} tone="success" />
         <MetricCard label="Success Streak" value={data?.metrics.successStreak ?? 0} tone="accent" />
       </section>
@@ -77,7 +98,7 @@ export function OverviewPage({
           subtitle="The in-flight queue, surfaced in a quieter layout before you jump into the full run workspace."
           count={data?.activeJobs.length ?? 0}
           actions={
-            <button className="ghost-button" type="button" onClick={() => onOpenRuns('active')}>
+            <button className="ghost-button" type="button" onClick={onOpenRuns}>
               Open Runs
             </button>
           }
@@ -87,7 +108,7 @@ export function OverviewPage({
             empty="No active jobs. Watchtower is idle and waiting for Slack."
             onSelect={runId => {
               onSelectRun(runId);
-              onOpenRuns('active');
+              onOpenRuns();
             }}
           />
         </SectionCard>

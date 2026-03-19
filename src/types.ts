@@ -1,7 +1,5 @@
 export type AppView = 'overview' | 'launchpad' | 'runs' | 'intelligence' | 'settings' | 'review';
 
-export type RunsSubView = 'active' | 'failures' | 'recent' | 'diagnostics';
-
 export type SlackCommandTarget = 'miniog' | 'watchtower';
 
 export type ThemePresetId = 'watchtower-midnight' | 'signal-paper' | 'ember-terminal' | 'harbor-mint' | 'custom';
@@ -175,4 +173,25 @@ export type CreatePrRequest = {
 
 export type CreatePrResponse = {
   prUrl: string;
+};
+
+export type PipelineRunData = {
+  id: string;
+  jobId: string;
+  status: string;
+  steps: Array<{
+    role: string;
+    status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
+    durationMs: number;
+    findings: Array<{
+      severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
+      category: string;
+      message: string;
+      file?: string;
+      line?: number;
+      suggestion?: string;
+    }>;
+  }>;
+  retryLoops: number;
+  totalDurationMs: number | null;
 };
