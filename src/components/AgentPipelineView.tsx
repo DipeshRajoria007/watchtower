@@ -1,29 +1,8 @@
+import type { PipelineRunData } from '../types';
+
 type AgentStepStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
 
-type AgentFinding = {
-  severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
-  category: string;
-  message: string;
-  file?: string;
-  line?: number;
-  suggestion?: string;
-};
-
-type AgentStepData = {
-  role: string;
-  status: AgentStepStatus;
-  durationMs: number;
-  findings: AgentFinding[];
-};
-
-type PipelineRunData = {
-  id: string;
-  jobId: string;
-  status: string;
-  steps: AgentStepData[];
-  retryLoops: number;
-  totalDurationMs: number | null;
-};
+type AgentStepData = PipelineRunData['steps'][number];
 
 type AgentPipelineViewProps = {
   pipelineRun: PipelineRunData | null;
@@ -31,30 +10,44 @@ type AgentPipelineViewProps = {
 
 function statusIndicator(status: AgentStepStatus): string {
   switch (status) {
-    case 'passed': return '\u2713';
-    case 'failed': return '\u2717';
-    case 'running': return '\u25CB';
-    case 'skipped': return '\u2014';
-    case 'pending': return '\u00B7';
+    case 'passed':
+      return '\u2713';
+    case 'failed':
+      return '\u2717';
+    case 'running':
+      return '\u25CB';
+    case 'skipped':
+      return '\u2014';
+    case 'pending':
+      return '\u00B7';
   }
 }
 
 function statusToneClass(status: AgentStepStatus): string {
   switch (status) {
-    case 'passed': return 'pipeline-step-passed';
-    case 'failed': return 'pipeline-step-failed';
-    case 'running': return 'pipeline-step-running';
-    default: return 'pipeline-step-neutral';
+    case 'passed':
+      return 'pipeline-step-passed';
+    case 'failed':
+      return 'pipeline-step-failed';
+    case 'running':
+      return 'pipeline-step-running';
+    default:
+      return 'pipeline-step-neutral';
   }
 }
 
 function severityToneClass(severity: string): string {
   switch (severity) {
-    case 'critical': return 'finding-critical';
-    case 'high': return 'finding-high';
-    case 'medium': return 'finding-medium';
-    case 'low': return 'finding-low';
-    default: return 'finding-info';
+    case 'critical':
+      return 'finding-critical';
+    case 'high':
+      return 'finding-high';
+    case 'medium':
+      return 'finding-medium';
+    case 'low':
+      return 'finding-low';
+    default:
+      return 'finding-info';
   }
 }
 
@@ -74,15 +67,11 @@ export function AgentPipelineView({ pipelineRun }: AgentPipelineViewProps) {
     <div className="pipeline-view">
       <div className="pipeline-header">
         <h4>Agent Pipeline</h4>
-        <span className={`pipeline-status pipeline-status-${pipelineRun.status}`}>
-          {pipelineRun.status}
-        </span>
+        <span className={`pipeline-status pipeline-status-${pipelineRun.status}`}>{pipelineRun.status}</span>
         {pipelineRun.totalDurationMs != null && (
           <span className="pipeline-duration">{formatDuration(pipelineRun.totalDurationMs)}</span>
         )}
-        {pipelineRun.retryLoops > 0 && (
-          <span className="pipeline-retries">{pipelineRun.retryLoops} retry loop(s)</span>
-        )}
+        {pipelineRun.retryLoops > 0 && <span className="pipeline-retries">{pipelineRun.retryLoops} retry loop(s)</span>}
       </div>
 
       <div className="pipeline-steps">
@@ -117,12 +106,11 @@ function PipelineStep({ step, index, total }: { step: AgentStepData; index: numb
               <span className="finding-message">{finding.message}</span>
               {finding.file && (
                 <span className="finding-location">
-                  {finding.file}{finding.line ? `:${finding.line}` : ''}
+                  {finding.file}
+                  {finding.line ? `:${finding.line}` : ''}
                 </span>
               )}
-              {finding.suggestion && (
-                <span className="finding-suggestion">{finding.suggestion}</span>
-              )}
+              {finding.suggestion && <span className="finding-suggestion">{finding.suggestion}</span>}
             </div>
           ))}
         </div>

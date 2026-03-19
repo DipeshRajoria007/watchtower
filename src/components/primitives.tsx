@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   formatDurationSeconds,
@@ -13,6 +14,7 @@ import type {
   DashboardRecommendation,
   JobLogEntry,
   LearningInsights,
+  PipelineRunData,
   RunSummary,
 } from '../types';
 import { GlowCard } from './GlowCard';
@@ -447,6 +449,447 @@ export function LearningInsightsPanel({ learning }: { learning: LearningInsights
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+export type SortField = 'updatedAt' | 'createdAt' | 'status' | 'workflow';
+export type SortDirection = 'asc' | 'desc';
+
+export function RunsFilterBar({
+  statusFilter,
+  onStatusFilterChange,
+  searchQuery,
+  onSearchQueryChange,
+}: {
+  statusFilter: string;
+  onStatusFilterChange: (value: string) => void;
+  searchQuery: string;
+  onSearchQueryChange: (value: string) => void;
+}) {
+  return (
+    <div className="runs-filter-bar">
+      <select value={statusFilter} onChange={e => onStatusFilterChange(e.target.value)}>
+        <option value="all">All Statuses</option>
+        <option value="running">Running</option>
+        <option value="success">Success</option>
+        <option value="failed">Failed</option>
+      </select>
+      <input
+        type="text"
+        placeholder="Search tasks or workflows\u2026"
+        value={searchQuery}
+        onChange={e => onSearchQueryChange(e.target.value)}
+      />
+    </div>
+  );
+}
+
+export function RunsTable({
+  runs,
+  onSelectRun,
+  sortField,
+  sortDirection,
+  onSort,
+}: {
+  runs: RunSummary[];
+  onSelectRun: (runId: string) => void;
+  sortField: SortField;
+  sortDirection: SortDirection;
+  onSort: (field: SortField) => void;
+}) {
+  if (runs.length === 0) {
+    return <EmptyState>No runs match the current filters.</EmptyState>;
+  }
+
+  const sortArrow = (field: SortField) => {
+    if (sortField !== field) return null;
+    return <span className="sort-arrow">{sortDirection === 'asc' ? '\u25B2' : '\u25BC'}</span>;
+  };
+
+  return (
+    <div className="runs-table-wrap">
+      <table className="runs-table">
+        <thead>
+          <tr>
+            <th className="sortable" onClick={() => onSort('status')}>
+              Status {sortArrow('status')}
+            </th>
+            <th>Task</th>
+            <th className="sortable" onClick={() => onSort('workflow')}>
+              Workflow {sortArrow('workflow')}
+            </th>
+            <th className="col-channel">Channel</th>
+            <th className="sortable col-updated" onClick={() => onSort('updatedAt')}>
+              Updated {sortArrow('updatedAt')}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {runs.map(run => (
+            <tr key={run.id} className="runs-table-row" onClick={() => onSelectRun(run.id)}>
+              <td>
+                <StatusBadge label={run.status} tone={getStatusTone(run.status)} />
+              </td>
+              <td className="task-cell">{run.taskSummary}</td>
+              <td className="workflow-cell">{run.workflow}</td>
+              <td className="channel-cell col-channel">{run.channelId}</td>
+              <td className="updated-cell col-updated">{formatTimestamp(run.updatedAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export type StageGroup = {
+  stage: string;
+  startTime: string;
+  worstLevel: 'INFO' | 'WARN' | 'ERROR';
+  entries: JobLogEntry[];
+};
+
+export function groupByStage(logs: JobLogEntry[]): StageGroup[] {
+  const groups: StageGroup[] = [];
+  for (const log of logs) {
+    const last = groups[groups.length - 1];
+    if (last && last.stage === log.stage) {
+      last.entries.push(log);
+      if (log.level === 'ERROR') last.worstLevel = 'ERROR';
+      else if (log.level === 'WARN' && last.worstLevel !== 'ERROR') last.worstLevel = 'WARN';
+    } else {
+      groups.push({
+        stage: log.stage,
+        startTime: log.createdAt,
+        worstLevel: (log.level === 'ERROR'
+          ? 'ERROR'
+          : log.level === 'WARN'
+            ? 'WARN'
+            : 'INFO') as StageGroup['worstLevel'],
+        entries: [log],
+      });
+    }
+  }
+  return groups;
+}
+
+function levelIndicator(level: string): { symbol: string; className: string } {
+  if (level === 'ERROR' || level.toLowerCase().includes('error'))
+    return { symbol: '\u2717', className: 'shell-level-error' };
+  if (level === 'WARN' || level.toLowerCase().includes('warn'))
+    return { symbol: '\u26A0', className: 'shell-level-warn' };
+  return { symbol: '\u00B7', className: 'shell-level-info' };
+}
+
+function jsonKeyCount(raw: string): number {
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null ? Object.keys(parsed).length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function ShellTraceView({ logs, highlightStage }: { logs: JobLogEntry[]; highlightStage?: string | null }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const wasAtBottomRef = useRef(true);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (el && wasAtBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [logs.length]);
+
+  useEffect(() => {
+    if (!highlightStage || !containerRef.current) return;
+    const target = containerRef.current.querySelector(`[data-stage="${CSS.escape(highlightStage)}"]`);
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [highlightStage]);
+
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (el) {
+      wasAtBottomRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+    }
+  };
+
+  if (logs.length === 0) {
+    return <EmptyState>No trace entries have been persisted for this run yet.</EmptyState>;
+  }
+
+  const groups = groupByStage(logs);
+
+  return (
+    <div className="shell-trace" ref={containerRef} onScroll={handleScroll}>
+      {groups.map((group, gi) => {
+        const borderClass =
+          group.worstLevel === 'ERROR' ? 'shell-group-error' : group.worstLevel === 'WARN' ? 'shell-group-warn' : '';
+
+        return (
+          <div
+            key={`${group.stage}-${gi}`}
+            className={`shell-group ${borderClass}${highlightStage === group.stage ? ' shell-group-highlight' : ''}`}
+            data-stage={group.stage}
+          >
+            <div className="shell-group-header">
+              <span className="shell-group-stage">
+                {'\u25B8'} {group.stage}
+              </span>
+              <span className="shell-group-time">{formatTimestamp(group.startTime)}</span>
+            </div>
+
+            {group.entries.map(log => {
+              const { symbol, className } = levelIndicator(log.level);
+              const lineClass =
+                log.level === 'ERROR'
+                  ? 'shell-line shell-line-error'
+                  : log.level === 'WARN'
+                    ? 'shell-line shell-line-warn'
+                    : 'shell-line';
+
+              return (
+                <div key={log.id} className={lineClass}>
+                  <span className={`shell-indicator ${className}`}>{symbol}</span>
+                  <span className="shell-message">{log.message}</span>
+                  {log.dataJson ? (
+                    <details className="shell-json">
+                      <summary>
+                        JSON payload{' '}
+                        <span className="shell-json-hint">
+                          {'\u00B7'} {jsonKeyCount(log.dataJson)} keys
+                        </span>
+                      </summary>
+                      <pre>{prettyJson(log.dataJson)}</pre>
+                    </details>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+type WorkflowNodeStatus = 'passed' | 'failed' | 'warning' | 'running' | 'pending';
+
+type WorkflowNode = {
+  stage: string;
+  status: WorkflowNodeStatus;
+  entryCount: number;
+  durationMs: number | null;
+  errorMessage: string | null;
+};
+
+function deriveWorkflowNodes(logs: JobLogEntry[], pipelineRun?: PipelineRunData | null): WorkflowNode[] {
+  const stages = groupByStage(logs);
+
+  return stages.map(group => {
+    const pipelineStep = pipelineRun?.steps.find(s => s.role.toUpperCase() === group.stage.toUpperCase());
+
+    let status: WorkflowNodeStatus;
+    let durationMs: number | null = null;
+
+    if (pipelineStep) {
+      status =
+        pipelineStep.status === 'passed'
+          ? 'passed'
+          : pipelineStep.status === 'failed'
+            ? 'failed'
+            : pipelineStep.status === 'running'
+              ? 'running'
+              : 'pending';
+      durationMs = pipelineStep.durationMs;
+    } else {
+      status = group.worstLevel === 'ERROR' ? 'failed' : group.worstLevel === 'WARN' ? 'warning' : 'passed';
+    }
+
+    const errorEntry = group.entries.find(e => e.level === 'ERROR');
+    const errorMessage = errorEntry ? errorEntry.message : null;
+
+    return { stage: group.stage, status, entryCount: group.entries.length, durationMs, errorMessage };
+  });
+}
+
+function wfStatusIcon(status: WorkflowNodeStatus): string {
+  switch (status) {
+    case 'passed':
+      return '\u2713';
+    case 'failed':
+      return '\u2717';
+    case 'warning':
+      return '\u26A0';
+    case 'running':
+      return '\u25CB';
+    case 'pending':
+      return '\u00B7';
+  }
+}
+
+function wfConnectorClass(status: WorkflowNodeStatus): string {
+  switch (status) {
+    case 'passed':
+      return 'wf-connector wf-connector-done';
+    case 'failed':
+      return 'wf-connector wf-connector-failed';
+    case 'running':
+      return 'wf-connector wf-connector-active';
+    default:
+      return 'wf-connector';
+  }
+}
+
+function wfFormatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+function wfStatusLabel(status: WorkflowNodeStatus): string {
+  switch (status) {
+    case 'passed':
+      return 'Passed';
+    case 'failed':
+      return 'Failed';
+    case 'warning':
+      return 'Warning';
+    case 'running':
+      return 'Running';
+    case 'pending':
+      return 'Pending';
+  }
+}
+
+export function WorkflowGraph({
+  logs,
+  pipelineRun,
+  activeStage,
+  onStageClick,
+}: {
+  logs: JobLogEntry[];
+  pipelineRun?: PipelineRunData | null;
+  activeStage?: string | null;
+  onStageClick?: (stage: string) => void;
+}) {
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const nodeRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [connectors, setConnectors] = useState<
+    Array<{ x1: number; y1: number; x2: number; y2: number; status: WorkflowNodeStatus }>
+  >([]);
+  const [hoveredStage, setHoveredStage] = useState<string | null>(null);
+
+  const nodes = useMemo(() => deriveWorkflowNodes(logs, pipelineRun), [logs, pipelineRun]);
+
+  useEffect(() => {
+    nodeRefs.current = nodeRefs.current.slice(0, nodes.length);
+  }, [nodes.length]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || nodes.length < 2) {
+      setConnectors([]);
+      return;
+    }
+
+    const measure = () => {
+      const canvasRect = canvas.getBoundingClientRect();
+      const lines: typeof connectors = [];
+
+      for (let i = 0; i < nodes.length - 1; i++) {
+        const fromEl = nodeRefs.current[i];
+        const toEl = nodeRefs.current[i + 1];
+        if (!fromEl || !toEl) continue;
+
+        const fromRect = fromEl.getBoundingClientRect();
+        const toRect = toEl.getBoundingClientRect();
+
+        lines.push({
+          x1: fromRect.right - canvasRect.left,
+          y1: fromRect.top + fromRect.height / 2 - canvasRect.top,
+          x2: toRect.left - canvasRect.left,
+          y2: toRect.top + toRect.height / 2 - canvasRect.top,
+          status: nodes[i].status,
+        });
+      }
+
+      setConnectors(lines);
+    };
+
+    requestAnimationFrame(measure);
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [nodes]);
+
+  if (nodes.length === 0) return null;
+
+  const hoveredNode = hoveredStage ? nodes.find(n => n.stage === hoveredStage) : null;
+
+  return (
+    <div className="wf-graph-scroll">
+      <div className="wf-graph-canvas" ref={canvasRef}>
+        {nodes.map((node, i) => {
+          const isActive = activeStage === node.stage;
+          const nodeClass = ['wf-node', `wf-node-${node.status}`, isActive ? 'wf-node-active' : '']
+            .filter(Boolean)
+            .join(' ');
+
+          return (
+            <div
+              key={node.stage}
+              ref={el => {
+                nodeRefs.current[i] = el;
+              }}
+              className={nodeClass}
+              style={{ animationDelay: `${i * 80}ms` }}
+              onClick={() => onStageClick?.(node.stage)}
+              onMouseEnter={() => setHoveredStage(node.stage)}
+              onMouseLeave={() => setHoveredStage(null)}
+            >
+              <span className="wf-node-icon">{wfStatusIcon(node.status)}</span>
+              <span className="wf-node-label">{node.stage}</span>
+              <span className="wf-node-badge">
+                {node.durationMs != null ? wfFormatDuration(node.durationMs) : `${node.entryCount} entries`}
+              </span>
+
+              {hoveredStage === node.stage && hoveredNode ? (
+                <div className="wf-tooltip">
+                  <div className="wf-tooltip-row">
+                    <span>Status</span>
+                    <strong className={`wf-tooltip-status wf-tooltip-${node.status}`}>
+                      {wfStatusLabel(node.status)}
+                    </strong>
+                  </div>
+                  <div className="wf-tooltip-row">
+                    <span>Entries</span>
+                    <strong>{node.entryCount}</strong>
+                  </div>
+                  {node.durationMs != null ? (
+                    <div className="wf-tooltip-row">
+                      <span>Duration</span>
+                      <strong>{wfFormatDuration(node.durationMs)}</strong>
+                    </div>
+                  ) : null}
+                  {node.errorMessage ? <div className="wf-tooltip-error">{node.errorMessage}</div> : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+
+        <svg className="wf-connectors">
+          {connectors.map((c, i) => (
+            <line key={i} x1={c.x1} y1={c.y1} x2={c.x2} y2={c.y2} className={wfConnectorClass(c.status)} />
+          ))}
+        </svg>
+      </div>
     </div>
   );
 }

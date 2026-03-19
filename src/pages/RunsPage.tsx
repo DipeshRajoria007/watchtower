@@ -1,47 +1,24 @@
-import type { DashboardData, JobLogEntry, RunSummary, RunsSubView } from '../types';
+import { useEffect, useMemo, useState } from 'react';
+import type { DashboardData, JobLogEntry, PipelineRunData, RunSummary } from '../types';
 import {
-  EmptyState,
   LiveLogConsole,
-  MetricCard,
   PageIntro,
-  RunInspector,
-  RunList,
-  SectionCard,
+  RunsFilterBar,
+  RunsTable,
+  ShellTraceView,
   StatusBadge,
-  TabBar,
+  WorkflowGraph,
 } from '../components/primitives';
-import { getStatusTone } from '../lib/formatters';
+import type { SortDirection, SortField } from '../components/primitives';
+import { formatTimestamp, getStatusTone } from '../lib/formatters';
 import { AgentPipelineView } from '../components/AgentPipelineView';
-
-type PipelineRunData = {
-  id: string;
-  jobId: string;
-  status: string;
-  steps: Array<{
-    role: string;
-    status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
-    durationMs: number;
-    findings: Array<{
-      severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
-      category: string;
-      message: string;
-      file?: string;
-      line?: number;
-      suggestion?: string;
-    }>;
-  }>;
-  retryLoops: number;
-  totalDurationMs: number | null;
-};
+import { GlowCard } from '../components/GlowCard';
 
 type RunsPageProps = {
   data: DashboardData | null;
   liveSidecarLogs: string[];
   onReviewChanges?: (runId: string) => void;
-  onSubViewChange: (view: RunsSubView) => void;
   onSelectRun: (runId: string) => void;
-  runsSubView: RunsSubView;
-  selectedRun: RunSummary | null;
   selectedRunId: string | null;
   selectedRunLogs: JobLogEntry[];
   selectedRunPipeline?: PipelineRunData | null;
@@ -51,130 +28,230 @@ export function RunsPage({
   data,
   liveSidecarLogs,
   onReviewChanges,
-  onSubViewChange,
   onSelectRun,
-  runsSubView,
-  selectedRun,
   selectedRunId,
   selectedRunLogs,
   selectedRunPipeline,
 }: RunsPageProps) {
-  const tabs = [
-    { label: 'Active', value: 'active' as const, count: data?.activeJobs.length ?? 0 },
-    { label: 'Failures', value: 'failures' as const, count: data?.failures.length ?? 0 },
-    { label: 'Recent', value: 'recent' as const, count: data?.recentRuns.length ?? 0 },
-    { label: 'Diagnostics', value: 'diagnostics' as const, count: liveSidecarLogs.length },
-  ];
+  const [detailRunId, setDetailRunId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortField, setSortField] = useState<SortField>('updatedAt');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [activeStage, setActiveStage] = useState<string | null>(null);
 
-  const runCollections = {
-    active: data?.activeJobs ?? [],
-    failures: data?.failures ?? [],
-    recent: data?.recentRuns ?? [],
+  const allRuns = useMemo(() => {
+    if (!data) return [] as RunSummary[];
+    const map = new Map<string, RunSummary>();
+    for (const run of [...data.activeJobs, ...data.recentRuns, ...data.failures]) {
+      map.set(run.id, run);
+    }
+    return Array.from(map.values());
+  }, [data]);
+
+  const selectedRun = useMemo(() => {
+    if (!detailRunId) return null;
+    return allRuns.find(r => r.id === detailRunId) ?? null;
+  }, [allRuns, detailRunId]);
+
+  const filteredRuns = useMemo(() => {
+    let runs = allRuns;
+
+    if (statusFilter !== 'all') {
+      runs = runs.filter(r => {
+        const s = r.status.toLowerCase();
+        if (statusFilter === 'running') return s.includes('run') || s.includes('progress') || s.includes('queue');
+        if (statusFilter === 'success') return s.includes('success') || s.includes('done') || s.includes('complete');
+        if (statusFilter === 'failed') return s.includes('fail') || s.includes('error');
+        return true;
+      });
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      runs = runs.filter(r => r.taskSummary.toLowerCase().includes(q) || r.workflow.toLowerCase().includes(q));
+    }
+
+    return [...runs].sort((a, b) => {
+      let cmp = 0;
+      if (sortField === 'updatedAt') cmp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+      else if (sortField === 'createdAt') cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      else if (sortField === 'status') cmp = a.status.localeCompare(b.status);
+      else if (sortField === 'workflow') cmp = a.workflow.localeCompare(b.workflow);
+      return sortDirection === 'desc' ? -cmp : cmp;
+    });
+  }, [allRuns, statusFilter, searchQuery, sortField, sortDirection]);
+
+  const handleSort = (field: SortField) => {
+    if (field === sortField) {
+      setSortDirection(d => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('desc');
+    }
   };
 
-  const currentRuns = runsSubView === 'diagnostics' ? [] : runCollections[runsSubView];
-
-  const sectionTitles = {
-    active: 'Active Queue',
-    failures: 'Failures Queue',
-    recent: 'Recent Queue',
+  const handleSelectRun = (runId: string) => {
+    setDetailRunId(runId);
+    onSelectRun(runId);
   };
 
-  const sectionDescriptions = {
-    active: 'In-flight workflow executions.',
-    failures: 'Runs that require manual attention.',
-    recent: 'Most recent completed and failed executions.',
-  };
+  useEffect(() => {
+    if (!detailRunId) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDetailRunId(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [detailRunId]);
 
+  // If navigated here with a selectedRunId from OverviewPage, open its detail
+  useEffect(() => {
+    if (selectedRunId && !detailRunId && allRuns.some(r => r.id === selectedRunId)) {
+      setDetailRunId(selectedRunId);
+    }
+  }, []); // only on mount
+
+  // Detail View
+  if (detailRunId && selectedRun) {
+    return (
+      <div className="page-stack">
+        <button className="ghost-button run-detail-back" type="button" onClick={() => setDetailRunId(null)}>
+          &larr; Back to Runs
+        </button>
+
+        <GlowCard>
+          <article className="surface-card detail-card">
+            <div className="run-detail-header">
+              <div className="run-detail-header-copy">
+                <span className="eyebrow">{selectedRun.workflow.replaceAll('_', ' ')}</span>
+                <h1>{selectedRun.taskSummary}</h1>
+              </div>
+              <div className="run-detail-header-actions">
+                <StatusBadge label={selectedRun.status} tone={getStatusTone(selectedRun.status)} />
+                {selectedRun.status === 'SUCCESS' && onReviewChanges ? (
+                  <button className="primary-button" type="button" onClick={() => onReviewChanges(selectedRun.id)}>
+                    Review Changes
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="detail-grid">
+              <div>
+                <span>Job ID</span>
+                <strong>{selectedRun.id}</strong>
+              </div>
+              <div>
+                <span>Channel</span>
+                <strong>{selectedRun.channelId}</strong>
+              </div>
+              <div>
+                <span>Thread</span>
+                <strong>{selectedRun.threadTs}</strong>
+              </div>
+              <div>
+                <span>Created</span>
+                <strong>{formatTimestamp(selectedRun.createdAt)}</strong>
+              </div>
+              <div>
+                <span>Updated</span>
+                <strong>{formatTimestamp(selectedRun.updatedAt)}</strong>
+              </div>
+              <div>
+                <span>Trace Entries</span>
+                <strong>{selectedRunLogs.length}</strong>
+              </div>
+            </div>
+
+            {selectedRun.errorMessage ? <p className="detail-error">{selectedRun.errorMessage}</p> : null}
+          </article>
+        </GlowCard>
+
+        {selectedRunLogs.length > 0 ? (
+          <GlowCard>
+            <section className="surface-card">
+              <div className="section-head">
+                <div className="section-heading-copy">
+                  <div className="section-title-row">
+                    <h2>Workflow</h2>
+                  </div>
+                  <p className="muted">Pipeline stage progression</p>
+                </div>
+              </div>
+              <WorkflowGraph
+                logs={selectedRunLogs}
+                pipelineRun={selectedRunPipeline}
+                activeStage={activeStage}
+                onStageClick={setActiveStage}
+              />
+            </section>
+          </GlowCard>
+        ) : null}
+
+        <GlowCard>
+          <section className="surface-card">
+            <div className="section-head">
+              <div className="section-heading-copy">
+                <div className="section-title-row">
+                  <h2>Execution Trace</h2>
+                  <span className="section-count">{selectedRunLogs.length}</span>
+                </div>
+                <p className="muted">Terminal-style trace for {selectedRun.id}</p>
+              </div>
+            </div>
+            <ShellTraceView logs={selectedRunLogs} highlightStage={activeStage} />
+          </section>
+        </GlowCard>
+
+        {selectedRunPipeline ? <AgentPipelineView pipelineRun={selectedRunPipeline} /> : null}
+
+        {liveSidecarLogs.length > 0 ? (
+          <GlowCard>
+            <section className="surface-card">
+              <div className="section-head">
+                <div className="section-heading-copy">
+                  <div className="section-title-row">
+                    <h2>Live Sidecar Stream</h2>
+                    <span className="section-count">{liveSidecarLogs.length}</span>
+                  </div>
+                </div>
+              </div>
+              <LiveLogConsole lines={liveSidecarLogs} />
+            </section>
+          </GlowCard>
+        ) : null}
+      </div>
+    );
+  }
+
+  // Table View
   return (
     <div className="page-stack">
       <PageIntro
         eyebrow="Operational Workspace"
         title="Runs"
-        description="Move between active work, failures, recent history, and live diagnostics without losing the selected run or its trace context."
-        actions={
-          selectedRun ? (
-            <StatusBadge label={selectedRun.status} tone={getStatusTone(selectedRun.status)} />
-          ) : undefined
-        }
+        description="All workflow executions in one view. Click any row to inspect its trace and metadata."
       />
 
-      <section className="stats-grid runs-stats">
-        <MetricCard label="Active" value={data?.activeJobs.length ?? 0} tone="accent" />
-        <MetricCard label="Failures" value={data?.failures.length ?? 0} tone={(data?.failures.length ?? 0) > 0 ? 'danger' : 'success'} />
-        <MetricCard label="Recent" value={data?.recentRuns.length ?? 0} />
-        <MetricCard label="Selected Trace" value={selectedRunLogs.length} tone="warning" />
-      </section>
+      <RunsFilterBar
+        statusFilter={statusFilter}
+        onStatusFilterChange={setStatusFilter}
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+      />
 
-      <TabBar tabs={tabs} value={runsSubView} onChange={onSubViewChange} />
-
-      {runsSubView === 'diagnostics' ? (
-        <section className="panel-grid diagnostics-grid">
-          <SectionCard
-            title="Selected Run Context"
-            subtitle="The same selection follows you across queue views and the live diagnostics console."
-            count={selectedRun ? 1 : 0}
-          >
-            {selectedRun ? (
-              <div className="diagnostics-context">
-                <div className="detail-grid">
-                  <div>
-                    <span>Workflow</span>
-                    <strong>{selectedRun.workflow}</strong>
-                  </div>
-                  <div>
-                    <span>Status</span>
-                    <strong>{selectedRun.status}</strong>
-                  </div>
-                  <div>
-                    <span>Job ID</span>
-                    <strong>{selectedRun.id}</strong>
-                  </div>
-                  <div>
-                    <span>Trace Entries</span>
-                    <strong>{selectedRunLogs.length}</strong>
-                  </div>
-                </div>
-                {selectedRun.errorMessage ? <p className="detail-error">{selectedRun.errorMessage}</p> : null}
-              </div>
-            ) : (
-              <EmptyState>Select a run from Active, Failures, or Recent to pin context here.</EmptyState>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            title="Live Sidecar Stream"
-            subtitle="Buffered stdout and stderr that stay visible while you move through the rest of the app."
-            count={liveSidecarLogs.length}
-          >
-            <LiveLogConsole lines={liveSidecarLogs} />
-          </SectionCard>
+      <GlowCard>
+        <section className="surface-card">
+          <RunsTable
+            runs={filteredRuns}
+            onSelectRun={handleSelectRun}
+            sortField={sortField}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+          />
         </section>
-      ) : (
-        <section className="runs-workspace">
-          <SectionCard
-            title={sectionTitles[runsSubView]}
-            subtitle={sectionDescriptions[runsSubView]}
-            count={currentRuns.length}
-          >
-            <RunList
-              runs={currentRuns}
-              empty={
-                runsSubView === 'active'
-                  ? 'No active jobs.'
-                  : runsSubView === 'failures'
-                    ? 'No failed jobs.'
-                    : 'No recent jobs.'
-              }
-              selectedRunId={selectedRunId}
-              onSelect={onSelectRun}
-            />
-          </SectionCard>
-
-          <RunInspector run={selectedRun} logs={selectedRunLogs} onReviewChanges={onReviewChanges} />
-          {selectedRunPipeline && <AgentPipelineView pipelineRun={selectedRunPipeline} />}
-        </section>
-      )}
+      </GlowCard>
     </div>
   );
 }
