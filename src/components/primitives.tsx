@@ -731,17 +731,24 @@ function wfStatusIcon(status: WorkflowNodeStatus): string {
   }
 }
 
-function wfConnectorClass(status: WorkflowNodeStatus): string {
+function wfConnectorStroke(status: WorkflowNodeStatus): string {
   switch (status) {
     case 'passed':
-      return 'wf-connector wf-connector-done';
+      return 'rgba(40, 200, 64, 0.4)';
     case 'failed':
-      return 'wf-connector wf-connector-failed';
+      return 'rgba(255, 95, 87, 0.4)';
     case 'running':
-      return 'wf-connector wf-connector-active';
+      return 'rgba(94, 234, 212, 0.5)';
+    case 'warning':
+      return 'rgba(254, 188, 46, 0.4)';
     default:
-      return 'wf-connector';
+      return 'rgba(255, 255, 255, 0.08)';
   }
+}
+
+function wfBezierPath(x1: number, y1: number, x2: number, y2: number): string {
+  const dx = (x2 - x1) * 0.5;
+  return `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
 }
 
 function wfFormatDuration(ms: number): string {
@@ -830,10 +837,8 @@ export function WorkflowGraph({
 
   if (nodes.length === 0) return null;
 
-  const hoveredNode = hoveredStage ? nodes.find(n => n.stage === hoveredStage) : null;
-
   return (
-    <div className="wf-graph-scroll">
+    <div className="wf-playground">
       <div className="wf-graph-canvas" ref={canvasRef}>
         {nodes.map((node, i) => {
           const isActive = activeStage === node.stage;
@@ -848,18 +853,20 @@ export function WorkflowGraph({
                 nodeRefs.current[i] = el;
               }}
               className={nodeClass}
-              style={{ animationDelay: `${i * 80}ms` }}
+              style={{ animationDelay: `${i * 100}ms` }}
               onClick={() => onStageClick?.(node.stage)}
               onMouseEnter={() => setHoveredStage(node.stage)}
               onMouseLeave={() => setHoveredStage(null)}
             >
-              <span className="wf-node-icon">{wfStatusIcon(node.status)}</span>
+              <div className={`wf-node-ring wf-ring-${node.status}`}>
+                <span className="wf-node-icon">{wfStatusIcon(node.status)}</span>
+              </div>
               <span className="wf-node-label">{node.stage}</span>
               <span className="wf-node-badge">
                 {node.durationMs != null ? wfFormatDuration(node.durationMs) : `${node.entryCount} entries`}
               </span>
 
-              {hoveredStage === node.stage && hoveredNode ? (
+              {hoveredStage === node.stage ? (
                 <div className="wf-tooltip">
                   <div className="wf-tooltip-row">
                     <span>Status</span>
@@ -885,9 +892,68 @@ export function WorkflowGraph({
         })}
 
         <svg className="wf-connectors">
-          {connectors.map((c, i) => (
-            <line key={i} x1={c.x1} y1={c.y1} x2={c.x2} y2={c.y2} className={wfConnectorClass(c.status)} />
-          ))}
+          <defs>
+            <filter id="wf-glow">
+              <feGaussianBlur stdDeviation="2" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+          {connectors.map((c, i) => {
+            const pathD = wfBezierPath(c.x1, c.y1, c.x2, c.y2);
+            const stroke = wfConnectorStroke(c.status);
+            const isActive = c.status === 'running';
+            const isDone = c.status === 'passed' || c.status === 'failed' || c.status === 'warning';
+            const pathId = `wf-path-${i}`;
+
+            return (
+              <g key={i}>
+                <path
+                  d={pathD}
+                  fill="none"
+                  stroke={stroke}
+                  strokeWidth={isDone || isActive ? 2 : 1.5}
+                  opacity={isDone ? 1 : 0.6}
+                  filter={isActive ? 'url(#wf-glow)' : undefined}
+                />
+                {isActive ? (
+                  <>
+                    <path
+                      d={pathD}
+                      fill="none"
+                      stroke={stroke}
+                      strokeWidth={2}
+                      strokeDasharray="6 4"
+                      className="wf-connector-active"
+                    />
+                    <path id={pathId} d={pathD} fill="none" stroke="none" />
+                    <circle r="3" fill="rgba(94, 234, 212, 0.8)" filter="url(#wf-glow)">
+                      <animateMotion dur="1.5s" repeatCount="indefinite">
+                        <mpath xlinkHref={`#${pathId}`} />
+                      </animateMotion>
+                    </circle>
+                    <circle r="2" fill="rgba(94, 234, 212, 0.5)">
+                      <animateMotion dur="1.5s" repeatCount="indefinite" begin="0.3s">
+                        <mpath xlinkHref={`#${pathId}`} />
+                      </animateMotion>
+                    </circle>
+                  </>
+                ) : null}
+                {isDone ? (
+                  <>
+                    <path id={pathId} d={pathD} fill="none" stroke="none" />
+                    <circle r="2" fill={stroke} opacity={0.6}>
+                      <animateMotion dur="3s" repeatCount="indefinite">
+                        <mpath xlinkHref={`#${pathId}`} />
+                      </animateMotion>
+                    </circle>
+                  </>
+                ) : null}
+              </g>
+            );
+          })}
         </svg>
       </div>
     </div>
