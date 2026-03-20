@@ -163,8 +163,12 @@ a {
 }
 
 @keyframes wfNodeEnter {
-  from { opacity: 0; transform: translateY(8px) scale(0.95); }
+  from { opacity: 0; transform: translateY(10px) scale(0.9); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes wfRingSpin {
+  to { transform: rotate(360deg); }
 }
 
 /* ============================================================
@@ -2773,13 +2777,32 @@ h3 {
 }
 
 /* ============================================================
-   Workflow Graph (n8n-style)
+   Workflow Graph — Playground Canvas
    ============================================================ */
 
-.wf-graph-scroll {
+.wf-playground {
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 16px 0;
+  padding: 8px 0;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(var(--accent-rgb), 0.03), transparent 60%),
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 23px,
+      rgba(255, 255, 255, 0.02) 23px,
+      rgba(255, 255, 255, 0.02) 24px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 23px,
+      rgba(255, 255, 255, 0.02) 23px,
+      rgba(255, 255, 255, 0.02) 24px
+    ),
+    var(--bg-canvas);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -2787,86 +2810,127 @@ h3 {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 48px;
-  padding: 20px 24px;
+  gap: 56px;
+  padding: 32px 36px;
   min-width: min-content;
 }
 
+/* ---- Node card ---- */
 .wf-node {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 16px 20px;
-  min-width: 100px;
-  border-radius: 12px;
+  gap: 10px;
+  padding: 18px 22px 14px;
+  min-width: 108px;
+  border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  background: var(--card);
+  background: linear-gradient(160deg, rgba(18, 18, 22, 0.95) 0%, rgba(13, 13, 15, 0.98) 100%);
+  backdrop-filter: blur(8px);
   cursor: pointer;
   transition:
-    border-color 200ms ease,
-    box-shadow 200ms ease,
-    transform 200ms ease;
+    border-color 250ms ease,
+    box-shadow 250ms ease,
+    transform 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
   z-index: 2;
-  animation: wfNodeEnter 400ms ease-out both;
+  animation: wfNodeEnter 500ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
 .wf-node:hover {
-  transform: translateY(-2px);
-  border-color: rgba(255, 255, 255, 0.12);
+  transform: translateY(-4px) scale(1.04);
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
 }
 
-.wf-node-passed {
-  border-color: rgba(var(--success-rgb), 0.3);
-  box-shadow: 0 0 12px rgba(var(--success-rgb), 0.1);
+/* ---- Status ring around icon ---- */
+.wf-node-ring {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+  transition: border-color 300ms ease, box-shadow 300ms ease;
 }
 
-.wf-node-passed .wf-node-icon {
-  color: var(--success);
+.wf-ring-passed {
+  border-color: rgba(var(--success-rgb), 0.5);
+  box-shadow: 0 0 12px rgba(var(--success-rgb), 0.15), inset 0 0 8px rgba(var(--success-rgb), 0.06);
 }
 
-.wf-node-failed {
-  border-color: rgba(var(--danger-rgb), 0.4);
-  box-shadow: 0 0 12px rgba(var(--danger-rgb), 0.15);
+.wf-ring-failed {
+  border-color: rgba(var(--danger-rgb), 0.6);
+  box-shadow: 0 0 12px rgba(var(--danger-rgb), 0.2), inset 0 0 8px rgba(var(--danger-rgb), 0.08);
 }
 
-.wf-node-failed .wf-node-icon {
-  color: var(--danger);
+.wf-ring-warning {
+  border-color: rgba(var(--warning-rgb), 0.5);
+  box-shadow: 0 0 12px rgba(var(--warning-rgb), 0.15), inset 0 0 8px rgba(var(--warning-rgb), 0.06);
 }
 
-.wf-node-warning {
-  border-color: rgba(var(--warning-rgb), 0.3);
-  box-shadow: 0 0 12px rgba(var(--warning-rgb), 0.1);
+.wf-ring-running {
+  border-color: rgba(var(--accent-rgb), 0.5);
+  animation: wfRingSpin 3s linear infinite;
+  background: conic-gradient(
+    from 0deg,
+    rgba(var(--accent-rgb), 0.15),
+    transparent 40%,
+    transparent 60%,
+    rgba(var(--accent-rgb), 0.15)
+  );
 }
 
-.wf-node-warning .wf-node-icon {
-  color: var(--warning);
+.wf-ring-pending {
+  border-color: rgba(255, 255, 255, 0.04);
 }
 
-.wf-node-running {
-  animation: wfNodeEnter 400ms ease-out both, wfNodePulse 2s ease-in-out infinite;
-}
-
-.wf-node-running .wf-node-icon {
-  color: var(--accent);
-}
-
-.wf-node-pending {
-  opacity: 0.4;
-  border-color: rgba(255, 255, 255, 0.03);
-}
-
+/* ---- Node icon ---- */
 .wf-node-icon {
-  font-size: 1.25rem;
+  font-size: 1.125rem;
   line-height: 1;
 }
 
+.wf-node-passed .wf-node-icon { color: var(--success); }
+.wf-node-failed .wf-node-icon { color: var(--danger); }
+.wf-node-warning .wf-node-icon { color: var(--warning); }
+.wf-node-running .wf-node-icon { color: var(--accent); }
+.wf-node-pending .wf-node-icon { color: var(--text-muted); }
+
+/* ---- Status card borders & glows ---- */
+.wf-node-passed {
+  border-color: rgba(var(--success-rgb), 0.2);
+  box-shadow: 0 0 20px rgba(var(--success-rgb), 0.06);
+}
+
+.wf-node-failed {
+  border-color: rgba(var(--danger-rgb), 0.25);
+  box-shadow: 0 0 20px rgba(var(--danger-rgb), 0.08);
+}
+
+.wf-node-warning {
+  border-color: rgba(var(--warning-rgb), 0.2);
+  box-shadow: 0 0 20px rgba(var(--warning-rgb), 0.06);
+}
+
+.wf-node-running {
+  border-color: rgba(var(--accent-rgb), 0.2);
+  animation: wfNodeEnter 500ms cubic-bezier(0.34, 1.56, 0.64, 1) both, wfNodePulse 2.5s ease-in-out infinite;
+}
+
+.wf-node-pending {
+  opacity: 0.35;
+  border-color: rgba(255, 255, 255, 0.03);
+}
+
+/* ---- Labels & badge ---- */
 .wf-node-label {
   font-family: var(--font-mono);
   font-size: 0.6875rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-strong);
   text-align: center;
@@ -2875,13 +2939,24 @@ h3 {
 
 .wf-node-badge {
   font-family: var(--font-mono);
-  font-size: 0.625rem;
+  font-size: 0.5625rem;
   color: var(--text-muted);
-  padding: 2px 8px;
+  padding: 3px 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.04);
 }
 
+/* ---- Active node (clicked) ---- */
+.wf-node-active {
+  border-color: rgba(var(--accent-rgb), 0.5);
+  box-shadow:
+    0 0 0 3px rgba(var(--accent-rgb), 0.15),
+    0 0 30px rgba(var(--accent-rgb), 0.12);
+  transform: translateY(-4px) scale(1.04);
+}
+
+/* ---- SVG connectors ---- */
 .wf-connectors {
   position: absolute;
   top: 0;
@@ -2892,51 +2967,25 @@ h3 {
   z-index: 1;
 }
 
-.wf-connector {
-  stroke: rgba(255, 255, 255, 0.08);
-  stroke-width: 2;
-  fill: none;
-}
-
-.wf-connector-done {
-  stroke: rgba(var(--success-rgb), 0.3);
-  stroke-width: 2;
-}
-
 .wf-connector-active {
-  stroke: rgba(var(--accent-rgb), 0.5);
-  stroke-width: 2;
   stroke-dasharray: 6 4;
   animation: wfDashFlow 600ms linear infinite;
 }
 
-.wf-connector-failed {
-  stroke: rgba(var(--danger-rgb), 0.3);
-  stroke-width: 2;
-}
-
-/* Active node (clicked) */
-.wf-node-active {
-  border-color: rgba(var(--accent-rgb), 0.5);
-  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.2),
-              0 0 20px rgba(var(--accent-rgb), 0.15);
-  transform: translateY(-2px);
-}
-
-/* Tooltip */
+/* ---- Tooltip ---- */
 .wf-tooltip {
   position: absolute;
-  top: calc(100% + 10px);
+  top: calc(100% + 14px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;
   min-width: 180px;
   max-width: 260px;
-  padding: 12px;
+  padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: linear-gradient(145deg, #141416 0%, #111113 100%);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(160deg, #161618 0%, #111113 100%);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 0, 0, 0.3);
   font-family: var(--font-mono);
   font-size: 0.6875rem;
   pointer-events: none;
@@ -2951,7 +3000,7 @@ h3 {
   transform: translateX(-50%) rotate(45deg);
   width: 8px;
   height: 8px;
-  background: #141416;
+  background: #161618;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   border-left: 1px solid rgba(255, 255, 255, 0.08);
 }
@@ -2964,13 +3013,8 @@ h3 {
   padding: 3px 0;
 }
 
-.wf-tooltip-row span {
-  color: var(--text-muted);
-}
-
-.wf-tooltip-row strong {
-  color: var(--text-strong);
-}
+.wf-tooltip-row span { color: var(--text-muted); }
+.wf-tooltip-row strong { color: var(--text-strong); }
 
 .wf-tooltip-status.wf-tooltip-passed { color: var(--success); }
 .wf-tooltip-status.wf-tooltip-failed { color: var(--danger); }
