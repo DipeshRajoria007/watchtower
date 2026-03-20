@@ -1,4 +1,5 @@
 import type { PipelineRunData } from '../types';
+import { SlackMarkdown } from './primitives';
 
 type AgentStepStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
 
@@ -103,14 +104,20 @@ function PipelineStep({ step, index, total }: { step: AgentStepData; index: numb
             <div key={fi} className={`pipeline-finding ${severityToneClass(finding.severity)}`}>
               <span className="finding-severity">{finding.severity}</span>
               <span className="finding-category">{finding.category}</span>
-              <span className="finding-message">{finding.message}</span>
+              <span className="finding-message">
+                <SlackMarkdown text={finding.message} />
+              </span>
               {finding.file && (
                 <span className="finding-location">
                   {finding.file}
                   {finding.line ? `:${finding.line}` : ''}
                 </span>
               )}
-              {finding.suggestion && <span className="finding-suggestion">{finding.suggestion}</span>}
+              {finding.suggestion && (
+                <span className="finding-suggestion">
+                  <SlackMarkdown text={finding.suggestion} />
+                </span>
+              )}
             </div>
           ))}
         </div>

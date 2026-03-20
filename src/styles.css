@@ -2836,6 +2836,248 @@ h3 {
 }
 
 /* ============================================================
+   Agent Pipeline View
+   ============================================================ */
+
+.pipeline-view {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: linear-gradient(145deg, #0F0F11 0%, #0D0D0F 50%, #0B0B0D 100%);
+}
+
+.pipeline-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pipeline-header h4 {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.pipeline-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.5625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.pipeline-status-passed,
+.pipeline-status-complete,
+.pipeline-status-success {
+  color: rgba(var(--success-rgb), 0.8);
+  background: rgba(var(--success-rgb), 0.08);
+  border: 1px solid rgba(var(--success-rgb), 0.2);
+}
+
+.pipeline-status-failed,
+.pipeline-status-error {
+  color: rgba(var(--danger-rgb), 0.8);
+  background: rgba(var(--danger-rgb), 0.08);
+  border: 1px solid rgba(var(--danger-rgb), 0.2);
+}
+
+.pipeline-status-running {
+  color: rgba(var(--warning-rgb), 0.8);
+  background: rgba(var(--warning-rgb), 0.08);
+  border: 1px solid rgba(var(--warning-rgb), 0.2);
+}
+
+.pipeline-duration,
+.pipeline-retries {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+.pipeline-retries {
+  color: var(--warning);
+}
+
+.pipeline-steps {
+  display: grid;
+  gap: 8px;
+}
+
+.pipeline-step {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(17, 17, 19, 0.8);
+  border-left: 3px solid transparent;
+  transition: border-color 200ms ease;
+}
+
+.pipeline-step-passed {
+  border-left-color: var(--success);
+}
+
+.pipeline-step-failed {
+  border-left-color: var(--danger);
+  background: rgba(var(--danger-rgb), 0.03);
+}
+
+.pipeline-step-running {
+  border-left-color: var(--warning);
+}
+
+.pipeline-step-neutral {
+  border-left-color: rgba(255, 255, 255, 0.06);
+}
+
+.pipeline-step-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pipeline-step-indicator {
+  font-size: 0.875rem;
+  line-height: 1;
+  width: 18px;
+  text-align: center;
+}
+
+.pipeline-step-passed .pipeline-step-indicator { color: var(--success); }
+.pipeline-step-failed .pipeline-step-indicator { color: var(--danger); }
+.pipeline-step-running .pipeline-step-indicator { color: var(--warning); }
+.pipeline-step-neutral .pipeline-step-indicator { color: var(--text-muted); }
+
+.pipeline-step-label {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-strong);
+}
+
+.pipeline-step-duration {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.pipeline-step-findings-count {
+  font-family: var(--font-mono);
+  font-size: 0.5625rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--warning);
+  background: rgba(var(--warning-rgb), 0.08);
+  border: 1px solid rgba(var(--warning-rgb), 0.15);
+}
+
+.pipeline-findings {
+  display: grid;
+  gap: 6px;
+  padding-left: 28px;
+}
+
+.pipeline-finding {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.01);
+  border-left: 2px solid transparent;
+  line-height: 1.6;
+}
+
+.finding-critical { border-left-color: var(--danger); }
+.finding-high     { border-left-color: #FF8C42; }
+.finding-medium   { border-left-color: var(--warning); }
+.finding-low      { border-left-color: var(--accent); }
+.finding-info     { border-left-color: rgba(255, 255, 255, 0.08); }
+
+.finding-severity {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.5625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.finding-critical .finding-severity {
+  color: var(--danger);
+  background: rgba(var(--danger-rgb), 0.08);
+}
+
+.finding-high .finding-severity {
+  color: #FF8C42;
+  background: rgba(255, 140, 66, 0.08);
+}
+
+.finding-medium .finding-severity {
+  color: var(--warning);
+  background: rgba(var(--warning-rgb), 0.08);
+}
+
+.finding-low .finding-severity {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+.finding-info .finding-severity {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.finding-category {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.finding-message {
+  font-size: 0.8125rem;
+  color: var(--text-soft);
+  line-height: 1.65;
+  word-break: break-word;
+}
+
+.finding-location {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.finding-suggestion {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 1.6;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+/* ============================================================
    Workflow Graph — Playground Canvas
    ============================================================ */
 
