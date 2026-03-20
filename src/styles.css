@@ -2796,7 +2796,7 @@ h3 {
 
 .run-detail-back {
   margin-bottom: 8px;
-  align-self: flex-start;
+  justify-self: start;
   border: none;
   background: transparent;
   padding: 4px 0;
