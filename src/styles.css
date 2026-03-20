@@ -2752,8 +2752,24 @@ h3 {
    ============================================================ */
 
 .run-detail-back {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   align-self: flex-start;
+  border: none;
+  background: transparent;
+  padding: 4px 0;
+  border-radius: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+.run-detail-back:hover {
+  border: none;
+  background: transparent;
+  color: var(--text-soft);
+  transform: none;
+  box-shadow: none;
 }
 
 .run-detail-header {
