@@ -6,6 +6,7 @@ import {
   RunsFilterBar,
   RunsTable,
   ShellTraceView,
+  SlackMarkdown,
   StatusBadge,
   WorkflowGraph,
 } from '../components/primitives';
@@ -164,7 +165,11 @@ export function RunsPage({
               </div>
             </div>
 
-            {selectedRun.errorMessage ? <p className="detail-error">{selectedRun.errorMessage}</p> : null}
+            {selectedRun.errorMessage ? (
+              <div className="detail-error">
+                <SlackMarkdown text={selectedRun.errorMessage} />
+              </div>
+            ) : null}
           </article>
         </GlowCard>
 

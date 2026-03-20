@@ -117,6 +117,64 @@ export function StatusBadge({ label, tone = 'info' }: { label: string; tone?: st
   return <span className={`status-badge ${tone}`}>{label}</span>;
 }
 
+function parseSlackMarkdown(text: string): ReactNode[] {
+  const result: ReactNode[] = [];
+  let key = 0;
+
+  const lines = text.split('\n');
+  for (let li = 0; li < lines.length; li++) {
+    if (li > 0) result.push(<br key={`br-${key++}`} />);
+    const line = lines[li];
+
+    // Tokenize inline patterns: *bold*, `code`, _italic_, URLs
+    const regex = /(\*[^*]+\*|`[^`]+`|_[^_]+_|https?:\/\/[^\s<>]+)/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(line)) !== null) {
+      if (match.index > lastIndex) {
+        result.push(line.slice(lastIndex, match.index));
+      }
+
+      const token = match[0];
+      if (token.startsWith('http')) {
+        result.push(
+          <a key={`t-${key++}`} className="slack-md-link" href={token} target="_blank" rel="noopener noreferrer">
+            {token}
+          </a>,
+        );
+      } else if (token.startsWith('`')) {
+        result.push(
+          <code key={`t-${key++}`} className="slack-md-code">
+            {token.slice(1, -1)}
+          </code>,
+        );
+      } else if (token.startsWith('*')) {
+        result.push(<strong key={`t-${key++}`}>{token.slice(1, -1)}</strong>);
+      } else if (token.startsWith('_')) {
+        result.push(
+          <em key={`t-${key++}`} className="slack-md-em">
+            {token.slice(1, -1)}
+          </em>,
+        );
+      }
+
+      lastIndex = match.index + token.length;
+    }
+
+    if (lastIndex < line.length) {
+      result.push(line.slice(lastIndex));
+    }
+  }
+
+  return result;
+}
+
+export function SlackMarkdown({ text }: { text: string }) {
+  const nodes = useMemo(() => parseSlackMarkdown(text), [text]);
+  return <>{nodes}</>;
+}
+
 export function EmptyState({ children }: { children: ReactNode }) {
   return <p className="empty-state">{children}</p>;
 }
@@ -243,7 +301,11 @@ export function RunInspector({
           </div>
         </div>
 
-        {run.errorMessage ? <p className="detail-error">{run.errorMessage}</p> : null}
+        {run.errorMessage ? (
+          <div className="detail-error">
+            <SlackMarkdown text={run.errorMessage} />
+          </div>
+        ) : null}
 
         {run.status === 'SUCCESS' && onReviewChanges ? (
           <button className="primary-button" type="button" onClick={() => onReviewChanges(run.id)}>
@@ -277,7 +339,9 @@ export function TraceList({ logs, selectedRun }: { logs: JobLogEntry[]; selected
             <span className="trace-stage">{log.stage}</span>
             <span className="trace-time">{formatTimestamp(log.createdAt)}</span>
           </div>
-          <div className="trace-message">{log.message}</div>
+          <div className="trace-message">
+            <SlackMarkdown text={log.message} />
+          </div>
           {log.dataJson ? <pre className="trace-data">{prettyJson(log.dataJson)}</pre> : null}
         </li>
       ))}
@@ -654,7 +718,9 @@ export function ShellTraceView({ logs, highlightStage }: { logs: JobLogEntry[]; 
               return (
                 <div key={log.id} className={lineClass}>
                   <span className={`shell-indicator ${className}`}>{symbol}</span>
-                  <span className="shell-message">{log.message}</span>
+                  <span className="shell-message">
+                    <SlackMarkdown text={log.message} />
+                  </span>
                   {log.dataJson ? (
                     <details className="shell-json">
                       <summary>

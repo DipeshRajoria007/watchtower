@@ -1335,7 +1335,50 @@ h3 {
 
 .detail-error {
   margin: 0;
-  line-height: 1.6;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ============================================================
+   Slack Markdown — inline rich text
+   ============================================================ */
+
+.slack-md-code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  color: var(--accent);
+  word-break: break-word;
+}
+
+.slack-md-link {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.3);
+  transition: border-color 200ms ease;
+}
+
+.slack-md-link:hover {
+  border-color: var(--accent);
+}
+
+.slack-md-em {
+  color: var(--text-soft);
+  font-style: italic;
+}
+
+.detail-error strong {
+  color: var(--text-strong);
+}
+
+.detail-error .slack-md-code {
+  color: var(--danger);
+  background: rgba(var(--danger-rgb), 0.08);
+  border-color: rgba(var(--danger-rgb), 0.12);
 }
 
 /* ============================================================
