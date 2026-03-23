@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { DashboardData, JobLogEntry, PipelineRunData, RunSummary } from '../types';
 import {
-  LiveLogConsole,
   PageIntro,
   RunsFilterBar,
   RunsTable,
@@ -17,7 +16,6 @@ import { GlowCard } from '../components/GlowCard';
 
 type RunsPageProps = {
   data: DashboardData | null;
-  liveSidecarLogs: string[];
   onReviewChanges?: (runId: string) => void;
   onSelectRun: (runId: string) => void;
   selectedRunId: string | null;
@@ -27,7 +25,6 @@ type RunsPageProps = {
 
 export function RunsPage({
   data,
-  liveSidecarLogs,
   onReviewChanges,
   onSelectRun,
   selectedRunId,
@@ -210,22 +207,6 @@ export function RunsPage({
         </GlowCard>
 
         {selectedRunPipeline ? <AgentPipelineView pipelineRun={selectedRunPipeline} /> : null}
-
-        {liveSidecarLogs.length > 0 ? (
-          <GlowCard>
-            <section className="surface-card">
-              <div className="section-head">
-                <div className="section-heading-copy">
-                  <div className="section-title-row">
-                    <h2>Live Sidecar Stream</h2>
-                    <span className="section-count">{liveSidecarLogs.length}</span>
-                  </div>
-                </div>
-              </div>
-              <LiveLogConsole lines={liveSidecarLogs} />
-            </section>
-          </GlowCard>
-        ) : null}
       </div>
     );
   }

@@ -2,7 +2,16 @@ import type { ReactNode } from 'react';
 import { getSidecarTone, humanizeToken } from '../lib/formatters';
 import type { AppView } from '../types';
 import { AtmosphereStyles, MouseGlow, NoiseOverlay, Scanlines, Vignette } from './Atmosphere';
-import { CloseIcon, IntelligenceIcon, LaunchpadIcon, MenuIcon, OverviewIcon, RunsIcon, SettingsIcon } from './icons';
+import {
+  CloseIcon,
+  DiagnosticsIcon,
+  IntelligenceIcon,
+  LaunchpadIcon,
+  MenuIcon,
+  OverviewIcon,
+  RunsIcon,
+  SettingsIcon,
+} from './icons';
 
 type AppShellProps = {
   children: ReactNode;
@@ -44,6 +53,7 @@ export function AppShell({
       badgeTone: failuresCount > 0 ? 'danger' : 'info',
     },
     { view: 'intelligence', label: 'Intelligence', icon: <IntelligenceIcon /> },
+    { view: 'diagnostics', label: 'Diagnostics', icon: <DiagnosticsIcon /> },
     {
       view: 'settings',
       label: 'Settings',

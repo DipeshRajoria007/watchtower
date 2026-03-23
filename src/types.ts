@@ -1,4 +1,4 @@
-export type AppView = 'overview' | 'launchpad' | 'runs' | 'intelligence' | 'settings' | 'review';
+export type AppView = 'overview' | 'launchpad' | 'runs' | 'intelligence' | 'diagnostics' | 'settings' | 'review';
 
 export type SlackCommandTarget = 'miniog' | 'watchtower';
 

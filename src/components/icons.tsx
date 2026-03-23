@@ -1,5 +1,5 @@
 import type { SVGProps } from 'react';
-import { LayoutDashboard, Lightbulb, Menu, Play, Rocket, Settings, X } from 'lucide-react';
+import { LayoutDashboard, Lightbulb, Menu, Play, Rocket, Settings, Terminal, X } from 'lucide-react';
 
 type IconProps = SVGProps<SVGSVGElement>;
 
@@ -44,6 +44,10 @@ export function LaunchpadIcon() {
 
 export function IntelligenceIcon() {
   return <Lightbulb size={ICON_SIZE} strokeWidth={ICON_STROKE} />;
+}
+
+export function DiagnosticsIcon() {
+  return <Terminal size={ICON_SIZE} strokeWidth={ICON_STROKE} />;
 }
 
 export function SettingsIcon() {
