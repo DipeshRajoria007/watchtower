@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { AppShell } from './components/AppShell';
+import { LiveLogConsole } from './components/primitives';
 import { applyAppTheme } from './lib/theme';
 import { formatSidecarLine } from './lib/formatters';
 import { IntelligencePage } from './pages/IntelligencePage';
@@ -530,7 +531,6 @@ function App() {
       {view === 'runs' ? (
         <RunsPage
           data={data}
-          liveSidecarLogs={liveSidecarLogs}
           onReviewChanges={openReview}
           onSelectRun={setSelectedRunId}
           selectedRunId={selectedRunId}
@@ -540,6 +540,37 @@ function App() {
       ) : null}
 
       {view === 'intelligence' ? <IntelligencePage data={data} /> : null}
+
+      {view === 'diagnostics' ? (
+        <div className="page-stack">
+          <header className="page-intro">
+            <div className="page-intro-copy">
+              <span className="eyebrow">Live Stream</span>
+              <h1>Diagnostics</h1>
+              <p className="page-description">
+                Buffered sidecar stdout and stderr. Stays visible while you move through the rest of the app.
+              </p>
+            </div>
+            <div className="page-intro-visual" aria-hidden="true">
+              <span className="page-intro-ring page-intro-ring-outer" />
+              <span className="page-intro-ring page-intro-ring-mid" />
+              <span className="page-intro-ring page-intro-ring-inner" />
+              <span className="page-intro-core" />
+            </div>
+          </header>
+          <section className="surface-card">
+            <div className="section-head">
+              <div className="section-heading-copy">
+                <div className="section-title-row">
+                  <h2>Live Sidecar Stream</h2>
+                  <span className="section-count">{liveSidecarLogs.length}</span>
+                </div>
+              </div>
+            </div>
+            <LiveLogConsole lines={liveSidecarLogs} />
+          </section>
+        </div>
+      ) : null}
 
       {view === 'review' && reviewJobId ? (
         <ReviewPage
