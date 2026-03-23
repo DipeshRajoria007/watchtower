@@ -75,6 +75,18 @@ export function resolveWorkspace(repoPath: string, threadTs: string): string {
       timeout: 30_000,
     });
 
+    // Symlink parent node_modules so tools (Jest, ESLint, etc.) are available in the worktree
+    const parentNodeModules = path.join(repoPath, 'node_modules');
+    const worktreeNodeModules = path.join(wsPath, 'node_modules');
+    if (fs.existsSync(parentNodeModules) && !fs.existsSync(worktreeNodeModules)) {
+      try {
+        fs.symlinkSync(parentNodeModules, worktreeNodeModules, 'junction');
+        logger.info({ wsPath }, 'symlinked node_modules into worktree');
+      } catch (symlinkError) {
+        logger.warn({ wsPath, error: String(symlinkError) }, 'failed to symlink node_modules into worktree');
+      }
+    }
+
     logger.info({ repoPath, threadTs, wsPath, startPoint: defaultBranch }, 'created workspace via git worktree');
     return wsPath;
   } catch (error) {

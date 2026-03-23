@@ -18,7 +18,7 @@ export function diagnoseFailure(input: {
     entry =>
       entry.stage === 'codex.output.parse_failed' ||
       entry.stage === 'codex.output.schema_failed' ||
-      entry.stage === 'codex.output.schema_invalid'
+      entry.stage === 'codex.output.schema_invalid',
   ).length;
 
   if (haystack.includes('spawn codex enoent') || haystack.includes('codex executable not found')) {
@@ -77,10 +77,10 @@ export function diagnoseFailure(input: {
 
   const githubAuthOrApiError =
     /api\.github\.com[^\n]*(error|failed|forbidden|unauthorized|timed out|unreachable|refused|denied|401|403|404)/.test(
-      haystack
+      haystack,
     ) ||
     /github(?:\s+auth|\s+authentication)?[^\n]*(failed|failure|error|invalid|denied|forbidden|unauthorized|missing|expired)/.test(
-      haystack
+      haystack,
     ) ||
     /token[^\n]*(invalid|expired|missing|denied|forbidden|unauthorized|revoked|scope)/.test(haystack) ||
     haystack.includes('bad credentials') ||
@@ -100,6 +100,18 @@ export function diagnoseFailure(input: {
   }
 
   // --- Pipeline-specific error patterns (must come before generic timeout) ---
+
+  if (haystack.includes('error_max_turns')) {
+    return {
+      errorKind: 'AGENT_MAX_TURNS',
+      summary: 'The coder agent ran out of turns before finishing.',
+      actions: [
+        'The agent made progress but ran out of turns. Changes may be partially committed.',
+        'Retry with a narrower task scope.',
+        'Check the workspace for uncommitted changes.',
+      ],
+    };
+  }
 
   if (haystack.includes('pipeline.abort') && haystack.includes('critical finding')) {
     return {

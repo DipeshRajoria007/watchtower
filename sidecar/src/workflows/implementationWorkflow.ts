@@ -394,7 +394,7 @@ Write your response as a ready-to-post Slack message describing what you did.
 
     let prUrl = coderStep?.output?.prUrl ? String(coderStep.output.prUrl) : '';
 
-    if (!prUrl && fullResult.finalStatus === 'passed') {
+    if (!prUrl) {
       logStep?.({
         stage: 'implementation.pr.creating',
         message: 'Coder did not produce a PR — creating one from workspace changes.',
