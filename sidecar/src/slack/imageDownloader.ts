@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import type { WorkflowStepLogger } from '../types/contracts.js';
 
 export interface SlackFileAttachment {
   id: string;
@@ -9,32 +10,91 @@ export interface SlackFileAttachment {
   url_private_download: string;
 }
 
-const IMAGE_MIMETYPES = new Set([
+const IMAGE_MIMETYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+const SUPPORTED_MIMETYPES = new Set([
+  // Images
   'image/png',
   'image/jpeg',
   'image/gif',
   'image/webp',
+  // Documents
+  'application/pdf',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'application/json',
+  // Code snippets (Slack uploads)
+  'text/javascript',
+  'text/typescript',
+  'text/html',
+  'text/css',
+  'text/xml',
+  'application/xml',
 ]);
 
-const MAX_IMAGES = 5;
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_FILES = 8;
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
-export async function downloadSlackImages(params: {
+export interface DownloadSlackFilesResult {
+  imagePaths: string[];
+  documentPaths: string[];
+  allPaths: string[];
+  skipped: Array<{ name: string; mimetype: string; reason: string }>;
+}
+
+export async function downloadSlackFiles(params: {
   files: SlackFileAttachment[];
   botToken: string;
   destDir?: string;
-}): Promise<string[]> {
-  const { files, botToken } = params;
+  logStep?: WorkflowStepLogger;
+}): Promise<DownloadSlackFilesResult> {
+  const { files, botToken, logStep } = params;
 
-  const imageFiles = files.filter(f => IMAGE_MIMETYPES.has(f.mimetype));
-  if (imageFiles.length === 0) return [];
+  const result: DownloadSlackFilesResult = {
+    imagePaths: [],
+    documentPaths: [],
+    allPaths: [],
+    skipped: [],
+  };
 
-  const toDownload = imageFiles.slice(0, MAX_IMAGES);
+  if (files.length === 0) return result;
 
-  const destDir = params.destDir ?? await fs.mkdtemp(path.join(os.tmpdir(), 'watchtower-slack-images-'));
+  const supported = files.filter(f => SUPPORTED_MIMETYPES.has(f.mimetype));
+  const unsupported = files.filter(f => !SUPPORTED_MIMETYPES.has(f.mimetype));
+
+  for (const f of unsupported) {
+    result.skipped.push({ name: f.name, mimetype: f.mimetype, reason: 'unsupported_mimetype' });
+  }
+
+  if (supported.length === 0) {
+    logStep?.({
+      stage: 'files.download.skip',
+      message: `No supported files found. ${unsupported.length} file(s) skipped (unsupported types).`,
+      level: 'WARN',
+      data: { skipped: result.skipped },
+    });
+    return result;
+  }
+
+  const toDownload = supported.slice(0, MAX_FILES);
+  if (supported.length > MAX_FILES) {
+    for (const f of supported.slice(MAX_FILES)) {
+      result.skipped.push({ name: f.name, mimetype: f.mimetype, reason: 'max_files_exceeded' });
+    }
+  }
+
+  logStep?.({
+    stage: 'files.download.start',
+    message: `Downloading ${toDownload.length} file(s) from Slack thread.`,
+    data: {
+      files: toDownload.map(f => ({ name: f.name, mimetype: f.mimetype })),
+      skipped: result.skipped.length,
+    },
+  });
+
+  const destDir = params.destDir ?? (await fs.mkdtemp(path.join(os.tmpdir(), 'watchtower-slack-files-')));
   await fs.mkdir(destDir, { recursive: true });
-
-  const downloaded: string[] = [];
 
   for (const file of toDownload) {
     try {
@@ -42,34 +102,103 @@ export async function downloadSlackImages(params: {
         headers: { Authorization: `Bearer ${botToken}` },
       });
 
-      if (!response.ok) continue;
+      if (!response.ok) {
+        result.skipped.push({ name: file.name, mimetype: file.mimetype, reason: `http_${response.status}` });
+        logStep?.({
+          stage: 'files.download.http_error',
+          message: `Failed to download ${file.name}: HTTP ${response.status}`,
+          level: 'WARN',
+          data: { fileName: file.name, status: response.status },
+        });
+        continue;
+      }
 
       const contentLength = Number(response.headers.get('content-length') ?? '0');
-      if (contentLength > MAX_IMAGE_BYTES) continue;
+      if (contentLength > MAX_FILE_BYTES) {
+        result.skipped.push({ name: file.name, mimetype: file.mimetype, reason: 'too_large' });
+        logStep?.({
+          stage: 'files.download.too_large',
+          message: `Skipping ${file.name}: ${(contentLength / 1024 / 1024).toFixed(1)}MB exceeds 10MB limit.`,
+          level: 'WARN',
+          data: { fileName: file.name, bytes: contentLength },
+        });
+        continue;
+      }
 
       const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.length > MAX_IMAGE_BYTES) continue;
+      if (buffer.length > MAX_FILE_BYTES) {
+        result.skipped.push({ name: file.name, mimetype: file.mimetype, reason: 'too_large' });
+        continue;
+      }
 
-      const ext = extensionForMimetype(file.mimetype);
+      const ext = extensionForMimetype(file.mimetype) || path.extname(file.name).replace('.', '');
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const destPath = path.join(destDir, `${file.id}-${safeName}${ext ? `.${ext}` : ''}`);
 
       await fs.writeFile(destPath, buffer);
-      downloaded.push(destPath);
-    } catch {
-      // Skip individual file failures
+
+      const isImage = IMAGE_MIMETYPES.has(file.mimetype);
+      if (isImage) {
+        result.imagePaths.push(destPath);
+      } else {
+        result.documentPaths.push(destPath);
+      }
+      result.allPaths.push(destPath);
+    } catch (error) {
+      result.skipped.push({ name: file.name, mimetype: file.mimetype, reason: 'download_error' });
+      logStep?.({
+        stage: 'files.download.error',
+        message: `Error downloading ${file.name}: ${String(error)}`,
+        level: 'WARN',
+        data: { fileName: file.name, error: String(error) },
+      });
     }
   }
 
-  return downloaded;
+  logStep?.({
+    stage: 'files.download.done',
+    message: `Downloaded ${result.allPaths.length} file(s): ${result.imagePaths.length} image(s), ${result.documentPaths.length} document(s). ${result.skipped.length} skipped.`,
+    data: {
+      images: result.imagePaths.length,
+      documents: result.documentPaths.length,
+      skipped: result.skipped,
+    },
+  });
+
+  return result;
+}
+
+/** @deprecated Use downloadSlackFiles instead */
+export async function downloadSlackImages(params: {
+  files: SlackFileAttachment[];
+  botToken: string;
+  destDir?: string;
+}): Promise<string[]> {
+  const result = await downloadSlackFiles(params);
+  return result.imagePaths;
 }
 
 function extensionForMimetype(mimetype: string): string {
   switch (mimetype) {
-    case 'image/png': return 'png';
-    case 'image/jpeg': return 'jpg';
-    case 'image/gif': return 'gif';
-    case 'image/webp': return 'webp';
-    default: return '';
+    case 'image/png':
+      return 'png';
+    case 'image/jpeg':
+      return 'jpg';
+    case 'image/gif':
+      return 'gif';
+    case 'image/webp':
+      return 'webp';
+    case 'application/pdf':
+      return 'pdf';
+    case 'text/plain':
+      return 'txt';
+    case 'text/markdown':
+      return 'md';
+    case 'text/csv':
+      return 'csv';
+    case 'application/json':
+      return 'json';
+    default:
+      return '';
   }
 }
