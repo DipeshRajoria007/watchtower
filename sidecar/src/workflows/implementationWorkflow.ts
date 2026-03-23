@@ -160,12 +160,15 @@ export async function runImplementationWorkflow(params: {
     });
 
     // Planner runs to produce plan steps, affected files, and scope
+    const workflowTimeoutMs = config.bugFixTimeoutMs;
     const plannerPipelineConfig: PipelineConfig = {
       agents: ['planner'],
       maxRetryLoops: 0,
       abortOnCriticalFinding: false,
       slackProgressUpdates: false,
       requireApproval: false,
+      totalTimeoutMs: Math.floor(workflowTimeoutMs * 0.15),
+      perAgentTimeoutMs: Math.floor(workflowTimeoutMs * 0.15),
     };
 
     const plannerResult = await runAgentPipeline({
@@ -224,6 +227,7 @@ Write your response as a ready-to-post Slack message describing what you did.
         prompt: quickPrompt,
         githubToken: ctx.githubToken,
         ...highReasoningProfile(getActiveBackendId()),
+        timeoutMs: Math.floor(workflowTimeoutMs * 0.5),
         onLog: logStep,
         signal,
       });
@@ -357,6 +361,8 @@ Write your response as a ready-to-post Slack message describing what you did.
       abortOnCriticalFinding: true,
       slackProgressUpdates: true,
       requireApproval: false,
+      totalTimeoutMs: workflowTimeoutMs,
+      perAgentTimeoutMs: Math.floor(workflowTimeoutMs / 3),
     };
 
     const fullResult = await runAgentPipeline({

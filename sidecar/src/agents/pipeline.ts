@@ -1,13 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { WebClient } from '@slack/web-api';
-import type {
-  AgentContext,
-  AgentFinding,
-  AgentRole,
-  AgentStepResult,
-  PipelineResult,
-} from './types.js';
+import type { AgentContext, AgentFinding, AgentRole, AgentStepResult, PipelineResult } from './types.js';
 import type { WorkflowStepLogger } from '../types/contracts.js';
 import { buildPromptForRole } from './prompts.js';
 import { profileForAgentRole } from '../codex/modelProfiles.js';
@@ -77,17 +71,16 @@ const ROLE_START_MESSAGES: Record<AgentRole, string> = {
 
 function buildCompletionMessage(role: AgentRole, status: string, nextRole?: AgentRole): string {
   if (!nextRole) {
-    return role === 'verifier'
-      ? 'All checks done. Wrapping up.'
-      : 'Done. Wrapping up.';
+    return role === 'verifier' ? 'All checks done. Wrapping up.' : 'Done. Wrapping up.';
   }
 
   const transitions: Record<AgentRole, string> = {
-    planner: "Got a plan. Starting the code changes.",
+    planner: 'Got a plan. Starting the code changes.',
     coder: "Code's done — running it through review.",
-    reviewer: status === 'passed'
-      ? 'Review looks good. Running final checks.'
-      : 'Review flagged some things. Running final checks.',
+    reviewer:
+      status === 'passed'
+        ? 'Review looks good. Running final checks.'
+        : 'Review flagged some things. Running final checks.',
     security: 'Security check done. Moving on.',
     performance: 'Performance check done. Moving on.',
     verifier: 'All checks done. Wrapping up.',
@@ -142,7 +135,13 @@ function stripRepoPrefix(filePath: string, repoPath: string): string {
   return filePath;
 }
 
-export function formatPlanMessage(planSteps: string[], affectedFiles: string[], scope: string, completedSteps?: Set<number>, repoPath?: string): string {
+export function formatPlanMessage(
+  planSteps: string[],
+  affectedFiles: string[],
+  scope: string,
+  completedSteps?: Set<number>,
+  repoPath?: string,
+): string {
   const header = `*Plan* (scope: ${scope}, ${affectedFiles.length} files affected)`;
   const stepLines = planSteps.map((step, i) => {
     const num = `${i + 1}.`;
@@ -151,12 +150,9 @@ export function formatPlanMessage(planSteps: string[], affectedFiles: string[], 
     }
     return `${num} ${step}`;
   });
-  const displayFiles = repoPath
-    ? affectedFiles.map(f => stripRepoPrefix(f, repoPath))
-    : affectedFiles;
-  const filesSection = displayFiles.length > 0
-    ? `\n\n*Affected files:*\n${displayFiles.map(f => `• \`${f}\``).join('\n')}`
-    : '';
+  const displayFiles = repoPath ? affectedFiles.map(f => stripRepoPrefix(f, repoPath)) : affectedFiles;
+  const filesSection =
+    displayFiles.length > 0 ? `\n\n*Affected files:*\n${displayFiles.map(f => `• \`${f}\``).join('\n')}` : '';
   return `${header}\n${stepLines.join('\n')}${filesSection}`;
 }
 
@@ -174,7 +170,6 @@ export async function waitForApproval(params: {
   const { slack, channelId, threadTs, triggerUserId, approvalPromptTs, logStep } = params;
   const pollIntervalMs = 5_000;
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
 
@@ -187,9 +182,7 @@ export async function waitForApproval(params: {
     }
 
     // Find messages from the trigger user that are newer than the approval prompt
-    const userReplies = messages.filter(
-      m => m.user === triggerUserId && m.ts > approvalPromptTs,
-    );
+    const userReplies = messages.filter(m => m.user === triggerUserId && m.ts > approvalPromptTs);
 
     if (userReplies.length === 0) continue;
 
@@ -306,9 +299,7 @@ export async function runAgentPipeline(params: {
 
     const profile = profileForAgentRole(role, getActiveBackendId());
     const schemaFile = SCHEMA_MAP[role];
-    const schemaPath = schemaFile
-      ? path.resolve(process.cwd(), `schemas/${schemaFile}`)
-      : undefined;
+    const schemaPath = schemaFile ? path.resolve(process.cwd(), `schemas/${schemaFile}`) : undefined;
 
     const result = await runCodex({
       cwd: ctx.repoPath,
@@ -316,6 +307,7 @@ export async function runAgentPipeline(params: {
       outputSchemaPath: schemaPath,
       githubToken: ctx.githubToken,
       ...profile,
+      timeoutMs: perAgentTimeoutMs,
       onLog: logStep,
     });
 
@@ -367,7 +359,7 @@ export async function runAgentPipeline(params: {
         const approvalPromptTs = await postSlackProgress({
           slack,
           ctx,
-          text: "Here's my plan. Should I go ahead? Reply in this thread:\n• \"yes\" or \"go\" — I'll start coding\n• \"no\" or \"stop\" — I'll cancel\n• Or reply with changes you'd like and I'll adjust",
+          text: 'Here\'s my plan. Should I go ahead? Reply in this thread:\n• "yes" or "go" — I\'ll start coding\n• "no" or "stop" — I\'ll cancel\n• Or reply with changes you\'d like and I\'ll adjust',
         });
 
         if (approvalPromptTs) {
@@ -381,7 +373,7 @@ export async function runAgentPipeline(params: {
           });
 
           if (!approval.approved) {
-            await postSlackProgress({ slack, ctx, text: "Got it, cancelling." });
+            await postSlackProgress({ slack, ctx, text: 'Got it, cancelling.' });
             aborted = true;
             break;
           }
@@ -488,11 +480,12 @@ export async function runAgentPipeline(params: {
   });
 
   const durationSec = Math.round(totalDurationMs / 1000);
-  const finishText = finalStatus === 'passed'
-    ? `Done in ${durationSec}s. Preparing the summary.`
-    : finalStatus === 'aborted'
-      ? `Finished in ${durationSec}s. Review flagged some concerns — see the summary below.`
-      : `Finished in ${durationSec}s with some issues flagged — details below.`;
+  const finishText =
+    finalStatus === 'passed'
+      ? `Done in ${durationSec}s. Preparing the summary.`
+      : finalStatus === 'aborted'
+        ? `Finished in ${durationSec}s. Review flagged some concerns — see the summary below.`
+        : `Finished in ${durationSec}s with some issues flagged — details below.`;
   await postSlackProgress({ slack, ctx, text: finishText });
 
   if (store && jobId) {

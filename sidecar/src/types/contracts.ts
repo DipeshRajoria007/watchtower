@@ -44,6 +44,9 @@ export interface AppConfig {
   allowedPrOrg: string;
   multiAgentEnabled: boolean;
   agentBackend: AgentBackendId;
+  prReviewTimeoutMs: number;
+  bugFixTimeoutMs: number;
+  pmTaskTimeoutMs: number;
 }
 
 export interface SlackEventEnvelope {

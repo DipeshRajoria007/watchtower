@@ -49,6 +49,7 @@ ${ctx.threadContext}${ctx.imageContext}
     githubToken: ctx.githubToken,
     imagePaths: ctx.imagePaths.length > 0 ? ctx.imagePaths : undefined,
     ...highReasoningProfile(getActiveBackendId()),
+    timeoutMs: 120_000,
     onLog: logStep,
     signal,
   });

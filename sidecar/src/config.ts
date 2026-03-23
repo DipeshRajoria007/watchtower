@@ -83,7 +83,7 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
           COALESCE(pm_task_timeout_ms, 600000) AS pm_task_timeout_ms
          FROM app_settings
          WHERE id = 1
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get() as Record<string, unknown> | undefined;
 
@@ -108,7 +108,7 @@ export function readAgentBackend(dbPath: string): AgentBackendId {
     const row = db
       .prepare(`SELECT COALESCE(agent_backend, 'codex') AS agent_backend FROM app_settings WHERE id = 1 LIMIT 1`)
       .get() as { agent_backend?: string } | undefined;
-    return ((row?.agent_backend || 'codex') as AgentBackendId);
+    return (row?.agent_backend || 'codex') as AgentBackendId;
   } finally {
     db.close();
   }
@@ -129,7 +129,7 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
 
   if (missingFields.length > 0) {
     throw new Error(
-      `Settings incomplete (${missingFields.join(', ')}). Update Watchtower settings in the desktop app.`
+      `Settings incomplete (${missingFields.join(', ')}). Update Watchtower settings in the desktop app.`,
     );
   }
 
@@ -157,5 +157,8 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
     allowedPrOrg: 'Newton-School',
     multiAgentEnabled: Boolean(settings.multi_agent_enabled),
     agentBackend: (settings.agent_backend || 'codex') as AgentBackendId,
+    prReviewTimeoutMs: settings.pr_review_timeout_ms,
+    bugFixTimeoutMs: settings.bug_fix_timeout_ms,
+    pmTaskTimeoutMs: settings.pm_task_timeout_ms,
   };
 }
