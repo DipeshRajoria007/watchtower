@@ -65,13 +65,8 @@ export const claudeCodeBackend: AgentBackend = {
     return true;
   },
 
-  buildArgs(request: AgentRunRequest, outputPath: string): string[] {
-    const args = [
-      '-p', request.prompt,
-      '--output-format', 'json',
-      '--max-turns', '50',
-      '--dangerously-skip-permissions',
-    ];
+  buildArgs(request: AgentRunRequest, _outputPath: string): string[] {
+    const args = ['-p', request.prompt, '--output-format', 'json', '--dangerously-skip-permissions'];
     if (request.model) {
       args.push('--model', request.model);
     }
