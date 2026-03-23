@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { WebClient } from '@slack/web-api';
 import type { AppConfig, NormalizedTask, WorkflowStepLogger } from '../../types/contracts.js';
 import { fetchThreadContext } from '../../slack/threadContext.js';
-import { downloadSlackImages } from '../../slack/imageDownloader.js';
+import { downloadSlackFiles } from '../../slack/imageDownloader.js';
 import type { SlackFileAttachment } from '../../slack/imageDownloader.js';
 import { classifyRepo } from '../../router/repoClassifier.js';
 import { getBackend } from '../../backends/registry.js';
@@ -247,15 +247,36 @@ export async function prepareWorkflowContext(params: {
     }
   }
 
-  // Download images
+  // Download files (images + documents)
   const allFiles = threadMessages.flatMap((m: ThreadMessage) => m.files ?? []) as unknown as SlackFileAttachment[];
   let imagePaths: string[] = [];
+  let documentContext = '';
   if (allFiles.length > 0) {
     try {
-      imagePaths = await downloadSlackImages({
+      const fileResult = await downloadSlackFiles({
         files: allFiles,
         botToken: config.slackBotToken,
+        logStep,
       });
+      imagePaths = fileResult.imagePaths;
+
+      // Read text-based documents and include their content as context
+      if (fileResult.documentPaths.length > 0) {
+        const { readFile } = await import('node:fs/promises');
+        const docParts: string[] = [];
+        for (const docPath of fileResult.documentPaths) {
+          try {
+            const content = await readFile(docPath, 'utf8');
+            const fileName = docPath.split('/').pop() ?? docPath;
+            docParts.push(`--- ${fileName} ---\n${content.slice(0, 8000)}`);
+          } catch {
+            // Non-fatal: skip unreadable docs
+          }
+        }
+        if (docParts.length > 0) {
+          documentContext = `\n\nAttached documents from thread:\n${docParts.join('\n\n')}`;
+        }
+      }
     } catch {
       // Non-fatal
     }
@@ -263,9 +284,9 @@ export async function prepareWorkflowContext(params: {
 
   const backend = getBackend(getActiveBackendId());
   const imageContext =
-    imagePaths.length > 0 && !backend.supportsImages()
+    (imagePaths.length > 0 && !backend.supportsImages()
       ? `\n\n[${imagePaths.length} image(s) attached in thread — this backend does not support image input]`
-      : '';
+      : '') + documentContext;
 
   // Resolve GitHub token
   const githubToken = await resolveGithubTokenForCodex();
