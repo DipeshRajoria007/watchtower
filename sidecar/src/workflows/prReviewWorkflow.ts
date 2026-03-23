@@ -505,7 +505,7 @@ export async function runPrReviewWorkflow(params: {
 
     const schemaDir = path.resolve(process.cwd(), 'schemas');
 
-    const perAgentTimeoutMs = Math.floor(config.prReviewTimeoutMs / 3);
+    const _perAgentTimeoutMs = Math.floor(config.prReviewTimeoutMs / 3);
 
     const [reviewerResult, securityResult, performanceResult] = await Promise.all([
       runCodex({
@@ -514,7 +514,7 @@ export async function runPrReviewWorkflow(params: {
         outputSchemaPath: path.join(schemaDir, 'agent-reviewer-result.schema.json'),
         githubToken,
         ...reviewerProfile,
-        timeoutMs: perAgentTimeoutMs,
+        // timeoutMs: perAgentTimeoutMs,
         onLog: logStep,
       }),
       runCodex({
@@ -523,7 +523,7 @@ export async function runPrReviewWorkflow(params: {
         outputSchemaPath: path.join(schemaDir, 'agent-security-result.schema.json'),
         githubToken,
         ...securityProfile,
-        timeoutMs: perAgentTimeoutMs,
+        // timeoutMs: perAgentTimeoutMs,
         onLog: logStep,
       }),
       runCodex({
@@ -532,7 +532,7 @@ export async function runPrReviewWorkflow(params: {
         outputSchemaPath: path.join(schemaDir, 'agent-performance-result.schema.json'),
         githubToken,
         ...performanceProfile,
-        timeoutMs: perAgentTimeoutMs,
+        // timeoutMs: perAgentTimeoutMs,
         onLog: logStep,
       }),
     ]);
@@ -635,7 +635,7 @@ Requirements:
     outputSchemaPath: path.resolve(process.cwd(), 'schemas/pr-review-result.schema.json'),
     githubToken,
     ...highReasoningProfile(getActiveBackendId()),
-    timeoutMs: config.prReviewTimeoutMs,
+    // timeoutMs: config.prReviewTimeoutMs,
     onLog: logStep,
     signal,
   };
