@@ -227,7 +227,7 @@ Write your response as a ready-to-post Slack message describing what you did.
         prompt: quickPrompt,
         githubToken: ctx.githubToken,
         ...highReasoningProfile(getActiveBackendId()),
-        timeoutMs: Math.floor(workflowTimeoutMs * 0.5),
+        // timeoutMs: Math.floor(workflowTimeoutMs * 0.5),
         onLog: logStep,
         signal,
       });

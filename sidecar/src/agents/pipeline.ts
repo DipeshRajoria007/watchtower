@@ -223,7 +223,13 @@ export async function runAgentPipeline(params: {
   jobId?: string;
 }): Promise<PipelineResult> {
   const { ctx, slack, logStep, store, jobId } = params;
-  const { agents, maxRetryLoops, perAgentTimeoutMs, totalTimeoutMs, abortOnCriticalFinding } = ctx.pipelineConfig;
+  const {
+    agents,
+    maxRetryLoops,
+    perAgentTimeoutMs: _perAgentTimeoutMs,
+    totalTimeoutMs,
+    abortOnCriticalFinding,
+  } = ctx.pipelineConfig;
 
   const pipelineStart = Date.now();
   const steps: AgentStepResult[] = [];
@@ -307,7 +313,7 @@ export async function runAgentPipeline(params: {
       outputSchemaPath: schemaPath,
       githubToken: ctx.githubToken,
       ...profile,
-      timeoutMs: perAgentTimeoutMs,
+      // timeoutMs: perAgentTimeoutMs,
       onLog: logStep,
     });
 

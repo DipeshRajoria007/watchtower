@@ -79,7 +79,7 @@ ${threadContext}
     prompt,
     model: profile.model,
     reasoningEffort: profile.reasoningEffort,
-    timeoutMs: 30_000,
+    // timeoutMs: 30_000,
     onLog: logStep,
   });
 
