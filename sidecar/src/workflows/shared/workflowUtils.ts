@@ -238,7 +238,8 @@ export async function prepareWorkflowContext(params: {
     });
 
     if (classification.uncertain || !classification.selectedRepo) {
-      cwd = os.tmpdir();
+      repoName = 'newton-web';
+      cwd = resolveWorkspace(config.repoPaths.newtonWeb, task.event.threadTs);
     } else {
       repoName = classification.selectedRepo;
       const baseRepoPath =

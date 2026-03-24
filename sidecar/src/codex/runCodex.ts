@@ -265,22 +265,18 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
     });
 
     const exitCode = request.timeoutMs
-      ? await withTimeout(
-          childDone,
-          request.timeoutMs,
-          () => {
-            timedOut = true;
-            request.onLog?.({
-              stage: 'agent.timeout',
-              message: `${backend.displayName} execution exceeded timeout and was force-killed.`,
-              level: 'ERROR',
-              data: {
-                timeoutMs: request.timeoutMs,
-              },
-            });
-            child.kill('SIGKILL');
-          }
-        )
+      ? await withTimeout(childDone, request.timeoutMs, () => {
+          timedOut = true;
+          request.onLog?.({
+            stage: 'agent.timeout',
+            message: `${backend.displayName} execution exceeded timeout and was force-killed.`,
+            level: 'ERROR',
+            data: {
+              timeoutMs: request.timeoutMs,
+            },
+          });
+          child.kill('SIGKILL');
+        })
       : await childDone;
 
     request.onLog?.({
@@ -295,31 +291,36 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
     });
 
     let lastMessage = '';
-    try {
-      lastMessage = await fs.readFile(outputPath, 'utf8');
-      request.onLog?.({
-        stage: 'agent.output.read',
-        message: `Read deterministic final output file from ${backend.displayName}.`,
-        data: {
-          outputPath,
-          bytes: Buffer.byteLength(lastMessage),
-        },
-      });
-    } catch {
-      // Output file not written — fall back to captured stdout (e.g. Claude Code
-      // writes JSON to stdout rather than a file).
+    // Claude Code writes JSON to stdout (--output-format json), not to a file.
+    // Skip the file read entirely for backends that use stdout.
+    if (backend.id === 'claude-code') {
       lastMessage = stdout;
-      request.onLog?.({
-        stage: 'agent.output.missing',
-        message: lastMessage
-          ? `${backend.displayName} output file missing; falling back to stdout.`
-          : `${backend.displayName} final output file was not readable.`,
-        level: 'WARN',
-        data: {
-          outputPath,
-          stdoutFallback: Boolean(lastMessage),
-        },
-      });
+    } else {
+      try {
+        lastMessage = await fs.readFile(outputPath, 'utf8');
+        request.onLog?.({
+          stage: 'agent.output.read',
+          message: `Read deterministic final output file from ${backend.displayName}.`,
+          data: {
+            outputPath,
+            bytes: Buffer.byteLength(lastMessage),
+          },
+        });
+      } catch {
+        // Output file not written — fall back to captured stdout.
+        lastMessage = stdout;
+        request.onLog?.({
+          stage: 'agent.output.missing',
+          message: lastMessage
+            ? `${backend.displayName} output file missing; falling back to stdout.`
+            : `${backend.displayName} final output file was not readable.`,
+          level: 'WARN',
+          data: {
+            outputPath,
+            stdoutFallback: Boolean(lastMessage),
+          },
+        });
+      }
     }
 
     const parsedOutput = backend.parseOutput(lastMessage);

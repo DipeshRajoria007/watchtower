@@ -165,6 +165,24 @@ export function diagnoseFailure(input: {
     };
   }
 
+  // --- Workspace / repository errors ---
+
+  if (
+    haystack.includes('not a git repository') ||
+    haystack.includes('coder-empty-output') ||
+    (haystack.includes('coder') && haystack.includes('empty_output'))
+  ) {
+    return {
+      errorKind: 'REPO_NOT_FOUND',
+      summary: 'Agents ran without a valid git repository — no code changes were possible.',
+      actions: [
+        'Check that the repo classifier resolved a valid repository (look for workflow.repo.classified in logs).',
+        'Ensure the target repo path exists and is accessible.',
+        'Retry and mention the repo name explicitly (e.g., "in newton-web").',
+      ],
+    };
+  }
+
   // --- Generic error patterns ---
 
   if (haystack.includes('timeout') || haystack.includes('timed out')) {

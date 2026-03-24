@@ -320,7 +320,33 @@ export async function runAgentPipeline(params: {
     const durationMs = Date.now() - agentStart;
     const output = result.parsedJson ?? {};
     const findings = extractFindings(output);
-    const status = result.ok ? determineStepStatus(output, findings) : 'failed';
+    let status = result.ok ? determineStepStatus(output, findings) : 'failed';
+
+    // Validate coder actually produced changes — if it "passed" but has no
+    // branch, no PR, and no files changed, mark it as failed so we don't
+    // waste time running reviewer/verifier on nothing.
+    if (role === 'coder' && status === 'passed') {
+      const hasBranch = Boolean(output.branch);
+      const hasPr = Boolean(output.prUrl);
+      const hasFiles = Array.isArray(output.filesChanged) && output.filesChanged.length > 0;
+      const hasSummary = typeof output.summary === 'string' && output.summary.length > 20;
+      if (!hasBranch && !hasPr && !hasFiles && !hasSummary) {
+        status = 'failed';
+        findings.push({
+          severity: 'critical',
+          category: 'coder-empty-output',
+          message:
+            'Coder agent produced no branch, PR, file changes, or meaningful summary. Likely ran without repository access.',
+          suggestion: 'Ensure the coder runs in a valid git worktree with repository access.',
+        });
+        logStep({
+          stage: 'pipeline.agent.coder.empty_output',
+          message: 'Coder passed but produced no tangible output — marking as failed.',
+          level: 'ERROR',
+          data: { hasBranch, hasPr, hasFiles, hasSummary },
+        });
+      }
+    }
 
     const stepResult: AgentStepResult = {
       role,
