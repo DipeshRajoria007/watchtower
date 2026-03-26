@@ -215,6 +215,24 @@ export async function waitForApproval(params: {
   }
 }
 
+function buildPipelineIntroMessage(agents: AgentRole[]): string {
+  const hasPlanner = agents.includes('planner');
+  const hasCoder = agents.includes('coder');
+  const hasReviewer = agents.includes('reviewer');
+  const hasVerifier = agents.includes('verifier');
+
+  if (hasPlanner) {
+    return "On it \u2014 planning the approach first, then I'll code it up, get it reviewed, and verify everything works.";
+  }
+  if (hasCoder && (hasReviewer || hasVerifier)) {
+    return 'Plan approved \u2014 coding it up, then review and verification.';
+  }
+  if (hasCoder) {
+    return 'Plan approved \u2014 starting implementation.';
+  }
+  return `Running ${agents.join(', ')}.`;
+}
+
 export async function runAgentPipeline(params: {
   ctx: AgentContext;
   slack: WebClient;
@@ -257,10 +275,7 @@ export async function runAgentPipeline(params: {
     data: { agents, maxRetryLoops, totalTimeoutMs },
   });
 
-  const hasPlanner = agents.includes('planner');
-  const introText = hasPlanner
-    ? `On it — planning the approach first, then I'll code it up, get it reviewed, and verify everything works.`
-    : `Plan approved — coding it up, then review and verification.`;
+  const introText = buildPipelineIntroMessage(agents);
   await postSlackProgress({ slack, ctx, text: introText });
 
   // Track plan message so we can update it with strikethroughs during execution
