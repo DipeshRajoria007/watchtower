@@ -17,6 +17,7 @@ import { getBackend } from '../backends/registry.js';
 import { runAgentPipeline, formatPlanMessage, waitForApproval } from '../agents/pipeline.js';
 import { resolveWorkspace } from '../workspaces/workspaceManager.js';
 import { createPrFromWorkspace } from '../github/postPipelinePr.js';
+import { fetchUnresolvedReviewThreadCount } from '../github/prReviewComments.js';
 import type { PipelineStore } from '../agents/pipeline.js';
 import type { PipelineConfig } from '../agents/types.js';
 import { prepareWorkflowContext, sanitizeOwnerSummary, extractReplyFromCodexResult } from './shared/workflowUtils.js';
@@ -203,6 +204,55 @@ export async function runImplementationWorkflow(params: {
         message: 'Planner says no code changes needed — executing as quick action (no approval, no pipeline).',
         data: { plan: plannerOutput.plan },
       });
+
+      // For merge requests: check for unresolved review comments before proceeding
+      const mergeIntent = /\bmerge\b/i.test(task.event.text);
+      if (mergeIntent && task.prContext && ctx.githubToken) {
+        const { unresolvedCount } = await fetchUnresolvedReviewThreadCount({
+          owner: task.prContext.owner,
+          repo: task.prContext.repo,
+          pullNumber: task.prContext.number,
+          githubToken: ctx.githubToken,
+        });
+
+        if (unresolvedCount > 0) {
+          const confirmMsg = `This PR has ${unresolvedCount} unresolved review comment${unresolvedCount > 1 ? 's' : ''}. Should I still merge? Reply *yes* to proceed or *no* to cancel.`;
+          const confirmResult = await slack.chat.postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: confirmMsg,
+          });
+
+          if (confirmResult.ts) {
+            const approval = await waitForApproval({
+              slack,
+              channelId: task.event.channelId,
+              threadTs: task.event.threadTs,
+              triggerUserId: task.event.userId,
+              approvalPromptTs: confirmResult.ts,
+              logStep: logStep ?? (() => {}),
+            });
+
+            if (!approval.approved) {
+              await slack.chat
+                .postMessage({
+                  channel: task.event.channelId,
+                  thread_ts: task.event.threadTs,
+                  text: 'Got it, skipping the merge.',
+                })
+                .catch(() => {});
+
+              return {
+                workflow: 'IMPLEMENTATION',
+                status: 'SKIPPED',
+                message: 'Merge cancelled — unresolved review comments.',
+                notifyDesktop: false,
+                slackPosted: true,
+              };
+            }
+          }
+        }
+      }
 
       const quickPrompt = `
 ${buildMentionSystemPrompt({ task, workflow: 'IMPLEMENTATION' })}
