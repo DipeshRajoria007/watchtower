@@ -190,36 +190,19 @@ function formatSlackReviewSummary(
     return `*PR Review Complete* — No actionable findings. Good to go. ✅\n${prUrl}`;
   }
 
-  const bySeverity = new Map<string, Array<{ role: string; finding: AgentFinding }>>();
-  for (const { role, findings } of findingsByRole) {
-    for (const f of findings) {
-      const list = bySeverity.get(f.severity) ?? [];
-      list.push({ role, finding: f });
-      bySeverity.set(f.severity, list);
-    }
+  const severityOrder = ['critical', 'high', 'medium', 'low', 'info'];
+  const counts = new Map<string, number>();
+  for (const f of allFindings) {
+    counts.set(f.severity, (counts.get(f.severity) ?? 0) + 1);
   }
 
-  const severityOrder = ['critical', 'high', 'medium', 'low', 'info'];
-  const emoji: Record<string, string> = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵', info: 'ℹ️' };
-  const lines: string[] = [];
+  const breakdown = severityOrder
+    .filter(s => (counts.get(s) ?? 0) > 0)
+    .map(s => `${counts.get(s)} ${s}`)
+    .join(', ');
 
   const verdict = reviewEvent === 'APPROVE' ? '✅' : reviewEvent === 'REQUEST_CHANGES' ? '🚫' : '💬';
-  lines.push(`*PR Review Complete* — ${allFindings.length} finding(s) ${verdict}`);
-
-  for (const severity of severityOrder) {
-    const items = bySeverity.get(severity);
-    if (!items || items.length === 0) continue;
-    lines.push(
-      `\n*${emoji[severity] ?? ''} ${severity.charAt(0).toUpperCase() + severity.slice(1)} (${items.length})*`,
-    );
-    for (const { role, finding } of items) {
-      const loc = finding.file ? `\`${finding.file}${finding.line ? `:${finding.line}` : ''}\`` : '';
-      lines.push(`• ${loc ? `${loc} — ` : ''}${finding.message} _[${role}]_`);
-    }
-  }
-
-  lines.push(`\n${prUrl}`);
-  return lines.join('\n');
+  return `*PR Review Complete* — ${allFindings.length} comments posted on PR (${breakdown}) ${verdict}\n${prUrl}`;
 }
 
 const NO_NEW_CHANGES_TEXT =
