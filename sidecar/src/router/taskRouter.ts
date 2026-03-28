@@ -10,6 +10,7 @@ import type {
 } from '../types/contracts.js';
 import type { JobStore } from '../state/jobStore.js';
 import { runDevAssistWorkflow } from '../workflows/devAssistWorkflow.js';
+import { runDeployWorkflow } from '../workflows/deployWorkflow.js';
 import { runImplementationWorkflow } from '../workflows/implementationWorkflow.js';
 import { runInformationalWorkflow } from '../workflows/informationalWorkflow.js';
 import { runConversationalWorkflow } from '../workflows/conversationalWorkflow.js';
@@ -38,6 +39,11 @@ export async function routeTask(params: {
   // DEV_ASSIST is deterministic (explicit wt/ prefix or natural alias) — route immediately.
   if (task.intent === 'DEV_ASSIST') {
     return runDevAssistWorkflow({ task, config, slack, store, logStep });
+  }
+
+  // DEPLOY is deterministic (deploy + prod/app reference) — route before AI classifier.
+  if (task.intent === 'DEPLOY') {
+    return runDeployWorkflow({ task, config, slack, logStep, signal });
   }
 
   // Presence pings: cheap regex check, skip the AI classifier entirely.

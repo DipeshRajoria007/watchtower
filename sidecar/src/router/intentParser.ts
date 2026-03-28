@@ -3,6 +3,31 @@ import { hasDevAssistPrefix, hasNaturalDevAssistAlias } from './devAssistParser.
 
 const GITHUB_PR_REGEX = /https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)/g;
 
+/**
+ * Deterministic check: does the message ask to deploy newton-web to production?
+ * This runs before the AI classifier so deploy requests are never misrouted.
+ */
+export function isDeployRequest(text: string): boolean {
+  const normalized = text
+    .replace(/<@[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .trim();
+
+  // Must contain a deploy verb
+  const hasDeployVerb = /\b(deploy|ship|release|push to prod|push prod)\b/.test(normalized);
+  if (!hasDeployVerb) return false;
+
+  // Must reference production target
+  const hasProdTarget = /\b(prod|production)\b/.test(normalized);
+  // Must reference the app (or be unambiguous enough with just "deploy prod")
+  const hasAppRef = /\b(newton[- ]?web|newton[- ]?school|frontend)\b/.test(normalized);
+
+  // "deploy to prod" / "deploy prod" is unambiguous enough even without app name
+  // "deploy newton-web" without "prod" is also valid (prod is the only deploy target)
+  return hasProdTarget || hasAppRef;
+}
+
 export function detectMention(
   text: string,
   config: AppConfig,
@@ -67,6 +92,11 @@ function inferIntent(
   // Natural-language status/capability prompts should route to dev-assist as lightweight aliases.
   if (mention.detected && hasNaturalDevAssistAlias(event.text ?? '')) {
     return 'DEV_ASSIST';
+  }
+
+  // Deterministic deploy detection — routed before the AI classifier.
+  if (mention.detected && isDeployRequest(event.text ?? '')) {
+    return 'DEPLOY';
   }
 
   // Intent classification for PR_REVIEW vs OWNER_AUTOPILOT is handled by the
