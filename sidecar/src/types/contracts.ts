@@ -7,6 +7,7 @@ export type WorkflowIntent =
   | 'CONVERSATIONAL'
   | 'NONE'
   | 'DEV_ASSIST'
+  | 'DEPLOY'
   | 'UNKNOWN';
 export type WorkflowStatus = 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED' | 'CANCELLED';
 export type JobLogLevel = 'INFO' | 'WARN' | 'ERROR';
