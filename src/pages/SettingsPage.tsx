@@ -720,16 +720,28 @@ export function SettingsPage({
               </label>
 
               <label className="field">
-                <span>Core-Dev Slack User IDs</span>
+                <span>Core-Dev User Group</span>
+                <input
+                  type="text"
+                  value={settings.coreDevSlackUserGroup}
+                  onChange={event => updateSettings({ coreDevSlackUserGroup: event.target.value })}
+                  placeholder="core-dev"
+                />
+                <small className="field-hint">
+                  Slack user group handle (e.g. &quot;core-dev&quot;). Members resolved automatically. Owners always
+                  included. Refreshes every 30 min.
+                </small>
+              </label>
+
+              <label className="field">
+                <span>Core-Dev User IDs (override)</span>
                 <input
                   type="text"
                   value={settings.coreDevSlackUserIds}
                   onChange={event => updateSettings({ coreDevSlackUserIds: event.target.value })}
                   placeholder="U01234567,U07654321"
                 />
-                <small className="field-hint">
-                  Members who can approve plans, deploy, and merge. Owners are always included automatically.
-                </small>
+                <small className="field-hint">Optional manual IDs merged with the user group above.</small>
               </label>
 
               <label className="field">
