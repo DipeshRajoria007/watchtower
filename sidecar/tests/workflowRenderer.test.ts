@@ -6,6 +6,7 @@ const config: AppConfig = {
   platformPolicy: 'macos_only',
   bundleTargets: ['app', 'dmg'],
   ownerSlackUserIds: ['UOWNER1'],
+  coreDevSlackUserIds: ['UOWNER1'],
   botUserId: 'UBOT1',
   slackBotToken: 'xoxb-test',
   slackAppToken: 'xapp-test',
@@ -38,12 +39,14 @@ const task: NormalizedTask = {
   mentionDetected: true,
   mentionType: 'bot',
   isOwnerAuthor: false,
+  isCoreDevAuthor: false,
   intent: 'UNKNOWN',
 };
 
 describe('renderPromptTemplate', () => {
   it('substitutes all template variables', () => {
-    const template = 'User {{user_id}} in channel {{channel_id}} said: {{user_message}}. Web: {{repo_web}}, API: {{repo_api}}';
+    const template =
+      'User {{user_id}} in channel {{channel_id}} said: {{user_message}}. Web: {{repo_web}}, API: {{repo_api}}';
     const result = renderPromptTemplate(template, task, config);
     expect(result).toBe('User U789 in channel C123 said: deploy the frontend. Web: /code/web, API: /code/api');
   });

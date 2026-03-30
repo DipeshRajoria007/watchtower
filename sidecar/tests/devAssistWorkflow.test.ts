@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, expect, it, vi } from 'vitest';
 import { runDevAssistWorkflow } from '../src/workflows/devAssistWorkflow.js';
 import type { AppConfig, NormalizedTask } from '../src/types/contracts.js';
@@ -6,6 +7,7 @@ const config: AppConfig = {
   platformPolicy: 'macos_only',
   bundleTargets: ['app', 'dmg'],
   ownerSlackUserIds: ['UOWNER1'],
+  coreDevSlackUserIds: ['UOWNER1'],
   botUserId: 'UBOT1',
   slackBotToken: 'xoxb-test',
   slackAppToken: 'xapp-test',
@@ -45,6 +47,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -87,6 +90,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -133,6 +137,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -193,6 +198,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -251,6 +257,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -317,6 +324,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -381,6 +389,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -438,6 +447,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -499,6 +509,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -556,6 +567,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -613,6 +625,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -733,6 +746,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -801,6 +815,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -881,6 +896,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -955,6 +971,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -1027,6 +1044,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -1104,6 +1122,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -1146,6 +1165,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -1193,6 +1213,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 
@@ -1235,6 +1256,7 @@ describe('devAssistWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'DEV_ASSIST',
     };
 

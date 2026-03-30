@@ -20,6 +20,7 @@ const settingsSchema = z.object({
   agent_backend: z.string().default('codex'),
   pm_slack_user_ids: z.string().default(''),
   pm_task_timeout_ms: z.number().int().positive().default(600000),
+  core_dev_slack_user_ids: z.string().default(''),
 });
 
 type SettingsRow = z.infer<typeof settingsSchema>;
@@ -80,7 +81,8 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
           COALESCE(multi_agent_enabled, 0) AS multi_agent_enabled,
           COALESCE(agent_backend, 'codex') AS agent_backend,
           COALESCE(pm_slack_user_ids, '') AS pm_slack_user_ids,
-          COALESCE(pm_task_timeout_ms, 600000) AS pm_task_timeout_ms
+          COALESCE(pm_task_timeout_ms, 600000) AS pm_task_timeout_ms,
+          COALESCE(core_dev_slack_user_ids, '') AS core_dev_slack_user_ids
          FROM app_settings
          WHERE id = 1
          LIMIT 1`,
@@ -116,6 +118,7 @@ export function readAgentBackend(dbPath: string): AgentBackendId {
 
 function mapSettingsToConfig(settings: SettingsRow): AppConfig {
   const ownerSlackUserIds = parseOwnerIds(settings.owner_slack_user_ids);
+  const coreDevSlackUserIds = [...new Set([...parseOwnerIds(settings.core_dev_slack_user_ids), ...ownerSlackUserIds])];
   const bugFixChannelIds = parseChannelIds(settings.bugs_and_updates_channel_id);
 
   const missingFields: string[] = [];
@@ -140,6 +143,7 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
     platformPolicy: 'macos_only',
     bundleTargets: ['app', 'dmg'],
     ownerSlackUserIds,
+    coreDevSlackUserIds,
     botUserId: settings.bot_user_id.trim(),
     slackBotToken: settings.slack_bot_token.trim(),
     slackAppToken: settings.slack_app_token.trim(),

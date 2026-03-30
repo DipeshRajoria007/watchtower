@@ -6,6 +6,7 @@ const config: AppConfig = {
   platformPolicy: 'macos_only',
   bundleTargets: ['app', 'dmg'],
   ownerSlackUserIds: ['UOWNER1'],
+  coreDevSlackUserIds: ['UOWNER1'],
   botUserId: 'UBOT1',
   slackBotToken: 'xoxb-test',
   slackAppToken: 'xapp-test',
@@ -252,5 +253,27 @@ describe('intentParser', () => {
     expect(task.mentionDetected).toBe(true);
     expect(task.isOwnerAuthor).toBe(true);
     expect(task.intent).toBe('DEV_ASSIST');
+  });
+
+  it('sets isCoreDevAuthor true for owners (owners are always core-dev)', () => {
+    const task = normalizeTask({ ...baseEvent, userId: 'UOWNER1', text: '<@UBOT1> do something' }, config, []);
+    expect(task.isOwnerAuthor).toBe(true);
+    expect(task.isCoreDevAuthor).toBe(true);
+  });
+
+  it('sets isCoreDevAuthor true for core-dev non-owner users', () => {
+    const coreDevConfig = {
+      ...config,
+      coreDevSlackUserIds: ['UOWNER1', 'UCOREDEV1'],
+    };
+    const task = normalizeTask({ ...baseEvent, userId: 'UCOREDEV1', text: '<@UBOT1> do something' }, coreDevConfig, []);
+    expect(task.isOwnerAuthor).toBe(false);
+    expect(task.isCoreDevAuthor).toBe(true);
+  });
+
+  it('sets isCoreDevAuthor false for regular users', () => {
+    const task = normalizeTask({ ...baseEvent, userId: 'URANDOM', text: '<@UBOT1> do something' }, config, []);
+    expect(task.isOwnerAuthor).toBe(false);
+    expect(task.isCoreDevAuthor).toBe(false);
   });
 });

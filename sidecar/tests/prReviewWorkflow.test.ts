@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runPrReviewWorkflow } from '../src/workflows/prReviewWorkflow.js';
 import { runCodex } from '../src/codex/runCodex.js';
@@ -22,6 +23,7 @@ const config: AppConfig = {
   platformPolicy: 'macos_only',
   bundleTargets: ['app', 'dmg'],
   ownerSlackUserIds: ['UOWNER1'],
+  coreDevSlackUserIds: ['UOWNER1'],
   botUserId: 'UBOT1',
   slackBotToken: 'xoxb-test',
   slackAppToken: 'xapp-test',
@@ -69,6 +71,7 @@ describe('prReviewWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'PR_REVIEW',
     };
 
@@ -107,6 +110,7 @@ describe('prReviewWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'PR_REVIEW',
       prContext: {
         url: 'https://github.com/Newton-School/newton-web/pull/123',
@@ -135,7 +139,7 @@ describe('prReviewWorkflow', () => {
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: 'No new commits since the last review. Same diff, same verdict. Push an update and I will rerun.',
-      })
+      }),
     );
   });
 
@@ -164,6 +168,7 @@ describe('prReviewWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'PR_REVIEW',
       prContext: {
         url: 'https://github.com/facebook/react/pull/35961',
@@ -184,7 +189,7 @@ describe('prReviewWorkflow', () => {
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: '<@U_SCOPE> this PR is outside supported review scope. I can review `Newton-School/newton-web` and `Newton-School/newton-api`.',
-      })
+      }),
     );
   });
 
@@ -213,6 +218,7 @@ describe('prReviewWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'PR_REVIEW',
       prContext: {
         url: 'https://github.com/Newton-School/random-repo/pull/11',
@@ -233,7 +239,7 @@ describe('prReviewWorkflow', () => {
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: '<@U_SCOPE2> this PR is outside supported review scope. I can review `Newton-School/newton-web` and `Newton-School/newton-api`.',
-      })
+      }),
     );
   });
 
@@ -276,6 +282,7 @@ describe('prReviewWorkflow', () => {
       mentionDetected: true,
       mentionType: 'bot',
       isOwnerAuthor: false,
+      isCoreDevAuthor: false,
       intent: 'PR_REVIEW',
       prContext: {
         url: 'https://github.com/Newton-School/newton-web/pull/901',
@@ -302,17 +309,17 @@ describe('prReviewWorkflow', () => {
         cwd: '/Users/dipesh/code/newton-web',
         model: 'gpt-5.4',
         reasoningEffort: 'xhigh',
-      })
+      }),
     );
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: 'PR review in progress. I will drop findings here shortly.',
-      })
+      }),
     );
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining('PR review done. Two findings posted on the PR.'),
-      })
+      }),
     );
   });
 });

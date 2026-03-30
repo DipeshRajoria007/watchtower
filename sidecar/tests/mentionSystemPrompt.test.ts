@@ -16,6 +16,7 @@ function makeTask(overrides?: Partial<NormalizedTask>): NormalizedTask {
     mentionDetected: true,
     mentionType: 'bot',
     isOwnerAuthor: false,
+    isCoreDevAuthor: false,
     intent: 'UNKNOWN',
     ...overrides,
   };
@@ -24,7 +25,7 @@ function makeTask(overrides?: Partial<NormalizedTask>): NormalizedTask {
 describe('mentionSystemPrompt', () => {
   it('includes owner execution rule for owner-authored mentions', () => {
     const prompt = buildMentionSystemPrompt({
-      task: makeTask({ isOwnerAuthor: true, intent: 'OWNER_AUTOPILOT' }),
+      task: makeTask({ isOwnerAuthor: true, isCoreDevAuthor: true, intent: 'OWNER_AUTOPILOT' }),
       workflow: 'OWNER_AUTOPILOT',
     });
     expect(prompt).toContain('This request is from the owner. Execute directly');
@@ -38,6 +39,15 @@ describe('mentionSystemPrompt', () => {
     expect(prompt).toContain('Use plain, natural wording.');
     expect(prompt).toContain('No jokes, sarcasm, playful metaphors, or themed tone.');
     expect(prompt).toContain('Do not force technical framing for non-technical prompts.');
+  });
+
+  it('labels core-dev non-owner requests correctly', () => {
+    const prompt = buildMentionSystemPrompt({
+      task: makeTask({ isOwnerAuthor: false, isCoreDevAuthor: true, intent: 'IMPLEMENTATION' }),
+      workflow: 'IMPLEMENTATION',
+    });
+    expect(prompt).toContain('core-dev');
+    expect(prompt).not.toContain('This request is from the owner');
   });
 
   it('forces serious tone instructions for PR-thread context', () => {

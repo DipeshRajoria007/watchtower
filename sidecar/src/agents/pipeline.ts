@@ -163,12 +163,15 @@ export async function waitForApproval(params: {
   slack: WebClient;
   channelId: string;
   threadTs: string;
+  approverUserIds: string[];
   triggerUserId: string;
   approvalPromptTs: string;
   logStep: WorkflowStepLogger;
-}): Promise<{ approved: boolean; userReply: string }> {
-  const { slack, channelId, threadTs, triggerUserId, approvalPromptTs, logStep } = params;
+  botUserId?: string;
+}): Promise<{ approved: boolean; userReply: string; approverId?: string }> {
+  const { slack, channelId, threadTs, approverUserIds, approvalPromptTs, logStep, botUserId } = params;
   const pollIntervalMs = 5_000;
+  const notifiedUsers = new Set<string>();
 
   while (true) {
     await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
@@ -181,37 +184,70 @@ export async function waitForApproval(params: {
       continue;
     }
 
-    // Find messages from the trigger user that are newer than the approval prompt
-    const userReplies = messages.filter(m => m.user === triggerUserId && m.ts > approvalPromptTs);
+    // Find messages newer than the approval prompt, excluding the bot itself
+    const candidateReplies = messages.filter(m => m.ts > approvalPromptTs && m.user !== botUserId);
 
-    if (userReplies.length === 0) continue;
+    for (const reply of candidateReplies) {
+      const text = reply.text.trim();
+      const isApprover = approverUserIds.includes(reply.user);
 
-    const latestReply = userReplies[userReplies.length - 1];
-    const text = latestReply.text.trim();
+      if (APPROVE_PATTERNS.test(text)) {
+        if (!isApprover) {
+          if (!notifiedUsers.has(reply.user)) {
+            notifiedUsers.add(reply.user);
+            logStep({
+              stage: 'pipeline.approval.unauthorized',
+              message: `Non-core-dev user <@${reply.user}> attempted to approve.`,
+              level: 'WARN',
+            });
+            slack.chat
+              .postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                text: `<@${reply.user}> Only core-dev members can approve plans. Waiting for a core-dev member to respond.`,
+              })
+              .catch(() => {});
+          }
+          continue;
+        }
+        logStep({
+          stage: 'pipeline.approval.approved',
+          message: `Core-dev member <@${reply.user}> approved the plan: "${text}"`,
+        });
+        return { approved: true, userReply: text, approverId: reply.user };
+      }
 
-    if (APPROVE_PATTERNS.test(text)) {
-      logStep({
-        stage: 'pipeline.approval.approved',
-        message: `User approved the plan: "${text}"`,
-      });
-      return { approved: true, userReply: text };
+      if (REJECT_PATTERNS.test(text)) {
+        if (!isApprover) {
+          if (!notifiedUsers.has(reply.user)) {
+            notifiedUsers.add(reply.user);
+            slack.chat
+              .postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                text: `<@${reply.user}> Only core-dev members can approve or reject plans.`,
+              })
+              .catch(() => {});
+          }
+          continue;
+        }
+        logStep({
+          stage: 'pipeline.approval.rejected',
+          message: `Core-dev member <@${reply.user}> rejected the plan: "${text}"`,
+        });
+        return { approved: false, userReply: text, approverId: reply.user };
+      }
+
+      // Non-pattern text from an approver = modification feedback (treat as approval with feedback)
+      if (isApprover) {
+        logStep({
+          stage: 'pipeline.approval.feedback',
+          message: `Core-dev member <@${reply.user}> provided feedback: "${text}"`,
+        });
+        return { approved: true, userReply: text, approverId: reply.user };
+      }
+      // Non-pattern text from non-approver — ignore silently
     }
-
-    if (REJECT_PATTERNS.test(text)) {
-      logStep({
-        stage: 'pipeline.approval.rejected',
-        message: `User rejected the plan: "${text}"`,
-      });
-      return { approved: false, userReply: text };
-    }
-
-    // Anything else is modification feedback — treat as approval with feedback
-    // (the caller can append this to context and re-run planner if desired)
-    logStep({
-      stage: 'pipeline.approval.feedback',
-      message: `User provided feedback: "${text}"`,
-    });
-    return { approved: true, userReply: text };
   }
 }
 
@@ -401,12 +437,12 @@ export async function runAgentPipeline(params: {
         });
       }
 
-      // Approval gate: wait for user to confirm the plan before proceeding
+      // Approval gate: wait for a core-dev member to confirm the plan before proceeding
       if (ctx.pipelineConfig.requireApproval && planMessageTs) {
         const approvalPromptTs = await postSlackProgress({
           slack,
           ctx,
-          text: 'Here\'s my plan. Should I go ahead? Reply in this thread:\n• "yes" or "go" — I\'ll start coding\n• "no" or "stop" — I\'ll cancel\n• Or reply with changes you\'d like and I\'ll adjust',
+          text: 'Here\'s my plan. A core-dev member needs to approve before I proceed:\n• "yes" or "go" — I\'ll start coding\n• "no" or "stop" — I\'ll cancel\n• Or reply with changes you\'d like and I\'ll adjust',
         });
 
         if (approvalPromptTs) {
@@ -414,9 +450,11 @@ export async function runAgentPipeline(params: {
             slack,
             channelId: ctx.task.event.channelId,
             threadTs: ctx.task.event.threadTs,
+            approverUserIds: ctx.config.coreDevSlackUserIds,
             triggerUserId: ctx.task.event.userId,
             approvalPromptTs,
             logStep,
+            botUserId: ctx.config.botUserId,
           });
 
           if (!approval.approved) {
