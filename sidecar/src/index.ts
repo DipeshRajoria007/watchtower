@@ -22,6 +22,7 @@ import { SocketSlackClient } from './slack/socketClient.js';
 import { cleanupStaleWorkspaces } from './workspaces/workspaceManager.js';
 import { loadWorkflowTemplates } from './workflows/registry.js';
 import { fetchThreadContext } from './slack/threadContext.js';
+import { resolveUserGroupMembers } from './slack/userGroupResolver.js';
 import { registerActiveJob, unregisterActiveJob } from './state/activeJobs.js';
 import { JobStore } from './state/jobStore.js';
 import type { SlackEventEnvelope, SlackReactionEvent, WorkflowStepLog } from './types/contracts.js';
@@ -977,6 +978,23 @@ async function main(): Promise<void> {
 
   await client.start();
   logger.info('autonomous feed/digest/incident posting disabled; mention-triggered replies only');
+
+  // Resolve core-dev user group members if a group handle is configured
+  if (config.coreDevSlackUserGroup) {
+    const resolveCoreDevGroup = async () => {
+      const members = await resolveUserGroupMembers(client.webClient, config.coreDevSlackUserGroup);
+      if (members.length > 0) {
+        config.coreDevSlackUserIds = [...new Set([...members, ...config.ownerSlackUserIds])];
+        logger.info(
+          { handle: config.coreDevSlackUserGroup, memberCount: config.coreDevSlackUserIds.length },
+          'core-dev user group resolved',
+        );
+      }
+    };
+    await resolveCoreDevGroup();
+    // Refresh every 30 minutes
+    setInterval(resolveCoreDevGroup, 30 * 60 * 1000);
+  }
 
   startMentionCatchup({
     webClient: client.webClient,

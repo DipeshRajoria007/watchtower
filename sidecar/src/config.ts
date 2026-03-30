@@ -21,6 +21,7 @@ const settingsSchema = z.object({
   pm_slack_user_ids: z.string().default(''),
   pm_task_timeout_ms: z.number().int().positive().default(600000),
   core_dev_slack_user_ids: z.string().default(''),
+  core_dev_slack_user_group: z.string().default(''),
 });
 
 type SettingsRow = z.infer<typeof settingsSchema>;
@@ -82,7 +83,8 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
           COALESCE(agent_backend, 'codex') AS agent_backend,
           COALESCE(pm_slack_user_ids, '') AS pm_slack_user_ids,
           COALESCE(pm_task_timeout_ms, 600000) AS pm_task_timeout_ms,
-          COALESCE(core_dev_slack_user_ids, '') AS core_dev_slack_user_ids
+          COALESCE(core_dev_slack_user_ids, '') AS core_dev_slack_user_ids,
+          COALESCE(core_dev_slack_user_group, '') AS core_dev_slack_user_group
          FROM app_settings
          WHERE id = 1
          LIMIT 1`,
@@ -144,6 +146,7 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
     bundleTargets: ['app', 'dmg'],
     ownerSlackUserIds,
     coreDevSlackUserIds,
+    coreDevSlackUserGroup: settings.core_dev_slack_user_group.trim(),
     botUserId: settings.bot_user_id.trim(),
     slackBotToken: settings.slack_bot_token.trim(),
     slackAppToken: settings.slack_app_token.trim(),

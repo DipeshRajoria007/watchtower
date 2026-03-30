@@ -29,6 +29,7 @@ export interface AppConfig {
   bundleTargets: Array<'app' | 'dmg'>;
   ownerSlackUserIds: string[];
   coreDevSlackUserIds: string[];
+  coreDevSlackUserGroup: string;
   botUserId: string;
   slackBotToken: string;
   slackAppToken: string;
