@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runUnknownTaskWorkflow } from '../src/workflows/unknownTaskWorkflow.js';
 import { runCodex } from '../src/codex/runCodex.js';
@@ -17,6 +18,7 @@ const config: AppConfig = {
   platformPolicy: 'macos_only',
   bundleTargets: ['app', 'dmg'],
   ownerSlackUserIds: ['UOWNER1'],
+  coreDevSlackUserIds: ['UOWNER1'],
   botUserId: 'UBOT1',
   slackBotToken: 'xoxb-test',
   slackAppToken: 'xapp-test',
@@ -49,6 +51,7 @@ function makeTask(input: { userId: string; text: string; eventId: string }): Nor
     mentionDetected: true,
     mentionType: 'bot',
     isOwnerAuthor: false,
+    isCoreDevAuthor: false,
     intent: 'UNKNOWN',
   };
 }
@@ -61,7 +64,7 @@ describe('unknownTaskWorkflow', () => {
 
   it('classifies direct chatter and posts a plain reply', async () => {
     vi.mocked(fetchThreadContext).mockResolvedValue([
-      { text: "at least he is better than me right?", user: 'U2', ts: '111.20' },
+      { text: 'at least he is better than me right?', user: 'U2', ts: '111.20' },
     ]);
 
     vi.mocked(runCodex).mockResolvedValue({
@@ -103,28 +106,32 @@ describe('unknownTaskWorkflow', () => {
         model: 'gpt-5.2-codex',
         prompt: expect.stringContaining('Context track: direct_reply'),
         reasoningEffort: 'low',
-      })
+      }),
     );
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining('<@U777>'),
-      })
+      }),
     );
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.not.stringMatching(/\b(pr|bug|ci)\b/i),
-      })
+      }),
     );
     expect(slack.reactions.add).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'eyes',
-      })
+      }),
     );
   });
 
   it('strips joke clauses and keeps neutral reactions in replies', async () => {
     vi.mocked(fetchThreadContext).mockResolvedValue([
-      { text: 'Please review and merge https://github.com/Newton-School/newton-web/pull/7724', user: 'U2', ts: '111.20' },
+      {
+        text: 'Please review and merge https://github.com/Newton-School/newton-web/pull/7724',
+        user: 'U2',
+        ts: '111.20',
+      },
     ]);
 
     vi.mocked(runCodex).mockResolvedValue({
@@ -135,7 +142,8 @@ describe('unknownTaskWorkflow', () => {
       stderr: '',
       lastMessage: '',
       parsedJson: {
-        reply: 'Which proof are we greenlighting here: that 10 is solitary, or did this thread acquire another surprise deliverable?',
+        reply:
+          'Which proof are we greenlighting here: that 10 is solitary, or did this thread acquire another surprise deliverable?',
         reaction: 'skull',
       },
     });
@@ -173,17 +181,17 @@ describe('unknownTaskWorkflow', () => {
         model: 'gpt-5.2-codex',
         prompt: expect.stringContaining('No jokes, sarcasm, banter, or themed tone.'),
         reasoningEffort: 'low',
-      })
+      }),
     );
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: '<@U779> Which proof are we greenlighting here: that 10 is solitary?',
-      })
+      }),
     );
     expect(slack.reactions.add).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'eyes',
-      })
+      }),
     );
   });
 
@@ -230,22 +238,22 @@ describe('unknownTaskWorkflow', () => {
         model: 'gpt-5.2-codex',
         prompt: expect.stringContaining('Context track: task_clarifier'),
         reasoningEffort: 'low',
-      })
+      }),
     );
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining('exact outcome'),
-      })
+      }),
     );
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.not.stringMatching(/\b(pr|bug|ci)\b/i),
-      })
+      }),
     );
     expect(slack.reactions.add).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'memo',
-      })
+      }),
     );
   });
 });

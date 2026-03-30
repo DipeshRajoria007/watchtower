@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runAgentPipeline } from '../src/agents/pipeline.js';
 import { runCodex } from '../src/codex/runCodex.js';
@@ -13,6 +14,7 @@ const config: AppConfig = {
   platformPolicy: 'macos_only',
   bundleTargets: ['app', 'dmg'],
   ownerSlackUserIds: ['UOWNER1'],
+  coreDevSlackUserIds: ['UOWNER1'],
   botUserId: 'UBOT1',
   slackBotToken: 'xoxb-test',
   slackAppToken: 'xapp-test',
@@ -45,6 +47,7 @@ const task: NormalizedTask = {
   mentionDetected: true,
   mentionType: 'bot',
   isOwnerAuthor: false,
+  isCoreDevAuthor: false,
   intent: 'PR_REVIEW',
 };
 
@@ -146,17 +149,32 @@ describe('agentPipeline', () => {
     vi.mocked(runCodex)
       // planner
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { plan: ['fix it'], risks: [], affectedFiles: [], scope: 'small', requiresCodeChanges: true },
       })
       // coder
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { filesChanged: ['a.ts'], summary: 'Fixed', testsAdded: [], branch: 'codex/fix' },
       })
       // reviewer (rejects)
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: {
           approved: false,
           findings: [{ severity: 'high', category: 'logic', message: 'Missing edge case' }],
@@ -165,12 +183,27 @@ describe('agentPipeline', () => {
       })
       // coder retry
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
-        parsedJson: { filesChanged: ['a.ts'], summary: 'Fixed with edge case', testsAdded: ['a.test.ts'], branch: 'codex/fix' },
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: {
+          filesChanged: ['a.ts'],
+          summary: 'Fixed with edge case',
+          testsAdded: ['a.test.ts'],
+          branch: 'codex/fix',
+        },
       })
       // reviewer retry (approves)
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { approved: true, findings: [], blockers: [] },
       });
 
@@ -192,28 +225,61 @@ describe('agentPipeline', () => {
     vi.mocked(runCodex)
       // planner
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { plan: ['fix it'], risks: [], affectedFiles: [], scope: 'small', requiresCodeChanges: true },
       })
       // coder
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { filesChanged: ['a.ts'], summary: 'Fixed', testsAdded: [], branch: 'codex/fix' },
       })
       // reviewer rejects
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
-        parsedJson: { approved: false, findings: [{ severity: 'high', category: 'logic', message: 'Bad' }], blockers: ['Bad'] },
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: {
+          approved: false,
+          findings: [{ severity: 'high', category: 'logic', message: 'Bad' }],
+          blockers: ['Bad'],
+        },
       })
       // coder retry
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { filesChanged: ['a.ts'], summary: 'Retry', testsAdded: [], branch: 'codex/fix' },
       })
       // reviewer rejects again (max loops exhausted)
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
-        parsedJson: { approved: false, findings: [{ severity: 'high', category: 'logic', message: 'Still bad' }], blockers: ['Still bad'] },
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: {
+          approved: false,
+          findings: [{ severity: 'high', category: 'logic', message: 'Still bad' }],
+          blockers: ['Still bad'],
+        },
       });
 
     const result = await runAgentPipeline({ ctx, slack: slack as any, logStep });
@@ -233,12 +299,22 @@ describe('agentPipeline', () => {
     vi.mocked(runCodex)
       // planner
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { plan: ['review'], risks: [], affectedFiles: [], scope: 'small', requiresCodeChanges: false },
       })
       // security (critical finding)
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: {
           approved: false,
           findings: [{ severity: 'critical', category: 'xss', message: 'XSS vulnerability found' }],
@@ -264,11 +340,21 @@ describe('agentPipeline', () => {
 
     vi.mocked(runCodex)
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { plan: ['test'], risks: [], affectedFiles: [], scope: 'small', requiresCodeChanges: false },
       })
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { approved: true, findings: [], blockers: [] },
       });
 
@@ -287,11 +373,21 @@ describe('agentPipeline', () => {
   it('aggregates findings from all agents', async () => {
     vi.mocked(runCodex)
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { plan: ['test'], risks: ['risk1'], affectedFiles: [], scope: 'small', requiresCodeChanges: false },
       })
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: {
           approved: true,
           findings: [
@@ -316,11 +412,21 @@ describe('agentPipeline', () => {
   it('assigns appropriate model profiles per agent role', async () => {
     vi.mocked(runCodex)
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { plan: ['test'], risks: [], affectedFiles: [], scope: 'small', requiresCodeChanges: false },
       })
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { approved: true, findings: [], blockers: [] },
       });
 
@@ -331,13 +437,9 @@ describe('agentPipeline', () => {
     });
 
     // Planner uses lightweight profile
-    expect(runCodex).toHaveBeenCalledWith(
-      expect.objectContaining({ reasoningEffort: 'low' }),
-    );
+    expect(runCodex).toHaveBeenCalledWith(expect.objectContaining({ reasoningEffort: 'low' }));
     // Reviewer uses high-reasoning profile
-    expect(runCodex).toHaveBeenCalledWith(
-      expect.objectContaining({ reasoningEffort: 'xhigh' }),
-    );
+    expect(runCodex).toHaveBeenCalledWith(expect.objectContaining({ reasoningEffort: 'xhigh' }));
   });
 
   it('handles total timeout across multi-step pipeline', async () => {
@@ -351,19 +453,34 @@ describe('agentPipeline', () => {
     // First agent resolves but introduces a delay to trigger timeout before third agent
     vi.mocked(runCodex)
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { plan: ['test'], risks: [], affectedFiles: [], scope: 'small', requiresCodeChanges: false },
       })
       .mockImplementationOnce(async () => {
         // Introduce a delay that exceeds the total timeout
         await new Promise(resolve => setTimeout(resolve, 100));
         return {
-          ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+          ok: true,
+          exitCode: 0,
+          timedOut: false,
+          stdout: '',
+          stderr: '',
+          lastMessage: '',
           parsedJson: { approved: true, findings: [], blockers: [] },
         };
       })
       .mockResolvedValueOnce({
-        ok: true, exitCode: 0, timedOut: false, stdout: '', stderr: '', lastMessage: '',
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
         parsedJson: { approved: true, findings: [], overallSeverity: 'clean' },
       });
 

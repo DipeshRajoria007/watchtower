@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -17,6 +18,7 @@ const config: AppConfig = {
   platformPolicy: 'macos_only',
   bundleTargets: ['app', 'dmg'],
   ownerSlackUserIds: ['UOWNER1'],
+  coreDevSlackUserIds: ['UOWNER1'],
   botUserId: 'UBOT1',
   slackBotToken: 'xoxb-test',
   slackAppToken: 'xapp-test',
@@ -74,9 +76,8 @@ describe('launchpadIntake', () => {
       },
     };
 
-    const enqueue = vi.fn<
-      (event: SlackEventEnvelope, client: typeof webClient, source: 'launchpad') => Promise<void>
-    >()
+    const enqueue = vi
+      .fn<(event: SlackEventEnvelope, client: typeof webClient, source: 'launchpad') => Promise<void>>()
       .mockResolvedValue(undefined);
 
     await runLaunchpadRequestPoller({
@@ -146,9 +147,8 @@ describe('launchpadIntake', () => {
       },
     };
 
-    const enqueue = vi.fn<
-      (event: SlackEventEnvelope, client: typeof webClient, source: 'launchpad') => Promise<void>
-    >()
+    const enqueue = vi
+      .fn<(event: SlackEventEnvelope, client: typeof webClient, source: 'launchpad') => Promise<void>>()
       .mockResolvedValue(undefined);
 
     await runLaunchpadRequestPoller({
