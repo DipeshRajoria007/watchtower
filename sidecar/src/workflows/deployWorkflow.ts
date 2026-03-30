@@ -60,9 +60,9 @@ export async function runDeployWorkflow(params: {
     message: 'Running deploy workflow for newton-web production.',
   });
 
-  // Only owners can trigger deploys
-  if (!config.ownerSlackUserIds.includes(task.event.userId)) {
-    const msg = 'Deploy to production is restricted to project owners.';
+  // Only core-dev members can trigger deploys
+  if (!config.coreDevSlackUserIds.includes(task.event.userId)) {
+    const msg = 'Deploy to production is restricted to core-dev members.';
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,

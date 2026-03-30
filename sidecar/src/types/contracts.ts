@@ -28,6 +28,7 @@ export interface AppConfig {
   platformPolicy: 'macos_only';
   bundleTargets: Array<'app' | 'dmg'>;
   ownerSlackUserIds: string[];
+  coreDevSlackUserIds: string[];
   botUserId: string;
   slackBotToken: string;
   slackAppToken: string;
@@ -103,6 +104,7 @@ export interface NormalizedTask {
   mentionDetected: boolean;
   mentionType: 'bot' | 'owner' | 'none';
   isOwnerAuthor: boolean;
+  isCoreDevAuthor: boolean;
   intent: WorkflowIntent;
   prContext?: PrContext;
 }

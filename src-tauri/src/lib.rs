@@ -289,6 +289,7 @@ struct AppSettings {
     agent_backend: String,
     pm_slack_user_ids: String,
     pm_task_timeout_ms: i64,
+    core_dev_slack_user_ids: String,
 }
 
 #[derive(Serialize)]
@@ -338,6 +339,7 @@ impl Default for AppSettings {
             agent_backend: "codex".to_string(),
             pm_slack_user_ids: String::new(),
             pm_task_timeout_ms: 600_000,
+            core_dev_slack_user_ids: String::new(),
         }
     }
 }
@@ -1866,6 +1868,7 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
 
     let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN pm_slack_user_ids TEXT NOT NULL DEFAULT ''", []);
     let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN pm_task_timeout_ms INTEGER NOT NULL DEFAULT 600000", []);
+    let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN core_dev_slack_user_ids TEXT NOT NULL DEFAULT ''", []);
 
     Ok(())
 }
@@ -1945,7 +1948,8 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
               failure_notification_audio_custom_path,
               agent_backend,
               COALESCE(pm_slack_user_ids, '') as pm_slack_user_ids,
-              COALESCE(pm_task_timeout_ms, 600000) as pm_task_timeout_ms
+              COALESCE(pm_task_timeout_ms, 600000) as pm_task_timeout_ms,
+              COALESCE(core_dev_slack_user_ids, '') as core_dev_slack_user_ids
              FROM app_settings
              WHERE id = 1
              LIMIT 1",
@@ -1980,6 +1984,7 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
                 agent_backend: row.get(22)?,
                 pm_slack_user_ids: row.get(23)?,
                 pm_task_timeout_ms: row.get(24)?,
+                core_dev_slack_user_ids: row.get(25)?,
             })
         })
         .optional()
@@ -2019,8 +2024,9 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               agent_backend,
               pm_slack_user_ids,
               pm_task_timeout_ms,
+              core_dev_slack_user_ids,
               updated_at
-             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
               slack_bot_token=excluded.slack_bot_token,
               slack_app_token=excluded.slack_app_token,
@@ -2047,6 +2053,7 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               agent_backend=excluded.agent_backend,
               pm_slack_user_ids=excluded.pm_slack_user_ids,
               pm_task_timeout_ms=excluded.pm_task_timeout_ms,
+              core_dev_slack_user_ids=excluded.core_dev_slack_user_ids,
               updated_at=excluded.updated_at",
             params![
                 settings.slack_bot_token.trim(),
@@ -2074,6 +2081,7 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
                 settings.agent_backend.trim(),
                 settings.pm_slack_user_ids.trim(),
                 settings.pm_task_timeout_ms,
+                settings.core_dev_slack_user_ids.trim(),
                 Utc::now().to_rfc3339(),
             ],
         )

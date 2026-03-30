@@ -523,7 +523,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
   }
 
   // Policy engine check — block requests that violate critical or non-master rules
-  const policyDecision = evaluatePolicy(event.userId, event.text, config.ownerSlackUserIds);
+  const policyDecision = evaluatePolicy(event.userId, event.text, config.coreDevSlackUserIds);
   if (!policyDecision.allowed) {
     logger.warn(
       { eventId: event.eventId, userId: event.userId, tier: policyDecision.tier, ruleId: policyDecision.ruleId },

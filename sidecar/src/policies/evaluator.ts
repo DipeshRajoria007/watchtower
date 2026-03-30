@@ -3,7 +3,7 @@ import path from 'node:path';
 import { parsePolicyMarkdown } from './markdownParser.js';
 import { isUserBanned, recordViolation } from './bans.js';
 import { logger } from '../logging/logger.js';
-import type { PolicyFile, PolicyRule } from './markdownParser.js';
+import type { PolicyRule } from './markdownParser.js';
 
 export type PolicyDecision =
   | { allowed: true }
@@ -46,7 +46,7 @@ export function loadPolicies(policiesDir?: string): void {
   policyLoaded = true;
   logger.info(
     { criticalDenyCount: criticalDenyRules.length, nonMasterCount: nonMasterRules.length },
-    'policy engine loaded'
+    'policy engine loaded',
   );
 }
 
@@ -60,13 +60,9 @@ function matchesRule(text: string, rule: PolicyRule): boolean {
  *
  * @param userId - The Slack user ID
  * @param requestText - The raw message text from the user
- * @param ownerUserIds - Configured owner user IDs (exempt from non-master rules)
+ * @param privilegedUserIds - Core-dev (and owner) user IDs exempt from non-master rules
  */
-export function evaluatePolicy(
-  userId: string,
-  requestText: string,
-  ownerUserIds: string[]
-): PolicyDecision {
+export function evaluatePolicy(userId: string, requestText: string, privilegedUserIds: string[]): PolicyDecision {
   // If policies aren't loaded, allow everything
   if (!policyLoaded) {
     return { allowed: true };
@@ -94,8 +90,8 @@ export function evaluatePolicy(
     }
   }
 
-  // Non-master rules apply only to non-owner users
-  const isOwner = ownerUserIds.includes(userId);
+  // Non-master rules apply only to non-privileged users (not core-dev/owner)
+  const isOwner = privilegedUserIds.includes(userId);
   if (!isOwner) {
     for (const rule of nonMasterRules) {
       if (matchesRule(requestText, rule)) {

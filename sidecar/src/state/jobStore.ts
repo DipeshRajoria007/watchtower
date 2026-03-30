@@ -274,6 +274,11 @@ export class JobStore {
     } catch {
       /* column already exists */
     }
+    try {
+      this.db.exec(`ALTER TABLE app_settings ADD COLUMN core_dev_slack_user_ids TEXT NOT NULL DEFAULT ''`);
+    } catch {
+      /* column already exists */
+    }
   }
 
   close(): void {

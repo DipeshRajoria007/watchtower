@@ -127,6 +127,7 @@ export type AppSettings = {
   failureNotificationAudioDefaultSound: NotificationAudioDefaultSoundId;
   failureNotificationAudioCustomPath: string;
   agentBackend: AgentBackendId;
+  coreDevSlackUserIds: string;
 };
 
 export type SaveSettingsResponse = {

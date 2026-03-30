@@ -6,6 +6,9 @@ function roleLabel(task: NormalizedTask): string {
   if (task.isOwnerAuthor) {
     return 'owner';
   }
+  if (task.isCoreDevAuthor) {
+    return 'core-dev';
+  }
   if (task.mentionType === 'bot') {
     return 'mentioned-user';
   }

@@ -119,6 +119,7 @@ export function normalizeTask(
 ): NormalizedTask {
   const mention = detectMention(event.text, config, event.channelType);
   const isOwnerAuthor = config.ownerSlackUserIds.includes(event.userId);
+  const isCoreDevAuthor = config.coreDevSlackUserIds.includes(event.userId);
   const prContext = extractPrContext([event.text, ...threadTexts]);
 
   return {
@@ -126,6 +127,7 @@ export function normalizeTask(
     mentionDetected: mention.detected,
     mentionType: mention.type,
     isOwnerAuthor,
+    isCoreDevAuthor,
     intent: inferIntent(event, config, mention),
     prContext,
   };
