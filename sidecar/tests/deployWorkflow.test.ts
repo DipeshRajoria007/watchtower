@@ -7,6 +7,7 @@ const config: AppConfig = {
   platformPolicy: 'macos_only',
   bundleTargets: ['app', 'dmg'],
   ownerSlackUserIds: ['UOWNER1'],
+  coreDevSlackUserIds: ['UOWNER1'],
   botUserId: 'UBOT1',
   slackBotToken: 'xoxb-test',
   slackAppToken: 'xapp-test',

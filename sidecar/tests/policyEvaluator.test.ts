@@ -19,7 +19,9 @@ describe('policyEvaluator', () => {
   });
 
   it('blocks critical-deny rules for all users including owners', () => {
-    fs.writeFileSync(path.join(policiesDir, 'critical.md'), `---
+    fs.writeFileSync(
+      path.join(policiesDir, 'critical.md'),
+      `---
 tier: critical-deny
 description: Critical
 ---
@@ -27,7 +29,8 @@ description: Critical
 ## no-force-push
 Block force push.
 match: force push, --force
-`);
+`,
+    );
 
     loadPolicies(policiesDir);
 
@@ -40,7 +43,9 @@ match: force push, --force
   });
 
   it('blocks non-master rules only for non-owner users', () => {
-    fs.writeFileSync(path.join(policiesDir, 'non-master.md'), `---
+    fs.writeFileSync(
+      path.join(policiesDir, 'non-master.md'),
+      `---
 tier: non-master
 description: Non-owner
 ---
@@ -48,7 +53,8 @@ description: Non-owner
 ## no-deploy
 Cannot deploy.
 match: deploy, ship to prod
-`);
+`,
+    );
 
     loadPolicies(policiesDir);
 
@@ -60,8 +66,35 @@ match: deploy, ship to prod
     expect(ownerResult.allowed).toBe(true);
   });
 
+  it('exempts core-dev non-owner users from non-master rules', () => {
+    fs.writeFileSync(
+      path.join(policiesDir, 'non-master.md'),
+      `---
+tier: non-master
+description: Non-owner
+---
+
+## no-deploy
+Cannot deploy.
+match: deploy, ship to prod
+`,
+    );
+
+    loadPolicies(policiesDir);
+
+    // Core-dev (includes owners) should be exempt
+    const coreDevResult = evaluatePolicy('UCOREDEV', 'deploy the frontend', ['UOWNER', 'UCOREDEV']);
+    expect(coreDevResult.allowed).toBe(true);
+
+    // Non-core-dev should be blocked
+    const regularResult = evaluatePolicy('URANDOM', 'deploy the frontend', ['UOWNER', 'UCOREDEV']);
+    expect(regularResult.allowed).toBe(false);
+  });
+
   it('returns policy snapshot', () => {
-    fs.writeFileSync(path.join(policiesDir, 'test.md'), `---
+    fs.writeFileSync(
+      path.join(policiesDir, 'test.md'),
+      `---
 tier: critical-deny
 description: Test
 ---
@@ -69,7 +102,8 @@ description: Test
 ## test-rule
 Test.
 match: test
-`);
+`,
+    );
 
     loadPolicies(policiesDir);
     const snapshot = getPolicySnapshot();

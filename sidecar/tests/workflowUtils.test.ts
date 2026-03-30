@@ -21,6 +21,7 @@ const baseTask: NormalizedTask = {
   mentionDetected: true,
   mentionType: 'bot',
   isOwnerAuthor: false,
+  isCoreDevAuthor: false,
   intent: 'IMPLEMENTATION',
 };
 

@@ -14,6 +14,7 @@ const config: AppConfig = {
   platformPolicy: 'macos_only',
   bundleTargets: ['app', 'dmg'],
   ownerSlackUserIds: ['UOWNER1'],
+  coreDevSlackUserIds: ['UOWNER1'],
   botUserId: 'UBOT1',
   slackBotToken: 'xoxb-test',
   slackAppToken: 'xapp-test',
@@ -32,7 +33,13 @@ const config: AppConfig = {
   multiAgentEnabled: false,
 };
 
-function buildTask(input: { text: string; intent?: NormalizedTask['intent']; userId?: string; channelId?: string; threadTs?: string }): NormalizedTask {
+function buildTask(input: {
+  text: string;
+  intent?: NormalizedTask['intent'];
+  userId?: string;
+  channelId?: string;
+  threadTs?: string;
+}): NormalizedTask {
   return {
     event: {
       eventId: `Ev-${Math.random()}`,
@@ -46,6 +53,7 @@ function buildTask(input: { text: string; intent?: NormalizedTask['intent']; use
     mentionDetected: true,
     mentionType: 'bot',
     isOwnerAuthor: false,
+    isCoreDevAuthor: false,
     intent: input.intent ?? 'UNKNOWN',
   };
 }
