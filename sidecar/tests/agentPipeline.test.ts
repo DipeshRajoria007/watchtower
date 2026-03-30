@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { runAgentPipeline } from '../src/agents/pipeline.js';
+import { runAgentPipeline, waitForApproval } from '../src/agents/pipeline.js';
 import { runCodex } from '../src/codex/runCodex.js';
+import { fetchThreadContext } from '../src/slack/threadContext.js';
 import type { AgentContext, PipelineConfig } from '../src/agents/types.js';
 import type { AppConfig, NormalizedTask } from '../src/types/contracts.js';
 
@@ -491,5 +492,94 @@ describe('agentPipeline', () => {
     expect(result.finalStatus).toBe('aborted');
     // Security agent should not have run
     expect(result.steps.length).toBeLessThan(3);
+  });
+});
+
+vi.mock('../src/slack/threadContext.js', () => ({
+  fetchThreadContext: vi.fn(),
+}));
+
+describe('waitForApproval', () => {
+  const mockSlack = {
+    chat: { postMessage: vi.fn().mockResolvedValue({}) },
+  } as any;
+  const noopLog: any = () => {};
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function runApproval(overrides?: Partial<Parameters<typeof waitForApproval>[0]>) {
+    return waitForApproval({
+      slack: mockSlack,
+      channelId: 'C1',
+      threadTs: '100.00',
+      approverUserIds: ['UCOREDEV'],
+      triggerUserId: 'UTRIGGER',
+      approvalPromptTs: '150.00',
+      logStep: noopLog,
+      botUserId: 'UBOT',
+      ...overrides,
+    });
+  }
+
+  it('rejects when message starts with "stop" followed by a reason', async () => {
+    vi.mocked(fetchThreadContext).mockResolvedValue([
+      { text: 'stop - as this is huge change', user: 'UCOREDEV', ts: '200.00' },
+    ]);
+
+    const promise = runApproval();
+    await vi.advanceTimersByTimeAsync(6000);
+    const result = await promise;
+
+    expect(result.approved).toBe(false);
+    expect(result.approverId).toBe('UCOREDEV');
+  });
+
+  it('rejects on bare "no"', async () => {
+    vi.mocked(fetchThreadContext).mockResolvedValue([{ text: 'no', user: 'UCOREDEV', ts: '200.00' }]);
+
+    const promise = runApproval();
+    await vi.advanceTimersByTimeAsync(6000);
+    const result = await promise;
+
+    expect(result.approved).toBe(false);
+  });
+
+  it('approves on bare "yes" from core-dev', async () => {
+    vi.mocked(fetchThreadContext).mockResolvedValue([{ text: 'yes', user: 'UCOREDEV', ts: '200.00' }]);
+
+    const promise = runApproval();
+    await vi.advanceTimersByTimeAsync(6000);
+    const result = await promise;
+
+    expect(result.approved).toBe(true);
+    expect(result.approverId).toBe('UCOREDEV');
+  });
+
+  it('blocks non-core-dev from approving', async () => {
+    // First poll: non-core-dev says "yes" — should be ignored
+    vi.mocked(fetchThreadContext)
+      .mockResolvedValueOnce([{ text: 'yes', user: 'URANDOM', ts: '200.00' }])
+      // Second poll: core-dev says "go"
+      .mockResolvedValueOnce([
+        { text: 'yes', user: 'URANDOM', ts: '200.00' },
+        { text: 'go', user: 'UCOREDEV', ts: '210.00' },
+      ]);
+
+    const promise = runApproval();
+    await vi.advanceTimersByTimeAsync(12000);
+    const result = await promise;
+
+    expect(result.approved).toBe(true);
+    expect(result.approverId).toBe('UCOREDEV');
+    expect(mockSlack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('Only core-dev members') }),
+    );
   });
 });
