@@ -157,7 +157,7 @@ export function formatPlanMessage(
 }
 
 const APPROVE_PATTERNS = /^(yes|go|proceed|do it|go ahead|ship it|lgtm)$/i;
-const REJECT_PATTERNS = /^(no|stop|cancel|abort|nevermind|never mind)$/i;
+const REJECT_PATTERNS = /^(no|stop|cancel|abort|nevermind|never mind)\b/i;
 
 export async function waitForApproval(params: {
   slack: WebClient;
