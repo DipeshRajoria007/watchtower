@@ -7,7 +7,18 @@ interface PrReviewComment {
   body: string;
 }
 
-type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+export type PrReviewSubmissionMode = 'inline' | 'summary_only' | 'skipped';
+export type PrReviewFallbackReason = 'missing_location' | 'github_rejected_comments' | 'no_token';
+
+export interface SubmitPrReviewResult {
+  submitted: boolean;
+  event: ReviewEvent;
+  attemptedComments: number;
+  commentsPosted: number;
+  submissionMode: PrReviewSubmissionMode;
+  fallbackReason?: PrReviewFallbackReason;
+}
 
 function determineReviewEvent(findings: AgentFinding[]): ReviewEvent {
   const hasCritical = findings.some(f => f.severity === 'critical');
@@ -31,13 +42,8 @@ export async function submitPrReview(params: {
   findingsByRole: Array<{ role: string; findings: AgentFinding[] }>;
   summary: string;
   githubToken?: string;
-}): Promise<{ submitted: boolean; event: ReviewEvent; commentsPosted: number }> {
+}): Promise<SubmitPrReviewResult> {
   const { owner, repo, pullNumber, commitId, findingsByRole, summary, githubToken } = params;
-
-  if (!githubToken) {
-    logger.warn('No GitHub token available — skipping PR review submission');
-    return { submitted: false, event: 'COMMENT', commentsPosted: 0 };
-  }
 
   const allFindings = findingsByRole.flatMap(r => r.findings);
   const event = determineReviewEvent(allFindings);
@@ -54,6 +60,20 @@ export async function submitPrReview(params: {
         });
       }
     }
+  }
+  const attemptedComments = comments.length;
+  const missingLocationFallback = allFindings.length > 0 && attemptedComments === 0 ? 'missing_location' : undefined;
+
+  if (!githubToken) {
+    logger.warn('No GitHub token available — skipping PR review submission');
+    return {
+      submitted: false,
+      event,
+      attemptedComments,
+      commentsPosted: 0,
+      submissionMode: 'skipped',
+      fallbackReason: 'no_token',
+    };
   }
 
   const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${pullNumber}/reviews`;
@@ -99,16 +119,44 @@ export async function submitPrReview(params: {
         });
 
         if (retryResponse.ok) {
-          return { submitted: true, event, commentsPosted: 0 };
+          return {
+            submitted: true,
+            event,
+            attemptedComments,
+            commentsPosted: 0,
+            submissionMode: 'summary_only',
+            fallbackReason: 'github_rejected_comments',
+          };
         }
       }
 
-      return { submitted: false, event, commentsPosted: 0 };
+      return {
+        submitted: false,
+        event,
+        attemptedComments,
+        commentsPosted: 0,
+        submissionMode: 'skipped',
+        fallbackReason: comments.length > 0 ? 'github_rejected_comments' : missingLocationFallback,
+      };
     }
 
-    return { submitted: true, event, commentsPosted: comments.length };
+    return {
+      submitted: true,
+      event,
+      attemptedComments,
+      commentsPosted: comments.length,
+      submissionMode: comments.length > 0 ? 'inline' : 'summary_only',
+      fallbackReason: missingLocationFallback,
+    };
   } catch (error) {
     logger.warn({ error: String(error), owner, repo, pullNumber }, 'GitHub PR review submission threw');
-    return { submitted: false, event, commentsPosted: 0 };
+    return {
+      submitted: false,
+      event,
+      attemptedComments,
+      commentsPosted: 0,
+      submissionMode: 'skipped',
+      fallbackReason: missingLocationFallback,
+    };
   }
 }

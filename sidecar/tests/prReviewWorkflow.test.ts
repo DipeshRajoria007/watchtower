@@ -1,9 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { runPrReviewWorkflow } from '../src/workflows/prReviewWorkflow.js';
+import {
+  buildGithubReviewSummary,
+  formatSlackReviewSummary,
+  normalizePrReviewAgentOutput,
+  runPrReviewWorkflow,
+} from '../src/workflows/prReviewWorkflow.js';
 import { runCodex } from '../src/codex/runCodex.js';
 import { resolveGithubTokenForCodex } from '../src/github/githubAuth.js';
 import type { AppConfig, NormalizedTask } from '../src/types/contracts.js';
+import type { SubmitPrReviewResult } from '../src/github/submitPrReview.js';
 
 vi.mock('../src/codex/runCodex.js', () => ({
   runCodex: vi.fn(),
@@ -322,5 +328,125 @@ describe('prReviewWorkflow', () => {
         text: expect.stringContaining('PR review done. Two findings posted on the PR.'),
       }),
     );
+  });
+
+  it('normalizes non-attachable findings into summary-only review notes', () => {
+    const output = normalizePrReviewAgentOutput('reviewer', {
+      ok: true,
+      exitCode: 0,
+      timedOut: false,
+      stdout: '',
+      stderr: '',
+      lastMessage: '',
+      parsedJson: {
+        findings: [
+          { severity: 'medium', category: 'logic', message: 'Needs a line reference before it can be attached.' },
+          { severity: 'low', category: 'style', message: 'Broken payload', file: 'src/a.ts', line: '12' },
+        ],
+        summaryNotes: ['Keep the copy aligned with the incident context.'],
+      },
+    });
+
+    expect(output.findings).toHaveLength(2);
+    expect(output.attachableFindings).toHaveLength(0);
+    expect(output.unattachableFindings).toHaveLength(2);
+    expect(output.invalidFindings).toBe(0);
+    expect(output.summaryNotes).toEqual(['Keep the copy aligned with the incident context.']);
+  });
+
+  it('formats summary-only Slack completion when no inline comments were attached', () => {
+    const outputs = [
+      normalizePrReviewAgentOutput('reviewer', {
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: {
+          findings: [
+            { severity: 'medium', category: 'logic', message: 'Needs a line reference before it can be attached.' },
+          ],
+          summaryNotes: [],
+        },
+      }),
+    ];
+    const reviewResult: SubmitPrReviewResult = {
+      submitted: true,
+      event: 'COMMENT',
+      attemptedComments: 0,
+      commentsPosted: 0,
+      submissionMode: 'summary_only',
+      fallbackReason: 'missing_location',
+    };
+
+    const summary = formatSlackReviewSummary(
+      outputs,
+      'https://github.com/Newton-School/newton-web/pull/7859',
+      reviewResult,
+    );
+
+    expect(summary).toContain('1 findings identified; review summary posted, but no inline comments were attached');
+    expect(summary).not.toContain('comments posted on PR');
+  });
+
+  it('formats partial Slack completion when only some findings are attachable', () => {
+    const outputs = [
+      normalizePrReviewAgentOutput('reviewer', {
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: {
+          findings: [
+            { severity: 'medium', category: 'logic', message: 'Attachable issue', file: 'src/a.ts', line: 10 },
+            { severity: 'low', category: 'test', message: 'Needs broader follow-up' },
+          ],
+          summaryNotes: [],
+        },
+      }),
+    ];
+    const reviewResult: SubmitPrReviewResult = {
+      submitted: true,
+      event: 'COMMENT',
+      attemptedComments: 1,
+      commentsPosted: 1,
+      submissionMode: 'inline',
+    };
+
+    const summary = formatSlackReviewSummary(
+      outputs,
+      'https://github.com/Newton-School/newton-web/pull/7859',
+      reviewResult,
+    );
+
+    expect(summary).toContain('2 findings identified; 1 inline comments posted, 1 could not be attached');
+  });
+
+  it('builds GitHub summary text for summary-only findings and notes', () => {
+    const outputs = [
+      normalizePrReviewAgentOutput('reviewer', {
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: {
+          findings: [
+            { severity: 'medium', category: 'logic', message: 'Needs a line reference before it can be attached.' },
+          ],
+          summaryNotes: ['Mention the legacy avatar flow in the summary.'],
+        },
+      }),
+    ];
+
+    const summary = buildGithubReviewSummary(outputs);
+
+    expect(summary).toContain('1 finding(s) could not be attached inline and are listed below.');
+    expect(summary).toContain('[REVIEWER - MEDIUM] Needs a line reference before it can be attached.');
+    expect(summary).toContain('[REVIEWER NOTE] Mention the legacy avatar flow in the summary.');
   });
 });

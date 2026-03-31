@@ -36,7 +36,10 @@ describe('submitPrReview', () => {
 
     expect(result.submitted).toBe(true);
     expect(result.event).toBe('REQUEST_CHANGES');
+    expect(result.attemptedComments).toBe(1);
     expect(result.commentsPosted).toBe(1);
+    expect(result.submissionMode).toBe('inline');
+    expect(result.fallbackReason).toBeUndefined();
 
     const fetchCall = vi.mocked(globalThis.fetch).mock.calls[0];
     const body = JSON.parse(fetchCall[1]?.body as string);
@@ -76,6 +79,7 @@ describe('submitPrReview', () => {
     });
 
     expect(result.event).toBe('COMMENT');
+    expect(result.submissionMode).toBe('inline');
   });
 
   it('submits APPROVE when no findings exist', async () => {
@@ -92,12 +96,13 @@ describe('submitPrReview', () => {
     });
 
     expect(result.event).toBe('APPROVE');
+    expect(result.submissionMode).toBe('summary_only');
   });
 
   it('excludes findings without file/line from inline comments', async () => {
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response('{}', { status: 200 }));
 
-    await submitPrReview({
+    const result = await submitPrReview({
       owner: 'Newton-School',
       repo: 'newton-web',
       pullNumber: 123,
@@ -117,8 +122,34 @@ describe('submitPrReview', () => {
     });
 
     const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string);
+    expect(result.attemptedComments).toBe(1);
+    expect(result.commentsPosted).toBe(1);
+    expect(result.submissionMode).toBe('inline');
     expect(body.comments).toHaveLength(1);
     expect(body.comments[0].path).toBe('src/a.ts');
+  });
+
+  it('returns summary_only with missing_location fallback when findings are not line-attachable', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const result = await submitPrReview({
+      owner: 'Newton-School',
+      repo: 'newton-web',
+      pullNumber: 123,
+      commitId: 'abc123',
+      findingsByRole: [{ role: 'reviewer', findings: [baseFinding('medium'), baseFinding('low', 'src/a.ts', 0)] }],
+      summary: 'Summary only',
+      githubToken: 'ghp_test',
+    });
+
+    expect(result.submitted).toBe(true);
+    expect(result.attemptedComments).toBe(0);
+    expect(result.commentsPosted).toBe(0);
+    expect(result.submissionMode).toBe('summary_only');
+    expect(result.fallbackReason).toBe('missing_location');
+
+    const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string);
+    expect(body.comments).toHaveLength(0);
   });
 
   it('returns submitted false when no GitHub token', async () => {
@@ -127,12 +158,15 @@ describe('submitPrReview', () => {
       repo: 'newton-web',
       pullNumber: 123,
       commitId: 'abc123',
-      findingsByRole: [{ role: 'reviewer', findings: [baseFinding('high')] }],
+      findingsByRole: [{ role: 'reviewer', findings: [baseFinding('high', 'src/a.ts', 4)] }],
       summary: 'Test',
       githubToken: undefined,
     });
 
     expect(result.submitted).toBe(false);
+    expect(result.attemptedComments).toBe(1);
+    expect(result.submissionMode).toBe('skipped');
+    expect(result.fallbackReason).toBe('no_token');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
@@ -152,7 +186,10 @@ describe('submitPrReview', () => {
     });
 
     expect(result.submitted).toBe(true);
+    expect(result.attemptedComments).toBe(1);
     expect(result.commentsPosted).toBe(0);
+    expect(result.submissionMode).toBe('summary_only');
+    expect(result.fallbackReason).toBe('github_rejected_comments');
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
 
     // Second call should have empty comments
@@ -174,5 +211,6 @@ describe('submitPrReview', () => {
     });
 
     expect(result.submitted).toBe(false);
+    expect(result.submissionMode).toBe('skipped');
   });
 });

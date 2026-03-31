@@ -36,11 +36,13 @@ Review this PR for:
 6. Potential regressions
 
 IMPORTANT: For each finding, include the exact file path and line number from the diff so it can be posted as an inline comment on the PR. Use the "+" side line numbers from the diff (the new file line numbers).
+Only use "findings" for issues that can be mapped to an exact diff file and "+" line number. If an observation is real but cannot be attached to an exact diff location, put it in "summaryNotes" instead of inventing a location.
 
 Return strict JSON:
 {
   "approved": boolean,
   "findings": [{ "severity": "critical"|"high"|"medium"|"low"|"info", "category": string, "message": string, "file": string, "line": number, "suggestion": string }],
+  "summaryNotes": string[],
   "blockers": string[],
   "summary": string
 }
@@ -73,11 +75,13 @@ Focus ONLY on the changed code in this diff. Audit for:
 10. Client-side security bypasses (if frontend code)
 
 IMPORTANT: For each finding, include the exact file path and line number from the diff. Use the "+" side line numbers (new file line numbers). Only report issues actually present in the diff — do not flag pre-existing code.
+Only use "findings" for issues that can be mapped to an exact diff file and "+" line number. If an observation is real but cannot be attached to an exact diff location, put it in "summaryNotes" instead of inventing a location.
 
 Return strict JSON:
 {
   "approved": boolean,
   "findings": [{ "severity": "critical"|"high"|"medium"|"low"|"info", "category": string, "message": string, "file": string, "line": number, "suggestion": string }],
+  "summaryNotes": string[],
   "overallSeverity": "clean" | "low" | "medium" | "high" | "critical"
 }
 `.trim();
@@ -109,11 +113,13 @@ Focus ONLY on the changed code in this diff. Check for:
 10. Inefficient data structures or algorithms
 
 IMPORTANT: For each finding, include the exact file path and line number from the diff. Use the "+" side line numbers (new file line numbers). Only report issues actually present in the diff.
+Only use "findings" for issues that can be mapped to an exact diff file and "+" line number. If an observation is real but cannot be attached to an exact diff location, put it in "summaryNotes" instead of inventing a location.
 
 Return strict JSON:
 {
   "approved": boolean,
-  "findings": [{ "severity": "critical"|"high"|"medium"|"low"|"info", "category": string, "message": string, "file": string, "line": number, "suggestion": string }]
+  "findings": [{ "severity": "critical"|"high"|"medium"|"low"|"info", "category": string, "message": string, "file": string, "line": number, "suggestion": string }],
+  "summaryNotes": string[]
 }
 `.trim();
 }
