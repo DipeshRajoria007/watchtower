@@ -9,18 +9,20 @@ export async function createPullRequest(params: {
   body: string;
   branch: string;
   baseBranch?: string;
+  labels?: string[];
 }): Promise<{ prUrl: string }> {
-  const { repoPath, title, body, branch, baseBranch } = params;
+  const { repoPath, title, body, branch, baseBranch, labels } = params;
 
-  const args = [
-    'pr', 'create',
-    '--title', title,
-    '--body', body,
-    '--head', branch,
-  ];
+  const args = ['pr', 'create', '--title', title, '--body', body, '--head', branch];
 
   if (baseBranch) {
     args.push('--base', baseBranch);
+  }
+
+  if (labels && labels.length > 0) {
+    for (const label of labels) {
+      args.push('--label', label);
+    }
   }
 
   const { stdout } = await execFileAsync('gh', args, {

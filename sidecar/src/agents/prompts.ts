@@ -72,8 +72,13 @@ Requirements:
 1. Work only in repo path ${ctx.repoPath}
 2. Create a NEW branch named codex/<short-task-name>-${ctx.task.event.threadTs.replace('.', '-')} (the suffix ensures uniqueness — do NOT reuse or checkout an existing branch)
 3. Implement changes with tests
-4. Commit and open a PR to the default branch${ctx.requestedBy ? `. In the PR description, include "Requested by: ${ctx.requestedBy}".` : ''}
-5. Do not run destructive git commands
+4. Commit and open a PR to the default branch. In the PR description, always include this metadata block at the end:
+   ---
+   **Raised by:** miniOG (Watchtower)${ctx.requestedBy ? `\n   **Triggered by:** ${ctx.requestedBy} via Slack` : ''}
+   **Workflow:** ${ctx.workflowIntent}
+   **Thread:** ${ctx.task.event.threadTs}
+5. When creating the PR with \`gh pr create\`, include the flag \`--label miniog\` to tag it
+6. Do not run destructive git commands
 
 Return strict JSON:
 {

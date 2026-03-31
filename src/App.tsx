@@ -533,6 +533,7 @@ function App() {
           data={data}
           onReviewChanges={openReview}
           onSelectRun={setSelectedRunId}
+          onRefresh={loadDashboard}
           selectedRunId={selectedRunId}
           selectedRunLogs={selectedRunLogs}
           selectedRunPipeline={selectedRunPipeline}

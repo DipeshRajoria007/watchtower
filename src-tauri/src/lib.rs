@@ -418,7 +418,8 @@ pub fn run() {
             import_notification_audio,
             emit_preview_notification,
             get_job_diff,
-            create_pr_from_job
+            create_pr_from_job,
+            cancel_job
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -756,6 +757,31 @@ async fn create_pr_from_job(
 
     let pr_url = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok(CreatePrResponse { pr_url })
+}
+
+#[tauri::command]
+async fn cancel_job(job_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+
+    // Ensure the pending_cancel_jobs table exists (safe to call multiple times)
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS pending_cancel_jobs (
+                job_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL
+            )",
+        )
+        .map_err(|err| format!("db migration failed: {err}"))?;
+
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO pending_cancel_jobs (job_id, created_at) VALUES (?, ?)",
+            params![job_id, Utc::now().to_rfc3339()],
+        )
+        .map_err(|err| format!("db insert cancel request failed: {err}"))?;
+
+    Ok(())
 }
 
 fn query_runs(connection: &Connection, sql: &str) -> Result<Vec<RunSummary>, String> {

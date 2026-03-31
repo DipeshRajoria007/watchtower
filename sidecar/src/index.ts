@@ -23,7 +23,7 @@ import { cleanupStaleWorkspaces } from './workspaces/workspaceManager.js';
 import { loadWorkflowTemplates } from './workflows/registry.js';
 import { fetchThreadContext } from './slack/threadContext.js';
 import { resolveUserGroupMembers } from './slack/userGroupResolver.js';
-import { registerActiveJob, unregisterActiveJob } from './state/activeJobs.js';
+import { registerActiveJob, unregisterActiveJob, cancelJob } from './state/activeJobs.js';
 import { JobStore } from './state/jobStore.js';
 import type { SlackEventEnvelope, SlackReactionEvent, WorkflowStepLog } from './types/contracts.js';
 
@@ -995,6 +995,18 @@ async function main(): Promise<void> {
     // Refresh every 30 minutes
     setInterval(resolveCoreDevGroup, 30 * 60 * 1000);
   }
+
+  // Poll for cancel requests from the Watchtower UI (written to SQLite by Tauri)
+  setInterval(() => {
+    const pendingIds = store.popPendingCancels();
+    for (const jobId of pendingIds) {
+      const cancelled = cancelJob(jobId);
+      if (cancelled) {
+        store.markJob(jobId, 'CANCELLED', { errorMessage: 'Cancelled from Watchtower UI.' });
+        logger.info({ jobId }, 'job cancelled from UI');
+      }
+    }
+  }, 2000);
 
   startMentionCatchup({
     webClient: client.webClient,

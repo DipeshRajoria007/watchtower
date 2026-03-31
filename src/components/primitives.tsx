@@ -552,12 +552,14 @@ export function RunsFilterBar({
 export function RunsTable({
   runs,
   onSelectRun,
+  onCancelRun,
   sortField,
   sortDirection,
   onSort,
 }: {
   runs: RunSummary[];
   onSelectRun: (runId: string) => void;
+  onCancelRun?: (runId: string) => void;
   sortField: SortField;
   sortDirection: SortDirection;
   onSort: (field: SortField) => void;
@@ -570,6 +572,8 @@ export function RunsTable({
     if (sortField !== field) return null;
     return <span className="sort-arrow">{sortDirection === 'asc' ? '\u25B2' : '\u25BC'}</span>;
   };
+
+  const isCancellable = (status: string) => status === 'RUNNING' || status === 'PAUSED';
 
   return (
     <div className="runs-table-wrap">
@@ -587,6 +591,7 @@ export function RunsTable({
             <th className="sortable col-updated" onClick={() => onSort('updatedAt')}>
               Updated {sortArrow('updatedAt')}
             </th>
+            {onCancelRun && <th className="col-actions" />}
           </tr>
         </thead>
         <tbody>
@@ -599,6 +604,22 @@ export function RunsTable({
               <td className="workflow-cell">{run.workflow}</td>
               <td className="channel-cell col-channel">{run.channelId}</td>
               <td className="updated-cell col-updated">{formatTimestamp(run.updatedAt)}</td>
+              {onCancelRun && (
+                <td className="actions-cell col-actions">
+                  {isCancellable(run.status) && (
+                    <button
+                      className="cancel-btn"
+                      title="Cancel this job"
+                      onClick={e => {
+                        e.stopPropagation();
+                        onCancelRun(run.id);
+                      }}
+                    >
+                      &times;
+                    </button>
+                  )}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
