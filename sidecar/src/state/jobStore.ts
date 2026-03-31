@@ -261,6 +261,11 @@ export class JobStore {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_job_diffs_job_id ON job_diffs(job_id);
+
+      CREATE TABLE IF NOT EXISTS pending_cancel_jobs (
+        job_id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL
+      );
     `);
 
     // Add PM config columns to app_settings if missing
@@ -288,6 +293,15 @@ export class JobStore {
 
   close(): void {
     this.db.close();
+  }
+
+  /** Atomically fetch and delete all pending cancel requests (written by Tauri UI). */
+  popPendingCancels(): string[] {
+    const rows = this.db.prepare('SELECT job_id FROM pending_cancel_jobs').all() as Array<{ job_id: string }>;
+    if (rows.length > 0) {
+      this.db.prepare('DELETE FROM pending_cancel_jobs').run();
+    }
+    return rows.map(r => r.job_id);
   }
 
   saveDiff(params: {

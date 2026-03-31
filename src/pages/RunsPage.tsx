@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import type { DashboardData, JobLogEntry, PipelineRunData, RunSummary } from '../types';
 import {
   PageIntro,
@@ -18,6 +19,7 @@ type RunsPageProps = {
   data: DashboardData | null;
   onReviewChanges?: (runId: string) => void;
   onSelectRun: (runId: string) => void;
+  onRefresh?: () => void;
   selectedRunId: string | null;
   selectedRunLogs: JobLogEntry[];
   selectedRunPipeline?: PipelineRunData | null;
@@ -27,6 +29,7 @@ export function RunsPage({
   data,
   onReviewChanges,
   onSelectRun,
+  onRefresh,
   selectedRunId,
   selectedRunLogs,
   selectedRunPipeline,
@@ -92,6 +95,15 @@ export function RunsPage({
   const handleSelectRun = (runId: string) => {
     setDetailRunId(runId);
     onSelectRun(runId);
+  };
+
+  const handleCancelRun = async (runId: string) => {
+    try {
+      await invoke('cancel_job', { jobId: runId });
+      onRefresh?.();
+    } catch {
+      // Non-fatal
+    }
   };
 
   useEffect(() => {
@@ -232,6 +244,7 @@ export function RunsPage({
           <RunsTable
             runs={filteredRuns}
             onSelectRun={handleSelectRun}
+            onCancelRun={handleCancelRun}
             sortField={sortField}
             sortDirection={sortDirection}
             onSort={handleSort}

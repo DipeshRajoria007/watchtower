@@ -460,6 +460,8 @@ Write your response as a ready-to-post Slack message describing what you did.
           threadTs: task.event.threadTs,
           summary,
           requestedBy: ctx.requestedBy,
+          channelId: task.event.channelId,
+          workflow: 'IMPLEMENTATION',
           onLog: msg =>
             logStep?.({
               stage: 'implementation.pr.progress',
