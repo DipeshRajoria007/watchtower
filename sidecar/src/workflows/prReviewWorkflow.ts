@@ -5,6 +5,7 @@ import type { WebClient } from '@slack/web-api';
 import type {
   AppConfig,
   CodexRunRequest,
+  CodexRunResult,
   NormalizedTask,
   PrContext,
   WorkflowResult,
@@ -20,6 +21,7 @@ import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
 import { highReasoningProfile, profileForAgentRole } from '../codex/modelProfiles.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import { submitPrReview } from '../github/submitPrReview.js';
+import type { ReviewEvent, SubmitPrReviewResult } from '../github/submitPrReview.js';
 import { buildPrReviewerPrompt, buildPrSecurityPrompt, buildPrPerformancePrompt } from '../agents/prReviewPrompts.js';
 import type { PipelineStore } from '../agents/pipeline.js';
 import { resolveWorkspace } from '../workspaces/workspaceManager.js';
@@ -27,6 +29,19 @@ import { resolveWorkspace } from '../workspaces/workspaceManager.js';
 const execFileAsync = promisify(execFile);
 
 const SUPPORTED_PR_REPOS = ['newton-web', 'newton-api'] as const;
+const FINDING_SEVERITIES = new Set<AgentFinding['severity']>(['critical', 'high', 'medium', 'low', 'info']);
+
+type PrReviewRole = 'reviewer' | 'security' | 'performance';
+type AttachablePrReviewFinding = AgentFinding & { file: string; line: number };
+
+interface NormalizedPrReviewAgentOutput {
+  role: PrReviewRole;
+  findings: AgentFinding[];
+  attachableFindings: AttachablePrReviewFinding[];
+  unattachableFindings: AgentFinding[];
+  summaryNotes: string[];
+  invalidFindings: number;
+}
 
 function mapRepoPath(config: AppConfig, pr: PrContext): string | null {
   if (pr.repo === 'newton-web') {
@@ -167,42 +182,195 @@ async function checkoutPrBranch(repoPath: string, prNumber: number, logStep?: Wo
   }
 }
 
-function extractFindings(output: Record<string, unknown>): AgentFinding[] {
-  const raw = output.findings;
-  if (!Array.isArray(raw)) return [];
-  return raw.map((f: Record<string, unknown>) => ({
-    severity: (f.severity as AgentFinding['severity']) ?? 'info',
-    category: (f.category as string) ?? 'general',
-    message: (f.message as string) ?? '',
-    file: f.file as string | undefined,
-    line: f.line as number | undefined,
-    suggestion: f.suggestion as string | undefined,
-  }));
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function formatSlackReviewSummary(
-  findingsByRole: Array<{ role: string; findings: AgentFinding[] }>,
-  prUrl: string,
-  reviewEvent?: string,
-): string {
-  const allFindings = findingsByRole.flatMap(r => r.findings);
-  if (allFindings.length === 0) {
-    return `*PR Review Complete* — No actionable findings. Good to go. ✅\n${prUrl}`;
+function normalizeString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeSeverity(value: unknown): AgentFinding['severity'] | undefined {
+  if (typeof value !== 'string' || !FINDING_SEVERITIES.has(value as AgentFinding['severity'])) {
+    return undefined;
+  }
+  return value as AgentFinding['severity'];
+}
+
+function normalizeLine(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function normalizeFinding(value: unknown): AgentFinding | undefined {
+  if (!isRecord(value)) return undefined;
+
+  const severity = normalizeSeverity(value.severity);
+  const category = normalizeString(value.category);
+  const message = normalizeString(value.message);
+
+  if (!severity || !category || !message) {
+    return undefined;
   }
 
-  const severityOrder = ['critical', 'high', 'medium', 'low', 'info'];
-  const counts = new Map<string, number>();
-  for (const f of allFindings) {
-    counts.set(f.severity, (counts.get(f.severity) ?? 0) + 1);
-  }
+  return {
+    severity,
+    category,
+    message,
+    file: normalizeString(value.file),
+    line: normalizeLine(value.line),
+    suggestion: normalizeString(value.suggestion),
+  };
+}
 
-  const breakdown = severityOrder
-    .filter(s => (counts.get(s) ?? 0) > 0)
-    .map(s => `${counts.get(s)} ${s}`)
+function hasAttachableLocation(finding: AgentFinding): finding is AttachablePrReviewFinding {
+  return (
+    typeof finding.file === 'string' && finding.file.length > 0 && typeof finding.line === 'number' && finding.line > 0
+  );
+}
+
+function extractSummaryNotes(output: Record<string, unknown>): string[] {
+  const raw = output.summaryNotes;
+  if (!Array.isArray(raw)) return [];
+  return raw.map(note => normalizeString(note)).filter((note): note is string => Boolean(note));
+}
+
+export function normalizePrReviewAgentOutput(
+  role: PrReviewRole,
+  result: CodexRunResult,
+): NormalizedPrReviewAgentOutput {
+  const output = result.parsedJson ?? {};
+  const rawFindings = Array.isArray(output.findings) ? output.findings : [];
+  const findings = rawFindings
+    .map(finding => normalizeFinding(finding))
+    .filter((finding): finding is AgentFinding => Boolean(finding));
+
+  return {
+    role,
+    findings,
+    attachableFindings: findings.filter(hasAttachableLocation),
+    unattachableFindings: findings.filter(finding => !hasAttachableLocation(finding)),
+    summaryNotes: extractSummaryNotes(output),
+    invalidFindings: rawFindings.length - findings.length,
+  };
+}
+
+function buildSeverityBreakdown(findings: AgentFinding[]): string {
+  const severityOrder: AgentFinding['severity'][] = ['critical', 'high', 'medium', 'low', 'info'];
+  const counts = new Map<AgentFinding['severity'], number>();
+  for (const finding of findings) {
+    counts.set(finding.severity, (counts.get(finding.severity) ?? 0) + 1);
+  }
+  return severityOrder
+    .filter(severity => (counts.get(severity) ?? 0) > 0)
+    .map(severity => `${counts.get(severity)} ${severity}`)
     .join(', ');
+}
 
-  const verdict = reviewEvent === 'APPROVE' ? '✅' : reviewEvent === 'REQUEST_CHANGES' ? '🚫' : '💬';
-  return `*PR Review Complete* — ${allFindings.length} comments posted on PR (${breakdown}) ${verdict}\n${prUrl}`;
+function deriveReviewEvent(
+  findings: AgentFinding[],
+  reviewEvent?: ReviewEvent,
+  summaryNotesCount = 0,
+): ReviewEvent | undefined {
+  if (reviewEvent) return reviewEvent;
+  if (findings.some(finding => finding.severity === 'critical' || finding.severity === 'high')) {
+    return 'REQUEST_CHANGES';
+  }
+  if (findings.length > 0 || summaryNotesCount > 0) {
+    return 'COMMENT';
+  }
+  return 'APPROVE';
+}
+
+function buildSummaryOnlyFinding(role: string, finding: AgentFinding): string {
+  const suggestion = finding.suggestion ? ` Suggestion: ${finding.suggestion}` : '';
+  return `- [${role.toUpperCase()} - ${finding.severity.toUpperCase()}] ${finding.message}${suggestion}`;
+}
+
+export function buildGithubReviewSummary(outputs: NormalizedPrReviewAgentOutput[]): string {
+  const allFindings = outputs.flatMap(output => output.findings);
+  const attachableFindings = outputs.flatMap(output => output.attachableFindings);
+  const unattachableFindings = outputs.flatMap(output =>
+    output.unattachableFindings.map(finding => ({ role: output.role, finding })),
+  );
+  const summaryNotes = outputs.flatMap(output => output.summaryNotes.map(note => ({ role: output.role, note })));
+
+  if (allFindings.length === 0 && summaryNotes.length === 0) {
+    return 'Watchtower review complete - no actionable findings. Good to go.';
+  }
+
+  const lines: string[] = [];
+
+  if (allFindings.length > 0) {
+    lines.push(`Watchtower found ${allFindings.length} issue(s) in this PR.`);
+  } else {
+    lines.push('Watchtower review complete - no line-attachable findings were identified.');
+  }
+
+  if (attachableFindings.length > 0) {
+    lines.push(`${attachableFindings.length} inline comment(s) were prepared from line-mapped findings.`);
+  }
+  if (unattachableFindings.length > 0) {
+    lines.push(`${unattachableFindings.length} finding(s) could not be attached inline and are listed below.`);
+  }
+  if (summaryNotes.length > 0) {
+    lines.push(`${summaryNotes.length} summary note(s) are listed below.`);
+  }
+
+  if (unattachableFindings.length > 0 || summaryNotes.length > 0) {
+    lines.push('', 'Summary-only review notes:');
+    for (const { role, finding } of unattachableFindings) {
+      lines.push(buildSummaryOnlyFinding(role, finding));
+    }
+    for (const { role, note } of summaryNotes) {
+      lines.push(`- [${role.toUpperCase()} NOTE] ${note}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+export function formatSlackReviewSummary(
+  outputs: NormalizedPrReviewAgentOutput[],
+  prUrl: string,
+  reviewResult?: SubmitPrReviewResult,
+): string {
+  const allFindings = outputs.flatMap(output => output.findings);
+  const totalFindings = allFindings.length;
+  const totalSummaryNotes = outputs.reduce((sum, output) => sum + output.summaryNotes.length, 0);
+  const resolvedEvent = deriveReviewEvent(allFindings, reviewResult?.event, totalSummaryNotes);
+  const verdict = resolvedEvent === 'APPROVE' ? '✅' : resolvedEvent === 'REQUEST_CHANGES' ? '🚫' : '💬';
+
+  if (totalFindings === 0 && totalSummaryNotes === 0) {
+    if (reviewResult?.submissionMode === 'skipped') {
+      return `*PR Review Complete* - No actionable findings. GitHub review submission was skipped. ${verdict}\n${prUrl}`;
+    }
+    return `*PR Review Complete* - No actionable findings. Good to go. ${verdict}\n${prUrl}`;
+  }
+
+  const breakdown = totalFindings > 0 ? ` (${buildSeverityBreakdown(allFindings)})` : '';
+
+  if (totalFindings === 0) {
+    if (reviewResult?.submissionMode === 'skipped') {
+      return `*PR Review Complete* - ${totalSummaryNotes} review note(s) identified, but GitHub review submission was skipped. ${verdict}\n${prUrl}`;
+    }
+    return `*PR Review Complete* - ${totalSummaryNotes} review note(s) were posted in the review summary. No inline comments were attached. ${verdict}\n${prUrl}`;
+  }
+
+  if (!reviewResult || reviewResult.submissionMode === 'skipped') {
+    return `*PR Review Complete* - ${totalFindings} findings identified, but GitHub review submission was skipped${breakdown} ${verdict}\n${prUrl}`;
+  }
+
+  if (reviewResult.commentsPosted === 0) {
+    return `*PR Review Complete* - ${totalFindings} findings identified; review summary posted, but no inline comments were attached${breakdown} ${verdict}\n${prUrl}`;
+  }
+
+  if (reviewResult.commentsPosted < totalFindings) {
+    return `*PR Review Complete* - ${totalFindings} findings identified; ${reviewResult.commentsPosted} inline comments posted, ${totalFindings - reviewResult.commentsPosted} could not be attached${breakdown} ${verdict}\n${prUrl}`;
+  }
+
+  return `*PR Review Complete* - ${reviewResult.commentsPosted} inline comments posted on PR${breakdown} ${verdict}\n${prUrl}`;
 }
 
 const NO_NEW_CHANGES_TEXT =
@@ -520,13 +688,16 @@ export async function runPrReviewWorkflow(params: {
       }),
     ]);
 
-    // 5. Extract findings from each agent
-    const findingsByRole: Array<{ role: string; findings: AgentFinding[] }> = [
-      { role: 'reviewer', findings: extractFindings(reviewerResult.parsedJson ?? {}) },
-      { role: 'security', findings: extractFindings(securityResult.parsedJson ?? {}) },
-      { role: 'performance', findings: extractFindings(performanceResult.parsedJson ?? {}) },
+    // 5. Normalize findings from each agent and separate delivery-ready comments from summary-only notes.
+    const normalizedOutputs = [
+      normalizePrReviewAgentOutput('reviewer', reviewerResult),
+      normalizePrReviewAgentOutput('security', securityResult),
+      normalizePrReviewAgentOutput('performance', performanceResult),
     ];
-    const allFindings = findingsByRole.flatMap(r => r.findings);
+    const allFindings = normalizedOutputs.flatMap(output => output.findings);
+    const attachableFindings = normalizedOutputs.flatMap(output => output.attachableFindings);
+    const unattachableFindings = normalizedOutputs.flatMap(output => output.unattachableFindings);
+    const summaryNotesCount = normalizedOutputs.reduce((sum, output) => sum + output.summaryNotes.length, 0);
 
     const totalDurationMs = Date.now() - pipelineStart;
     logStep?.({
@@ -534,40 +705,77 @@ export async function runPrReviewWorkflow(params: {
       message: `Parallel PR review complete in ${Math.round(totalDurationMs / 1000)}s — ${allFindings.length} finding(s).`,
       data: {
         totalDurationMs,
-        reviewer: { ok: reviewerResult.ok, findings: findingsByRole[0].findings.length },
-        security: { ok: securityResult.ok, findings: findingsByRole[1].findings.length },
-        performance: { ok: performanceResult.ok, findings: findingsByRole[2].findings.length },
+        totalFindings: allFindings.length,
+        attachableFindings: attachableFindings.length,
+        unattachableFindings: unattachableFindings.length,
+        summaryNotes: summaryNotesCount,
+        reviewer: {
+          ok: reviewerResult.ok,
+          findings: normalizedOutputs[0].findings.length,
+          attachableFindings: normalizedOutputs[0].attachableFindings.length,
+          unattachableFindings: normalizedOutputs[0].unattachableFindings.length,
+          summaryNotes: normalizedOutputs[0].summaryNotes.length,
+          invalidFindings: normalizedOutputs[0].invalidFindings,
+        },
+        security: {
+          ok: securityResult.ok,
+          findings: normalizedOutputs[1].findings.length,
+          attachableFindings: normalizedOutputs[1].attachableFindings.length,
+          unattachableFindings: normalizedOutputs[1].unattachableFindings.length,
+          summaryNotes: normalizedOutputs[1].summaryNotes.length,
+          invalidFindings: normalizedOutputs[1].invalidFindings,
+        },
+        performance: {
+          ok: performanceResult.ok,
+          findings: normalizedOutputs[2].findings.length,
+          attachableFindings: normalizedOutputs[2].attachableFindings.length,
+          unattachableFindings: normalizedOutputs[2].unattachableFindings.length,
+          summaryNotes: normalizedOutputs[2].summaryNotes.length,
+          invalidFindings: normalizedOutputs[2].invalidFindings,
+        },
       },
     });
 
     // 6. Submit formal GitHub PR review with inline comments
-    let reviewEvent: string | undefined;
+    let reviewResult: SubmitPrReviewResult | undefined;
     if (prHeadSha) {
-      const reviewSummaryForGh =
-        allFindings.length > 0
-          ? `Watchtower found ${allFindings.length} issue(s) in this PR.`
-          : 'Watchtower review complete — no actionable findings. Good to go.';
-
-      const reviewResult = await submitPrReview({
+      reviewResult = await submitPrReview({
         owner: prContext.owner,
         repo: prContext.repo,
         pullNumber: prContext.number,
         commitId: prHeadSha,
-        findingsByRole,
-        summary: reviewSummaryForGh,
+        findingsByRole: normalizedOutputs.map(output => ({ role: output.role, findings: output.attachableFindings })),
+        summary: buildGithubReviewSummary(normalizedOutputs),
         githubToken,
       });
 
-      reviewEvent = reviewResult.event;
       logStep?.({
         stage: 'pr_review.github_review.submitted',
-        message: `GitHub PR review submitted: ${reviewResult.event} (${reviewResult.commentsPosted} inline comments).`,
-        data: reviewResult,
+        message: `GitHub PR review submitted: ${reviewResult.event} (${reviewResult.commentsPosted}/${reviewResult.attemptedComments} inline comments posted, mode=${reviewResult.submissionMode}).`,
+        data: {
+          ...reviewResult,
+          totalFindings: allFindings.length,
+          attachableFindings: attachableFindings.length,
+          unattachableFindings: unattachableFindings.length,
+          summaryNotes: summaryNotesCount,
+        },
+      });
+    } else {
+      logStep?.({
+        stage: 'pr_review.github_review.skipped',
+        message: 'Skipped GitHub PR review submission because the PR head SHA was unavailable.',
+        level: 'WARN',
+        data: {
+          totalFindings: allFindings.length,
+          attachableFindings: attachableFindings.length,
+          unattachableFindings: unattachableFindings.length,
+          summaryNotes: summaryNotesCount,
+        },
       });
     }
 
     // 7. Post formatted summary to Slack
-    const slackSummary = formatSlackReviewSummary(findingsByRole, prContext.url, reviewEvent);
+    const slackSummary = formatSlackReviewSummary(normalizedOutputs, prContext.url, reviewResult);
 
     await slack.chat.postMessage({
       channel: task.event.channelId,
@@ -587,7 +795,14 @@ export async function runPrReviewWorkflow(params: {
         ...(prHeadSha ? { prHeadSha } : {}),
         prUrl: prContext.url,
         totalFindings: allFindings.length,
-        reviewEvent,
+        attachableFindings: attachableFindings.length,
+        unattachableFindings: unattachableFindings.length,
+        summaryNotes: summaryNotesCount,
+        reviewEvent: reviewResult?.event,
+        attemptedComments: reviewResult?.attemptedComments ?? 0,
+        commentsPosted: reviewResult?.commentsPosted ?? 0,
+        submissionMode: reviewResult?.submissionMode ?? 'skipped',
+        fallbackReason: reviewResult?.fallbackReason,
       },
     };
   }

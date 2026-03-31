@@ -1,6 +1,6 @@
 {
   "type": "object",
-  "required": ["approved", "findings", "blockers"],
+  "required": ["approved", "findings", "summaryNotes", "blockers"],
   "properties": {
     "approved": {
       "type": "boolean"
@@ -9,7 +9,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["severity", "category", "message"],
+        "required": ["severity", "category", "message", "file", "line"],
         "properties": {
           "severity": {
             "type": "string",
@@ -22,6 +22,10 @@
           "suggestion": { "type": "string" }
         }
       }
+    },
+    "summaryNotes": {
+      "type": "array",
+      "items": { "type": "string" }
     },
     "blockers": {
       "type": "array",
