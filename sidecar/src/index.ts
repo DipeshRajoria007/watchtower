@@ -22,7 +22,8 @@ import { SocketSlackClient } from './slack/socketClient.js';
 import { cleanupStaleWorkspaces } from './workspaces/workspaceManager.js';
 import { loadWorkflowTemplates } from './workflows/registry.js';
 import { fetchThreadContext } from './slack/threadContext.js';
-import { resolveUserGroupMembers } from './slack/userGroupResolver.js';
+import { resolveUserGroup } from './slack/userGroupResolver.js';
+import { shouldIgnoreSlackMessage } from './slack/intakeGuards.js';
 import { registerActiveJob, unregisterActiveJob, cancelJob } from './state/activeJobs.js';
 import { JobStore } from './state/jobStore.js';
 import type { SlackEventEnvelope, SlackReactionEvent, WorkflowStepLog } from './types/contracts.js';
@@ -43,8 +44,6 @@ const OPS_FEED_INTERVAL_MS = 30 * 60 * 1000;
 const DAILY_DIGEST_TICK_MS = 60 * 1000;
 const INCIDENT_TICK_MS = 5 * 60 * 1000;
 const INCIDENT_CADENCE_MINUTES = 30;
-
-const nonActionableSubtypes = new Set(['message_changed', 'message_deleted', 'bot_message']);
 
 function dedupeKey(event: SlackEventEnvelope, intent: string): string {
   return `${event.channelId}:${event.threadTs}:${event.eventTs}:${intent}`;
@@ -472,7 +471,14 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
     'slack event received',
   );
 
-  if (event.messageSubtype && nonActionableSubtypes.has(event.messageSubtype)) {
+  if (
+    shouldIgnoreSlackMessage({
+      messageSubtype: event.messageSubtype,
+      text: event.text,
+      channelType: event.channelType,
+      config,
+    })
+  ) {
     logger.info({ eventId: event.eventId, subtype: event.messageSubtype }, 'skip message subtype');
     return;
   }
@@ -976,17 +982,23 @@ async function main(): Promise<void> {
     process.exit(0);
   });
 
-  await client.start();
-  logger.info('autonomous feed/digest/incident posting disabled; mention-triggered replies only');
-
   // Resolve core-dev user group members if a group handle is configured
   if (config.coreDevSlackUserGroup) {
     const resolveCoreDevGroup = async () => {
-      const members = await resolveUserGroupMembers(client.webClient, config.coreDevSlackUserGroup);
-      if (members.length > 0) {
-        config.coreDevSlackUserIds = [...new Set([...members, ...config.ownerSlackUserIds])];
+      const resolved = await resolveUserGroup(client.webClient, config.coreDevSlackUserGroup);
+      if (resolved.id) {
+        config.coreDevSlackUserGroupId = resolved.id;
+      }
+
+      config.coreDevSlackUserIds = [...new Set([...resolved.members, ...config.ownerSlackUserIds])];
+
+      if (resolved.id || resolved.members.length > 0) {
         logger.info(
-          { handle: config.coreDevSlackUserGroup, memberCount: config.coreDevSlackUserIds.length },
+          {
+            handle: config.coreDevSlackUserGroup,
+            groupId: config.coreDevSlackUserGroupId ?? null,
+            memberCount: config.coreDevSlackUserIds.length,
+          },
           'core-dev user group resolved',
         );
       }
@@ -995,6 +1007,9 @@ async function main(): Promise<void> {
     // Refresh every 30 minutes
     setInterval(resolveCoreDevGroup, 30 * 60 * 1000);
   }
+
+  await client.start();
+  logger.info('autonomous feed/digest/incident posting disabled; mention-triggered replies only');
 
   // Poll for cancel requests from the Watchtower UI (written to SQLite by Tauri)
   setInterval(() => {

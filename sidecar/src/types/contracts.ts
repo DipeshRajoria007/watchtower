@@ -30,6 +30,7 @@ export interface AppConfig {
   ownerSlackUserIds: string[];
   coreDevSlackUserIds: string[];
   coreDevSlackUserGroup: string;
+  coreDevSlackUserGroupId?: string;
   botUserId: string;
   slackBotToken: string;
   slackAppToken: string;
@@ -103,7 +104,7 @@ export interface PrContext {
 export interface NormalizedTask {
   event: SlackEventEnvelope;
   mentionDetected: boolean;
-  mentionType: 'bot' | 'owner' | 'none';
+  mentionType: 'bot' | 'indirect' | 'none';
   isOwnerAuthor: boolean;
   isCoreDevAuthor: boolean;
   intent: WorkflowIntent;

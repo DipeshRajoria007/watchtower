@@ -3,13 +3,12 @@ import { detectMention } from '../router/intentParser.js';
 import { logger } from '../logging/logger.js';
 import type { AppConfig, SlackEventEnvelope } from '../types/contracts.js';
 import type { JobStore } from '../state/jobStore.js';
+import { extractSlackActorId, shouldIgnoreSlackMessage } from './intakeGuards.js';
 
 const CATCHUP_STATE_KEY = 'mention_catchup_cursor_ts';
 const CATCHUP_INTERVAL_MS = 2 * 60 * 1000;
 const CATCHUP_LOOKBACK_SECONDS = 60 * 60 * 24;
 const CATCHUP_MAX_MESSAGES_PER_CHANNEL = 200;
-const NON_ACTIONABLE_SUBTYPES = new Set(['message_changed', 'message_deleted', 'bot_message']);
-
 type CatchupDeps = {
   webClient: WebClient;
   config: AppConfig;
@@ -29,7 +28,10 @@ async function runMentionCatchup(deps: CatchupDeps): Promise<void> {
   const nowTs = Math.floor(Date.now() / 1000);
   const storedCursorRaw = store.getState(CATCHUP_STATE_KEY);
   const storedCursor = storedCursorRaw ? Number(storedCursorRaw) : 0;
-  const oldestTs = Number.isFinite(storedCursor) && storedCursor > 0 ? Math.max(0, storedCursor - 5) : nowTs - CATCHUP_LOOKBACK_SECONDS;
+  const oldestTs =
+    Number.isFinite(storedCursor) && storedCursor > 0
+      ? Math.max(0, storedCursor - 5)
+      : nowTs - CATCHUP_LOOKBACK_SECONDS;
 
   logger.info(
     {
@@ -37,7 +39,7 @@ async function runMentionCatchup(deps: CatchupDeps): Promise<void> {
       oldestTs,
       cursorTs: storedCursor || null,
     },
-    'starting missed mention catch-up scan'
+    'starting missed mention catch-up scan',
   );
 
   const channelIds = await discoverChannels(webClient, store, config);
@@ -46,7 +48,7 @@ async function runMentionCatchup(deps: CatchupDeps): Promise<void> {
       component: 'slack-catchup',
       channels: channelIds.length,
     },
-    'resolved channels for missed mention catch-up'
+    'resolved channels for missed mention catch-up',
   );
 
   let recovered = 0;
@@ -73,12 +75,18 @@ async function runMentionCatchup(deps: CatchupDeps): Promise<void> {
       maxSeenTs = Math.max(maxSeenTs, toEpochSeconds(eventTs));
 
       const subtype = message.subtype ? String(message.subtype) : '';
-      if (subtype && NON_ACTIONABLE_SUBTYPES.has(subtype)) {
+      if (
+        shouldIgnoreSlackMessage({
+          messageSubtype: subtype || undefined,
+          text: String(message.text ?? ''),
+          config,
+        })
+      ) {
         continue;
       }
 
       const text = String(message.text ?? '');
-      const userId = String(message.user ?? '');
+      const userId = extractSlackActorId(message);
       if (!text || !userId || userId === config.botUserId) {
         continue;
       }
@@ -94,7 +102,13 @@ async function runMentionCatchup(deps: CatchupDeps): Promise<void> {
       }
 
       const threadTs = String(message.thread_ts ?? message.ts ?? '');
-      const alreadyResponded = await hasBotResponseAfterMention(webClient, channelId, threadTs, eventTs, config.botUserId);
+      const alreadyResponded = await hasBotResponseAfterMention(
+        webClient,
+        channelId,
+        threadTs,
+        eventTs,
+        config.botUserId,
+      );
       if (alreadyResponded) {
         store.recordEvent(replayEventId, channelId, threadTs);
         continue;
@@ -126,7 +140,7 @@ async function runMentionCatchup(deps: CatchupDeps): Promise<void> {
       scannedMessages,
       nextCursor,
     },
-    'completed missed mention catch-up scan'
+    'completed missed mention catch-up scan',
   );
 }
 
@@ -158,7 +172,7 @@ async function discoverChannels(client: WebClient, store: JobStore, config: AppC
         component: 'slack-catchup',
         error: String(error),
       },
-      'failed to enumerate channels via users.conversations; falling back to known channels'
+      'failed to enumerate channels via users.conversations; falling back to known channels',
     );
   }
 
@@ -168,7 +182,7 @@ async function discoverChannels(client: WebClient, store: JobStore, config: AppC
 async function fetchChannelHistory(
   client: WebClient,
   channelId: string,
-  oldestTs: number
+  oldestTs: number,
 ): Promise<Array<Record<string, unknown>>> {
   const oldest = String(oldestTs);
   const messages: Array<Record<string, unknown>> = [];
@@ -197,7 +211,7 @@ async function fetchChannelHistory(
         channelId,
         error: String(error),
       },
-      'failed to fetch channel history during missed mention catch-up'
+      'failed to fetch channel history during missed mention catch-up',
     );
   }
 
@@ -209,7 +223,7 @@ async function hasBotResponseAfterMention(
   channelId: string,
   threadTs: string,
   mentionTs: string,
-  botUserId: string
+  botUserId: string,
 ): Promise<boolean> {
   try {
     const response = await client.conversations.replies({
@@ -237,7 +251,7 @@ async function hasBotResponseAfterMention(
         threadTs,
         error: String(error),
       },
-      'failed to inspect thread replies while checking missed mention response status'
+      'failed to inspect thread replies while checking missed mention response status',
     );
     return true;
   }
@@ -247,4 +261,3 @@ function toEpochSeconds(ts: string): number {
   const value = Number(ts);
   return Number.isFinite(value) ? value : 0;
 }
-

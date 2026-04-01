@@ -24,6 +24,12 @@ function makeDb(): string {
       pr_review_timeout_ms INTEGER NOT NULL DEFAULT 720000,
       bug_fix_timeout_ms INTEGER NOT NULL DEFAULT 2700000,
       repo_classifier_threshold REAL NOT NULL DEFAULT 0.75,
+      multi_agent_enabled INTEGER NOT NULL DEFAULT 0,
+      agent_backend TEXT NOT NULL DEFAULT 'codex',
+      pm_slack_user_ids TEXT NOT NULL DEFAULT '',
+      pm_task_timeout_ms INTEGER NOT NULL DEFAULT 600000,
+      core_dev_slack_user_ids TEXT NOT NULL DEFAULT '',
+      core_dev_slack_user_group TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     INSERT OR IGNORE INTO app_settings(id) VALUES (1);
@@ -38,7 +44,8 @@ describe('loadConfigFromDb', () => {
     const dbPath = makeDb();
     const db = new Database(dbPath);
 
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE app_settings
       SET slack_bot_token = ?,
           slack_app_token = ?,
@@ -52,7 +59,8 @@ describe('loadConfigFromDb', () => {
           bug_fix_timeout_ms = ?,
           repo_classifier_threshold = ?
       WHERE id = 1
-    `).run(
+    `,
+    ).run(
       'xoxb-valid',
       'xapp-valid',
       'U1,U2',

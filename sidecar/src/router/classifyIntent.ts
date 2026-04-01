@@ -28,9 +28,9 @@ Classification rules:
 - If the user says they want something done, that is ALWAYS IMPLEMENTATION regardless of whether it might already exist. The user's explicit request takes absolute priority.
 - When in doubt between IMPLEMENTATION and INFORMATIONAL, prefer IMPLEMENTATION (safer to run the full pipeline than skip a real request).`;
 
-const OWNER_MENTION_ADDENDUM = `
+const INDIRECT_MENTION_ADDENDUM = `
 IMPORTANT — INDIRECT MENTION CONTEXT:
-This message was NOT sent directly to miniOG. It was detected because the team owner (@theOG) was mentioned. The message might be a human-to-human conversation where the owner was tagged — NOT a request for AI assistance.
+This message was NOT sent directly to miniOG. It was detected because the team owner or configured core-dev group was mentioned. The message might be a human-to-human conversation where someone was tagged for visibility — NOT a request for AI assistance.
 
 Additional option:
 - NONE: The message is a human-to-human conversation that does not need AI involvement. The owner was mentioned as part of normal team communication (status updates, FYIs, discussions, tagging for awareness, meeting coordination, etc.). miniOG should stay silent.
@@ -46,12 +46,12 @@ function buildClassifyUserPrompt(params: {
   userMessage: string;
   threadContext?: string;
   hasPrUrl: boolean;
-  mentionType: 'bot' | 'owner' | 'none';
+  mentionType: 'bot' | 'indirect' | 'none';
 }): string {
   const lines = [`User message: "${params.userMessage}"`];
   lines.push(`Contains GitHub PR URL: ${params.hasPrUrl}`);
   lines.push(
-    `Mention type: ${params.mentionType === 'bot' ? 'direct bot mention (@miniOG)' : 'indirect owner mention (@theOG)'}`,
+    `Mention type: ${params.mentionType === 'bot' ? 'direct bot mention (@miniOG)' : 'indirect routed mention (owner/core-dev group)'}`,
   );
   if (params.threadContext) {
     lines.push(`\nThread context:\n${params.threadContext}`);
@@ -76,11 +76,11 @@ export async function classifyWorkflowIntent(params: {
   userMessage: string;
   threadContext?: string;
   hasPrUrl: boolean;
-  mentionType?: 'bot' | 'owner' | 'none';
+  mentionType?: 'bot' | 'indirect' | 'none';
   logStep?: WorkflowStepLogger;
 }): Promise<IntentClassification> {
   const { userMessage, threadContext, hasPrUrl, mentionType = 'bot', logStep } = params;
-  const isIndirectMention = mentionType === 'owner';
+  const isIndirectMention = mentionType === 'indirect';
 
   logStep?.({
     stage: 'router.classify.start',
@@ -89,7 +89,7 @@ export async function classifyWorkflowIntent(params: {
   });
 
   try {
-    const prompt = isIndirectMention ? `${CLASSIFY_PROMPT_BASE}\n${OWNER_MENTION_ADDENDUM}` : CLASSIFY_PROMPT_BASE;
+    const prompt = isIndirectMention ? `${CLASSIFY_PROMPT_BASE}\n${INDIRECT_MENTION_ADDENDUM}` : CLASSIFY_PROMPT_BASE;
 
     const returnFormat = isIndirectMention
       ? `\nReturn strict JSON:\n{\n  "intent": "PR_REVIEW" | "IMPLEMENTATION" | "INFORMATIONAL" | "CONVERSATIONAL" | "NONE",\n  "confidence": number between 0 and 1,\n  "reasoning": "one sentence explaining why"\n}`

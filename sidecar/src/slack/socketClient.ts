@@ -2,6 +2,7 @@ import { App, LogLevel } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 import type { AppConfig, SlackEventEnvelope, SlackReactionEvent } from '../types/contracts.js';
 import { logger } from '../logging/logger.js';
+import { extractSlackActorId } from './intakeGuards.js';
 
 type SlackEventHandler = (event: SlackEventEnvelope, client: WebClient) => Promise<void>;
 type SlackReactionHandler = (event: SlackReactionEvent, client: WebClient) => Promise<void>;
@@ -30,7 +31,7 @@ export class SocketSlackClient {
     this.app.event('app_mention', async ({ event, body, client }) => {
       const normalized = this.normalizeEnvelope(
         event as unknown as Record<string, unknown>,
-        body as unknown as Record<string, unknown>
+        body as unknown as Record<string, unknown>,
       );
       logger.info(
         {
@@ -40,7 +41,7 @@ export class SocketSlackClient {
           channelId: normalized.channelId,
           threadTs: normalized.threadTs,
         },
-        'received app_mention event'
+        'received app_mention event',
       );
       await this.onEvent(normalized, client);
     });
@@ -48,7 +49,7 @@ export class SocketSlackClient {
     this.app.event('message', async ({ event, body, client }) => {
       const normalized = this.normalizeEnvelope(
         event as unknown as Record<string, unknown>,
-        body as unknown as Record<string, unknown>
+        body as unknown as Record<string, unknown>,
       );
       logger.info(
         {
@@ -59,7 +60,7 @@ export class SocketSlackClient {
           threadTs: normalized.threadTs,
           subtype: normalized.messageSubtype ?? null,
         },
-        'received message event'
+        'received message event',
       );
       await this.onEvent(normalized, client);
     });
@@ -71,7 +72,7 @@ export class SocketSlackClient {
 
       const normalized = this.normalizeReactionEnvelope(
         event as unknown as Record<string, unknown>,
-        body as unknown as Record<string, unknown>
+        body as unknown as Record<string, unknown>,
       );
 
       logger.info(
@@ -83,7 +84,7 @@ export class SocketSlackClient {
           threadTs: normalized.threadTs,
           reaction: normalized.reaction,
         },
-        'received reaction_added event'
+        'received reaction_added event',
       );
       await this.onReaction(normalized, client);
     });
@@ -100,7 +101,7 @@ export class SocketSlackClient {
           channelId: normalized.channelId,
           threadTs: normalized.threadTs,
         },
-        'received /miniog command'
+        'received /miniog command',
       );
       await this.onEvent(normalized, client);
     });
@@ -117,7 +118,7 @@ export class SocketSlackClient {
           channelId: normalized.channelId,
           threadTs: normalized.threadTs,
         },
-        'received /wt command'
+        'received /wt command',
       );
       await this.onEvent(normalized, client);
     });
@@ -134,7 +135,7 @@ export class SocketSlackClient {
           channelId: normalized.channelId,
           threadTs: normalized.threadTs,
         },
-        'received /watchtower command'
+        'received /watchtower command',
       );
       await this.onEvent(normalized, client);
     });
@@ -148,7 +149,7 @@ export class SocketSlackClient {
             component: 'slack',
             eventType: 'shortcut',
           },
-          'received non-message shortcut; skipping enqueue'
+          'received non-message shortcut; skipping enqueue',
         );
         return;
       }
@@ -161,7 +162,7 @@ export class SocketSlackClient {
           channelId: normalized.channelId,
           threadTs: normalized.threadTs,
         },
-        'received message shortcut event'
+        'received message shortcut event',
       );
       await this.onEvent(normalized, client);
     });
@@ -173,7 +174,7 @@ export class SocketSlackClient {
     const eventTs = String(event.ts ?? body.event_ts ?? '');
     const threadTs = String(event.thread_ts ?? event.ts ?? '');
     const text = String(event.text ?? '');
-    const userId = String(event.user ?? '');
+    const userId = extractSlackActorId(event);
     const messageSubtype = event.subtype ? String(event.subtype) : undefined;
     const eventId = String(body.event_id ?? `${channelId}:${eventTs}`);
 
