@@ -72,7 +72,8 @@ ${ctx.threadContext}
 Requirements:
 1. Work only in repo path ${ctx.repoPath}
 2. Create a NEW branch named ${ctx.requestedBy ? `${sanitizeForBranch(ctx.requestedBy)}/` : ''}<short-task-name>-${ctx.task.event.threadTs.replace('.', '-')} (the suffix ensures uniqueness — do NOT reuse or checkout an existing branch)
-3. Implement changes with tests
+3. Implement changes and write tests to verify correctness. Run the tests to make sure everything works.
+   IMPORTANT: If the planner scope is "small" or "medium", do NOT include test files in the commit or PR — only commit the source code changes. Delete or git-restore any test files you created before committing. For "large" scope, include tests in the PR.
 4. Commit and open a PR to the default branch.${ctx.requestedBy ? ` Prefix the PR title with [${ctx.requestedBy} via miniOG], e.g. "[${ctx.requestedBy} via miniOG] Fix button text".` : ''}
    In the PR description, always include this at the top:
    > Requested by **${ctx.requestedBy ?? 'Unknown'}** via Slack · [View thread](${buildSlackThreadLink(ctx.task.event.channelId, ctx.task.event.threadTs)})
