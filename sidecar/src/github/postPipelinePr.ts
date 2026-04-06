@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createPullRequest } from './createPr.js';
 import { logger } from '../logging/logger.js';
+import { sanitizeForBranch, buildSlackThreadLink } from '../workflows/shared/workflowUtils.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -104,7 +105,8 @@ export async function createPrFromWorkspace(params: {
 
     // If we need a new branch (detached HEAD or on base branch)
     if (currentBranch === 'HEAD' || currentBranch === baseBranch) {
-      branchName = `watchtower/fix-${safeBranchTs}`;
+      const branchPrefix = requestedBy ? `${sanitizeForBranch(requestedBy)}/` : '';
+      branchName = `${branchPrefix}fix-${safeBranchTs}`;
       await git(repoPath, ['checkout', '-b', branchName]);
       onLog?.(`Created branch: ${branchName}`);
     }
@@ -129,8 +131,13 @@ export async function createPrFromWorkspace(params: {
     }
 
     // Create PR
-    const commitTitle = summary.length > 72 ? `${summary.slice(0, 69)}...` : summary;
+    const rawTitle = summary.length > 72 ? `${summary.slice(0, 69)}...` : summary;
+    const commitTitle = requestedBy ? `[${requestedBy} via miniOG] ${rawTitle}` : rawTitle;
+    const slackLink = channelId ? buildSlackThreadLink(channelId, threadTs) : '';
+    const threadLinkText = slackLink ? ` · [View thread](${slackLink})` : '';
     const prBody = [
+      `> Requested by **${requestedBy ?? 'Unknown'}** via Slack${threadLinkText}`,
+      '',
       '## Summary',
       summary,
       '',

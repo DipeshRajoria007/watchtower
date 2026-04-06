@@ -1,4 +1,5 @@
 import type { AgentContext, AgentRole } from './types.js';
+import { sanitizeForBranch, buildSlackThreadLink } from '../workflows/shared/workflowUtils.js';
 
 function serializePreviousSteps(ctx: AgentContext): string {
   if (ctx.previousSteps.length === 0) return 'No previous agent steps.';
@@ -70,9 +71,13 @@ ${ctx.threadContext}
 
 Requirements:
 1. Work only in repo path ${ctx.repoPath}
-2. Create a NEW branch named codex/<short-task-name>-${ctx.task.event.threadTs.replace('.', '-')} (the suffix ensures uniqueness — do NOT reuse or checkout an existing branch)
+2. Create a NEW branch named ${ctx.requestedBy ? `${sanitizeForBranch(ctx.requestedBy)}/` : ''}<short-task-name>-${ctx.task.event.threadTs.replace('.', '-')} (the suffix ensures uniqueness — do NOT reuse or checkout an existing branch)
 3. Implement changes with tests
-4. Commit and open a PR to the default branch. In the PR description, always include this metadata block at the end:
+4. Commit and open a PR to the default branch.${ctx.requestedBy ? ` Prefix the PR title with [${ctx.requestedBy} via miniOG], e.g. "[${ctx.requestedBy} via miniOG] Fix button text".` : ''}
+   In the PR description, always include this at the top:
+   > Requested by **${ctx.requestedBy ?? 'Unknown'}** via Slack · [View thread](${buildSlackThreadLink(ctx.task.event.channelId, ctx.task.event.threadTs)})
+
+   And this metadata block at the end:
    ---
    **Raised by:** miniOG (Watchtower)${ctx.requestedBy ? `\n   **Triggered by:** ${ctx.requestedBy} via Slack` : ''}
    **Workflow:** ${ctx.workflowIntent}
