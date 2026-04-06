@@ -176,6 +176,24 @@ export function extractReplyFromCodexResult(result: {
   return raw.trim();
 }
 
+const SLACK_WORKSPACE_DOMAIN = 'newton-school';
+
+/** Sanitize a display name for use in git branch names (lowercase, alphanumeric + hyphens). */
+export function sanitizeForBranch(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 30);
+}
+
+/** Build a Slack deep link to a specific thread message. */
+export function buildSlackThreadLink(channelId: string, threadTs: string): string {
+  const messageId = `p${threadTs.replace('.', '')}`;
+  return `https://${SLACK_WORKSPACE_DOMAIN}.slack.com/archives/${channelId}/${messageId}`;
+}
+
 export function resolveOwnerWorkspaceRoot(config: AppConfig): string {
   const webParent = path.dirname(config.repoPaths.newtonWeb);
   const apiParent = path.dirname(config.repoPaths.newtonApi);
