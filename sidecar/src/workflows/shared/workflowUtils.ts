@@ -221,9 +221,19 @@ export async function prepareWorkflowContext(params: {
       userInfo.user?.profile?.display_name ||
       userInfo.user?.profile?.real_name ||
       userInfo.user?.real_name ||
-      userInfo.user?.name;
-  } catch {
-    // Non-fatal
+      userInfo.user?.name ||
+      undefined;
+    if (!requestedBy) {
+      logStep?.({
+        stage: 'workflow.user.resolve',
+        message: `Could not resolve display name for Slack user ${task.event.userId}`,
+      });
+    }
+  } catch (err) {
+    logStep?.({
+      stage: 'workflow.user.resolve',
+      message: `Failed to fetch Slack user info for ${task.event.userId}: ${String(err)}`,
+    });
   }
 
   // Fetch thread context
