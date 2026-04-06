@@ -198,12 +198,19 @@ export function diagnoseFailure(input: {
   }
 
   if (haystack.includes('missing_scope')) {
+    // Extract context about which API call triggered the missing_scope error
+    const scopeLog = input.logs.find(
+      entry => entry.message.toLowerCase().includes('missing_scope') || entry.stage.includes('user.resolve'),
+    );
+    const scopeContext = scopeLog?.stage ?? '';
+    const isUserResolve = scopeContext.includes('user.resolve');
+    const missingScope = isUserResolve ? 'users:read' : 'unknown';
     return {
       errorKind: 'SLACK_SCOPE',
-      summary: 'Slack scope is missing for one of the requested actions.',
+      summary: `Slack scope is missing: likely \`${missingScope}\` (from ${scopeContext || 'unknown API call'}).`,
       actions: [
-        'Add missing scope to Slack app (for example reactions:write).',
-        'Reinstall/re-authorize the app in the workspace.',
+        `Add the missing scope (\`${missingScope}\`) to the Slack app.`,
+        'Reinstall/re-authorize the app in the workspace after adding scopes.',
       ],
     };
   }
