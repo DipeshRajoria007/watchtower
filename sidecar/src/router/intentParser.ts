@@ -2,6 +2,7 @@ import type { AppConfig, NormalizedTask, PrContext, SlackEventEnvelope, Workflow
 import { hasDevAssistPrefix, hasNaturalDevAssistAlias } from './devAssistParser.js';
 
 const GITHUB_PR_REGEX = /https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)/g;
+const USER_GROUP_MENTION_REGEX = /<!subteam\^([A-Z0-9]+)(?:\|[^>]+)?>/g;
 
 /**
  * Deterministic check: does the message ask to deploy newton-web to production?
@@ -32,7 +33,7 @@ export function detectMention(
   text: string,
   config: AppConfig,
   channelType?: string,
-): { detected: boolean; type: 'bot' | 'owner' | 'none' } {
+): { detected: boolean; type: 'bot' | 'indirect' | 'none' } {
   if (!text) {
     if (channelType === 'im') {
       return { detected: true, type: 'bot' };
@@ -47,7 +48,14 @@ export function detectMention(
 
   for (const ownerId of config.ownerSlackUserIds) {
     if (text.includes(`<@${ownerId}>`)) {
-      return { detected: true, type: 'owner' };
+      return { detected: true, type: 'indirect' };
+    }
+  }
+
+  if (config.coreDevSlackUserGroupId) {
+    const groupMentions = [...text.matchAll(USER_GROUP_MENTION_REGEX)];
+    if (groupMentions.some(match => match[1] === config.coreDevSlackUserGroupId)) {
+      return { detected: true, type: 'indirect' };
     }
   }
 
@@ -82,7 +90,7 @@ export function extractPrContext(texts: string[]): PrContext | undefined {
 function inferIntent(
   event: SlackEventEnvelope,
   config: AppConfig,
-  mention: { detected: boolean; type: 'bot' | 'owner' | 'none' },
+  mention: { detected: boolean; type: 'bot' | 'indirect' | 'none' },
 ): WorkflowIntent {
   // Any explicit wt/watchtower prefix is always routed to dev-assist, even for owners.
   if (mention.detected && hasDevAssistPrefix(event.text ?? '')) {

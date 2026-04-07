@@ -37,10 +37,26 @@ const baseEvent: SlackEventEnvelope = {
 };
 
 describe('intentParser', () => {
-  it('detects bot and owner mentions', () => {
+  it('detects direct bot and indirect owner mentions', () => {
     expect(detectMention('ping <@UBOT1>', config)).toEqual({ detected: true, type: 'bot' });
-    expect(detectMention('ping <@UOWNER1>', config)).toEqual({ detected: true, type: 'owner' });
+    expect(detectMention('ping <@UOWNER1>', config)).toEqual({ detected: true, type: 'indirect' });
     expect(detectMention('no mention', config)).toEqual({ detected: false, type: 'none' });
+  });
+
+  it('detects configured core-dev user-group mentions as indirect triggers', () => {
+    const groupConfig = {
+      ...config,
+      coreDevSlackUserGroupId: 'SCOREDEV1',
+    };
+
+    expect(detectMention('ping <!subteam^SCOREDEV1>', groupConfig)).toEqual({
+      detected: true,
+      type: 'indirect',
+    });
+    expect(detectMention('ping <!subteam^SOTHERTEAM>', groupConfig)).toEqual({
+      detected: false,
+      type: 'none',
+    });
   });
 
   it('treats direct-message text as implicit bot mention', () => {
@@ -224,6 +240,25 @@ describe('intentParser', () => {
     );
 
     expect(task.intent).toBe('OWNER_AUTOPILOT');
+  });
+
+  it('registers core-dev group PR review requests as indirect mentions with PR context', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        text: '<!subteam^SCOREDEV1> please review and merge https://github.com/Newton-School/newton-web/pull/7866',
+      },
+      {
+        ...config,
+        coreDevSlackUserGroupId: 'SCOREDEV1',
+      },
+      [],
+    );
+
+    expect(task.mentionDetected).toBe(true);
+    expect(task.mentionType).toBe('indirect');
+    expect(task.intent).toBe('UNKNOWN');
+    expect(task.prContext?.number).toBe(7866);
   });
 
   it('extracts PR context even though intent stays OWNER_AUTOPILOT (AI refines in router)', () => {

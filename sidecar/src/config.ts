@@ -147,6 +147,7 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
     ownerSlackUserIds,
     coreDevSlackUserIds,
     coreDevSlackUserGroup: settings.core_dev_slack_user_group.trim(),
+    coreDevSlackUserGroupId: undefined,
     botUserId: settings.bot_user_id.trim(),
     slackBotToken: settings.slack_bot_token.trim(),
     slackAppToken: settings.slack_app_token.trim(),
