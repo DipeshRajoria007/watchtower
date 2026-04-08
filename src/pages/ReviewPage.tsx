@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { toast } from "sonner";
-import { DiffViewer } from "../components/DiffViewer";
-import { EmptyState, PageIntro, SectionCard } from "../components/primitives";
-import type { JobDiff, CreatePrResponse } from "../types";
+import { useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { toast } from 'sonner';
+import { DiffViewer } from '../components/DiffViewer';
+import { EmptyState, PageIntro, SectionCard } from '../components/primitives';
+import type { JobDiff, CreatePrResponse } from '../types';
 
 type ReviewPageProps = {
   jobId: string;
@@ -13,8 +13,8 @@ type ReviewPageProps = {
 export function ReviewPage({ jobId, onBack }: ReviewPageProps) {
   const [diff, setDiff] = useState<JobDiff | null>(null);
   const [loading, setLoading] = useState(true);
-  const [prTitle, setPrTitle] = useState("");
-  const [prBody, setPrBody] = useState("");
+  const [prTitle, setPrTitle] = useState('');
+  const [prBody, setPrBody] = useState('');
   const [creatingPr, setCreatingPr] = useState(false);
   const [prUrl, setPrUrl] = useState<string | null>(null);
 
@@ -23,16 +23,16 @@ export function ReviewPage({ jobId, onBack }: ReviewPageProps) {
 
     const loadDiff = async () => {
       try {
-        const result = await invoke<JobDiff | null>("get_job_diff", { jobId });
+        const result = await invoke<JobDiff | null>('get_job_diff', { jobId });
         if (active) {
           setDiff(result);
           if (result) {
-            setPrTitle(`miniOG: ${result.branchName.replace("miniog/", "")}`);
+            setPrTitle(`miniOG: ${result.branchName.replace('miniog/', '')}`);
           }
         }
       } catch (err) {
         if (active) {
-          toast.error("Failed to load diff", { description: String(err) });
+          toast.error('Failed to load diff', { description: String(err) });
         }
       } finally {
         if (active) setLoading(false);
@@ -50,35 +50,29 @@ export function ReviewPage({ jobId, onBack }: ReviewPageProps) {
 
     setCreatingPr(true);
     try {
-      const result = await invoke<CreatePrResponse>("create_pr_from_job", {
+      const result = await invoke<CreatePrResponse>('create_pr_from_job', {
         jobId,
         title: prTitle,
         body: prBody,
       });
       setPrUrl(result.prUrl);
-      toast.success("Pull request created", {
+      toast.success('Pull request created', {
         description: result.prUrl,
       });
     } catch (err) {
-      toast.error("Failed to create PR", { description: String(err) });
+      toast.error('Failed to create PR', { description: String(err) });
     } finally {
       setCreatingPr(false);
     }
   };
 
-  const repoName = diff?.repoPath.split("/").pop() ?? "";
-  const compareUrl = diff
-    ? `https://github.com/Newton-School/${repoName}/compare/main...${diff.branchName}`
-    : "";
+  const repoName = diff?.repoPath.split('/').pop() ?? '';
+  const compareUrl = diff ? `https://github.com/Newton-School/${repoName}/compare/main...${diff.branchName}` : '';
 
   if (loading) {
     return (
       <div className="page-stack">
-        <PageIntro
-          eyebrow="PM Workflow"
-          title="Review Changes"
-          description="Loading diff data for this job."
-        />
+        <PageIntro eyebrow="PM Workflow" title="Review Changes" description="Loading diff data for this job." />
         <SectionCard title="Loading" subtitle="Fetching diff from database.">
           <EmptyState>Loading diff...</EmptyState>
         </SectionCard>
@@ -119,11 +113,7 @@ export function ReviewPage({ jobId, onBack }: ReviewPageProps) {
         }
       />
 
-      <SectionCard
-        title="Diff Viewer"
-        subtitle={`Showing changes on ${diff.branchName}`}
-        count={diff.files.length}
-      >
+      <SectionCard title="Diff Viewer" subtitle={`Showing changes on ${diff.branchName}`} count={diff.files.length}>
         <DiffViewer
           branchName={diff.branchName}
           diffText={diff.diffText}
@@ -133,18 +123,10 @@ export function ReviewPage({ jobId, onBack }: ReviewPageProps) {
         />
       </SectionCard>
 
-      <SectionCard
-        title="Actions"
-        subtitle="Review the changes above, then create a PR or view on GitHub."
-      >
+      <SectionCard title="Actions" subtitle="Review the changes above, then create a PR or view on GitHub.">
         <div className="review-actions">
           <div className="review-actions-row">
-            <a
-              className="ghost-button"
-              href={compareUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
+            <a className="ghost-button" href={compareUrl} target="_blank" rel="noopener noreferrer">
               View on GitHub
             </a>
           </div>
@@ -160,18 +142,13 @@ export function ReviewPage({ jobId, onBack }: ReviewPageProps) {
             <div className="review-pr-form">
               <label className="field">
                 <span>PR Title</span>
-                <input
-                  type="text"
-                  value={prTitle}
-                  onChange={(e) => setPrTitle(e.target.value)}
-                  placeholder="PR title"
-                />
+                <input type="text" value={prTitle} onChange={e => setPrTitle(e.target.value)} placeholder="PR title" />
               </label>
               <label className="field">
                 <span>PR Body</span>
                 <textarea
                   value={prBody}
-                  onChange={(e) => setPrBody(e.target.value)}
+                  onChange={e => setPrBody(e.target.value)}
                   placeholder="Describe the changes..."
                   rows={4}
                 />
@@ -182,7 +159,7 @@ export function ReviewPage({ jobId, onBack }: ReviewPageProps) {
                 onClick={handleCreatePr}
                 disabled={creatingPr || !prTitle.trim()}
               >
-                {creatingPr ? "Creating PR..." : "Create Pull Request"}
+                {creatingPr ? 'Creating PR...' : 'Create Pull Request'}
               </button>
             </div>
           )}

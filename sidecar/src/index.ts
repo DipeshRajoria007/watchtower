@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { WebClient } from '@slack/web-api';
+import { getAdminUserIds, getConfiguredAccessControl, setResolvedGroupMembers } from './access/control.js';
 import { loadConfigFromDb, readAgentBackend } from './config.js';
 import { setActiveBackend } from './codex/runCodex.js';
 import { diagnoseFailure } from './learning/failureDoctor.js';
@@ -25,7 +26,7 @@ import { fetchThreadContext } from './slack/threadContext.js';
 import { resolveUserGroupMembers } from './slack/userGroupResolver.js';
 import { registerActiveJob, unregisterActiveJob, cancelJob } from './state/activeJobs.js';
 import { JobStore } from './state/jobStore.js';
-import type { SlackEventEnvelope, SlackReactionEvent, WorkflowStepLog } from './types/contracts.js';
+import type { AccessGroupKey, SlackEventEnvelope, SlackReactionEvent, WorkflowStepLog } from './types/contracts.js';
 
 assertMacOS();
 loadPolicies();
@@ -524,7 +525,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
   }
 
   // Policy engine check — block requests that violate critical or non-master rules
-  const policyDecision = evaluatePolicy(event.userId, event.text, config.coreDevSlackUserIds);
+  const policyDecision = evaluatePolicy(event.userId, event.text, getAdminUserIds(config));
   if (!policyDecision.allowed) {
     logger.warn(
       { eventId: event.eventId, userId: event.userId, tier: policyDecision.tier, ruleId: policyDecision.ruleId },
@@ -979,22 +980,30 @@ async function main(): Promise<void> {
   await client.start();
   logger.info('autonomous feed/digest/incident posting disabled; mention-triggered replies only');
 
-  // Resolve core-dev user group members if a group handle is configured
-  if (config.coreDevSlackUserGroup) {
-    const resolveCoreDevGroup = async () => {
-      const members = await resolveUserGroupMembers(client.webClient, config.coreDevSlackUserGroup);
-      if (members.length > 0) {
-        config.coreDevSlackUserIds = [...new Set([...members, ...config.ownerSlackUserIds])];
-        logger.info(
-          { handle: config.coreDevSlackUserGroup, memberCount: config.coreDevSlackUserIds.length },
-          'core-dev user group resolved',
-        );
+  const refreshAccessGroups = async () => {
+    const accessControl = getConfiguredAccessControl(config);
+    for (const groupKey of Object.keys(accessControl.groups) as AccessGroupKey[]) {
+      const group = accessControl.groups[groupKey];
+      const handle = group.slackUserGroupHandle.trim();
+      if (!handle) {
+        continue;
       }
-    };
-    await resolveCoreDevGroup();
-    // Refresh every 30 minutes
-    setInterval(resolveCoreDevGroup, 30 * 60 * 1000);
-  }
+
+      const members = await resolveUserGroupMembers(client.webClient, handle);
+      setResolvedGroupMembers({ config, groupKey, members });
+      logger.info(
+        {
+          groupKey,
+          handle,
+          memberCount: getConfiguredAccessControl(config).groups[groupKey].resolvedUserIds.length,
+        },
+        'access group resolved',
+      );
+    }
+  };
+
+  await refreshAccessGroups();
+  setInterval(refreshAccessGroups, 30 * 60 * 1000);
 
   // Poll for cancel requests from the Watchtower UI (written to SQLite by Tauri)
   setInterval(() => {

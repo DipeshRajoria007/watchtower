@@ -416,6 +416,12 @@ export function PulseMetrics({ metrics }: { metrics: DashboardMetrics }) {
         variant="compact"
       />
       <MetricCard
+        label="Access Audits"
+        value={metrics.accessAuditWouldDeny24h}
+        tone={metrics.accessAuditWouldDeny24h > 0 ? 'warning' : 'neutral'}
+        variant="compact"
+      />
+      <MetricCard
         label="Success Streak"
         value={metrics.successStreak}
         tone={metrics.successStreak > 0 ? 'success' : 'neutral'}

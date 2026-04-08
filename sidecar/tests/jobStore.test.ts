@@ -80,7 +80,7 @@ describe('jobStore', () => {
         channelId: 'C1',
         userId: 'U1',
         phraseKey: 'review this pr again',
-      })
+      }),
     ).toBe('PR_REVIEW');
 
     store.setPersonalityProfile({
@@ -93,13 +93,13 @@ describe('jobStore', () => {
       store.getPersonalityMode({
         channelId: 'C1',
         userId: 'U1',
-      })
+      }),
     ).toBe('normal');
     expect(
       store.getPersonalityProfile({
         scope: 'user',
         scopeId: 'U1',
-      })
+      }),
     ).toBe('normal');
 
     store.recordLearningSignal({

@@ -24,7 +24,10 @@ export function recordViolation(userId: string): void {
     if (existing.count >= MAX_VIOLATIONS_BEFORE_BAN) {
       bans.set(userId, now + BAN_DURATION_MS);
       violations.delete(userId);
-      logger.warn({ userId, banUntil: new Date(now + BAN_DURATION_MS).toISOString() }, 'user auto-banned after repeated policy violations');
+      logger.warn(
+        { userId, banUntil: new Date(now + BAN_DURATION_MS).toISOString() },
+        'user auto-banned after repeated policy violations',
+      );
     }
   } else {
     violations.set(userId, { count: 1, firstAt: now });

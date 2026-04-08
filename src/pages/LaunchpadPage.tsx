@@ -1,5 +1,5 @@
-import { SlackLaunchpad } from "../components/SlackLaunchpad";
-import type { SlackCommandTarget } from "../types";
+import { SlackLaunchpad } from '../components/SlackLaunchpad';
+import type { SlackCommandTarget } from '../types';
 
 type LaunchpadPageProps = {
   draft: string;

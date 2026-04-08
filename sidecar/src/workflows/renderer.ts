@@ -11,11 +11,7 @@ import type { AppConfig, NormalizedTask } from '../types/contracts.js';
  * - {{repo_web}} — path to newton-web repo
  * - {{repo_api}} — path to newton-api repo
  */
-export function renderPromptTemplate(
-  template: string,
-  task: NormalizedTask,
-  config: AppConfig
-): string {
+export function renderPromptTemplate(template: string, task: NormalizedTask, config: AppConfig): string {
   return template
     .replace(/\{\{user_message\}\}/g, task.event.text)
     .replace(/\{\{thread_ts\}\}/g, task.event.threadTs)

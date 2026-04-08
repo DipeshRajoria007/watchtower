@@ -112,7 +112,7 @@ async function postLaunchpadAnchor(params: {
         requestId: request.id,
         ownerUserId: request.ownerUserId,
       },
-      'launchpad DM open missing write scope; falling back to direct user-id post'
+      'launchpad DM open missing write scope; falling back to direct user-id post',
     );
 
     const anchor = await webClient.chat.postMessage({
@@ -133,11 +133,7 @@ export async function runLaunchpadRequestPoller(params: {
   webClient: WebClient;
   config: AppConfig;
   store: JobStore;
-  enqueue: (
-    event: SlackEventEnvelope,
-    client: WebClient,
-    source: 'launchpad'
-  ) => Promise<void>;
+  enqueue: (event: SlackEventEnvelope, client: WebClient, source: 'launchpad') => Promise<void>;
 }): Promise<void> {
   const { webClient, config, store, enqueue } = params;
   const requests = store.claimPendingLaunchpadRequests();
@@ -176,7 +172,7 @@ export async function runLaunchpadRequestPoller(params: {
           channelId,
           anchorTs,
         },
-        'launchpad request converted into synthetic slack event'
+        'launchpad request converted into synthetic slack event',
       );
     } catch (error) {
       const errorMessage = `Launchpad request failed before execution: ${String(error)}`;
@@ -191,7 +187,7 @@ export async function runLaunchpadRequestPoller(params: {
           requestId: request.id,
           error: String(error),
         },
-        'launchpad request intake failed'
+        'launchpad request intake failed',
       );
 
       notifyDesktop('Watchtower miniOG launch failed', errorMessage);
@@ -203,11 +199,7 @@ export function startLaunchpadRequestPoller(params: {
   webClient: WebClient;
   config: AppConfig;
   store: JobStore;
-  enqueue: (
-    event: SlackEventEnvelope,
-    client: WebClient,
-    source: 'launchpad'
-  ) => Promise<void>;
+  enqueue: (event: SlackEventEnvelope, client: WebClient, source: 'launchpad') => Promise<void>;
   pollIntervalMs?: number;
 }): void {
   const poll = async (): Promise<void> => {

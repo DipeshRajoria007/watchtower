@@ -54,7 +54,7 @@ export async function createBranch(repoPath: string, branchName: string): Promis
 }
 
 export async function captureGitDiff(repoPath: string, baseBranch?: string): Promise<DiffCapture> {
-  const base = baseBranch ?? await getDefaultBranch(repoPath);
+  const base = baseBranch ?? (await getDefaultBranch(repoPath));
   const branchName = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD']);
   const diffText = await git(repoPath, ['diff', `${base}...HEAD`]);
 

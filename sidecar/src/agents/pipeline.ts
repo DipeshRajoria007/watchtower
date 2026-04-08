@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { WebClient } from '@slack/web-api';
+import { getAdminUserIds } from '../access/control.js';
 import type { AgentContext, AgentFinding, AgentRole, AgentStepResult, PipelineResult } from './types.js';
 import type { WorkflowStepLogger } from '../types/contracts.js';
 import { buildPromptForRole } from './prompts.js';
@@ -197,14 +198,14 @@ export async function waitForApproval(params: {
             notifiedUsers.add(reply.user);
             logStep({
               stage: 'pipeline.approval.unauthorized',
-              message: `Non-core-dev user <@${reply.user}> attempted to approve.`,
+              message: `Non-admin user <@${reply.user}> attempted to approve.`,
               level: 'WARN',
             });
             slack.chat
               .postMessage({
                 channel: channelId,
                 thread_ts: threadTs,
-                text: `<@${reply.user}> Only core-dev members can approve plans. Waiting for a core-dev member to respond.`,
+                text: `<@${reply.user}> Only admins can approve plans. Waiting for an admin to respond.`,
               })
               .catch(() => {});
           }
@@ -225,7 +226,7 @@ export async function waitForApproval(params: {
               .postMessage({
                 channel: channelId,
                 thread_ts: threadTs,
-                text: `<@${reply.user}> Only core-dev members can approve or reject plans.`,
+                text: `<@${reply.user}> Only admins can approve or reject plans.`,
               })
               .catch(() => {});
           }
@@ -437,20 +438,21 @@ export async function runAgentPipeline(params: {
         });
       }
 
-      // Approval gate: wait for a core-dev member to confirm the plan before proceeding
+      // Approval gate: wait for an admin to confirm the plan before proceeding
       if (ctx.pipelineConfig.requireApproval && planMessageTs) {
         const approvalPromptTs = await postSlackProgress({
           slack,
           ctx,
-          text: 'Here\'s my plan. A core-dev member needs to approve before I proceed:\n• "yes" or "go" — I\'ll start coding\n• "no" or "stop" — I\'ll cancel\n• Or reply with changes you\'d like and I\'ll adjust',
+          text: 'Here\'s my plan. An admin needs to approve before I proceed:\n• "yes" or "go" — I\'ll start coding\n• "no" or "stop" — I\'ll cancel\n• Or reply with changes you\'d like and I\'ll adjust',
         });
 
         if (approvalPromptTs) {
+          const adminUserIds = getAdminUserIds(ctx.config);
           const approval = await waitForApproval({
             slack,
             channelId: ctx.task.event.channelId,
             threadTs: ctx.task.event.threadTs,
-            approverUserIds: ctx.config.coreDevSlackUserIds,
+            approverUserIds: adminUserIds,
             triggerUserId: ctx.task.event.userId,
             approvalPromptTs,
             logStep,

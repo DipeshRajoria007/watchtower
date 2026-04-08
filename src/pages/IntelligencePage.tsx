@@ -37,10 +37,7 @@ export function IntelligencePage({ data }: { data: DashboardData | null }) {
           {data?.learning ? <LearningInsightsPanel learning={data.learning} /> : null}
         </SectionCard>
 
-        <SectionCard
-          title="Recommendations"
-          subtitle="Generated from local runtime behavior."
-        >
+        <SectionCard title="Recommendations" subtitle="Generated from local runtime behavior.">
           <RecommendationList recommendations={data?.recommendations ?? []} />
         </SectionCard>
 
@@ -51,10 +48,7 @@ export function IntelligencePage({ data }: { data: DashboardData | null }) {
           {data?.metrics ? <PulseMetrics metrics={data.metrics} /> : null}
         </SectionCard>
 
-        <SectionCard
-          title="Channel Heat"
-          subtitle="Where traffic and failures are concentrating."
-        >
+        <SectionCard title="Channel Heat" subtitle="Where traffic and failures are concentrating.">
           <ChannelHeatList channels={data?.channelHeat ?? []} />
         </SectionCard>
       </section>

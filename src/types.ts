@@ -48,6 +48,7 @@ export type DashboardMetrics = {
   avgResolutionSeconds24h: number;
   unknownTasks24h: number;
   catchupRecovered24h: number;
+  accessAuditWouldDeny24h: number;
   successStreak: number;
   chaosIndex: number;
 };
@@ -105,6 +106,23 @@ export type JobLogEntry = {
 
 export type AgentBackendId = 'codex' | 'claude-code' | 'cursor';
 
+export type AccessMode = 'audit' | 'enforce';
+
+export type AccessGroupKey = 'viewer' | 'reviewer' | 'builder' | 'admin';
+
+export type AccessGroupSettings = {
+  slackUserGroupHandle: string;
+  manualUserIds: string;
+  allowedChannelIds: string;
+  allowIm: boolean;
+  allowMpim: boolean;
+};
+
+export type AccessControlSettings = {
+  mode: AccessMode;
+  groups: Record<AccessGroupKey, AccessGroupSettings>;
+};
+
 export type AppSettings = {
   slackBotToken: string;
   slackAppToken: string;
@@ -129,6 +147,7 @@ export type AppSettings = {
   agentBackend: AgentBackendId;
   coreDevSlackUserIds: string;
   coreDevSlackUserGroup: string;
+  accessControl: AccessControlSettings;
 };
 
 export type SaveSettingsResponse = {

@@ -2029,6 +2029,26 @@ h3 {
   padding: 12px 14px;
 }
 
+.access-group-grid {
+  margin-top: 16px;
+}
+
+.access-group-card {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.access-group-header {
+  align-items: center;
+}
+
+.access-group-copy {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.6;
+}
+
 .theme-section-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.95fr);
@@ -2294,6 +2314,23 @@ h3 {
   transition:
     border-color 200ms ease,
     box-shadow 200ms ease;
+}
+
+.access-group-channel-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.access-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+}
+
+.access-toggle input {
+  accent-color: rgba(var(--accent-rgb), 1);
 }
 
 .theme-custom-grid {

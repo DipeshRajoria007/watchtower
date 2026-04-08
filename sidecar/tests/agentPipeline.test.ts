@@ -551,7 +551,7 @@ describe('waitForApproval', () => {
     expect(result.approved).toBe(false);
   });
 
-  it('approves on bare "yes" from core-dev', async () => {
+  it('approves on bare "yes" from admin', async () => {
     vi.mocked(fetchThreadContext).mockResolvedValue([{ text: 'yes', user: 'UCOREDEV', ts: '200.00' }]);
 
     const promise = runApproval();
@@ -562,11 +562,11 @@ describe('waitForApproval', () => {
     expect(result.approverId).toBe('UCOREDEV');
   });
 
-  it('blocks non-core-dev from approving', async () => {
-    // First poll: non-core-dev says "yes" — should be ignored
+  it('blocks non-admin from approving', async () => {
+    // First poll: non-admin says "yes" — should be ignored
     vi.mocked(fetchThreadContext)
       .mockResolvedValueOnce([{ text: 'yes', user: 'URANDOM', ts: '200.00' }])
-      // Second poll: core-dev says "go"
+      // Second poll: admin says "go"
       .mockResolvedValueOnce([
         { text: 'yes', user: 'URANDOM', ts: '200.00' },
         { text: 'go', user: 'UCOREDEV', ts: '210.00' },
@@ -579,7 +579,7 @@ describe('waitForApproval', () => {
     expect(result.approved).toBe(true);
     expect(result.approverId).toBe('UCOREDEV');
     expect(mockSlack.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('Only core-dev members') }),
+      expect.objectContaining({ text: expect.stringContaining('Only admins can approve') }),
     );
   });
 });

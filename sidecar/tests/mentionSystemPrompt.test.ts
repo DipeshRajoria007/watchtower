@@ -41,12 +41,12 @@ describe('mentionSystemPrompt', () => {
     expect(prompt).toContain('Do not force technical framing for non-technical prompts.');
   });
 
-  it('labels core-dev non-owner requests correctly', () => {
+  it('labels admin non-owner requests correctly', () => {
     const prompt = buildMentionSystemPrompt({
       task: makeTask({ isOwnerAuthor: false, isCoreDevAuthor: true, intent: 'IMPLEMENTATION' }),
       workflow: 'IMPLEMENTATION',
     });
-    expect(prompt).toContain('core-dev');
+    expect(prompt).toContain('admin');
     expect(prompt).not.toContain('This request is from the owner');
   });
 
