@@ -42,6 +42,7 @@ export interface AccessControlSettings {
 
 export interface ResolvedAccessGroup extends AccessGroupSettings {
   key: AccessGroupKey;
+  resolvedChannelIds: string[];
   resolvedUserIds: string[];
 }
 

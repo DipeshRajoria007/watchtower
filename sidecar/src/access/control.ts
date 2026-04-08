@@ -78,6 +78,17 @@ function hydrateAccessControlSettings(settings?: Partial<AccessControlSettings> 
   };
 }
 
+function toResolvedAccessGroup(key: AccessGroupKey, group: AccessGroupSettings, ownerSlackUserIds: string[]) {
+  const manualUserIds = parseDelimitedIds(group.manualUserIds);
+
+  return {
+    key,
+    ...group,
+    resolvedChannelIds: parseDelimitedIds(group.allowedChannelIds),
+    resolvedUserIds: key === 'admin' ? uniqueList([...ownerSlackUserIds, ...manualUserIds]) : manualUserIds,
+  };
+}
+
 export function buildLegacyAccessControlConfig(input: {
   ownerSlackUserIds: string[];
   coreDevSlackUserIds?: string[];
@@ -105,26 +116,10 @@ export function toResolvedAccessControlConfig(
   return {
     mode: hydrated.mode,
     groups: {
-      viewer: {
-        key: 'viewer',
-        ...hydrated.groups.viewer,
-        resolvedUserIds: parseDelimitedIds(hydrated.groups.viewer.manualUserIds),
-      },
-      reviewer: {
-        key: 'reviewer',
-        ...hydrated.groups.reviewer,
-        resolvedUserIds: parseDelimitedIds(hydrated.groups.reviewer.manualUserIds),
-      },
-      builder: {
-        key: 'builder',
-        ...hydrated.groups.builder,
-        resolvedUserIds: parseDelimitedIds(hydrated.groups.builder.manualUserIds),
-      },
-      admin: {
-        key: 'admin',
-        ...hydrated.groups.admin,
-        resolvedUserIds: uniqueList([...ownerSlackUserIds, ...parseDelimitedIds(hydrated.groups.admin.manualUserIds)]),
-      },
+      viewer: toResolvedAccessGroup('viewer', hydrated.groups.viewer, ownerSlackUserIds),
+      reviewer: toResolvedAccessGroup('reviewer', hydrated.groups.reviewer, ownerSlackUserIds),
+      builder: toResolvedAccessGroup('builder', hydrated.groups.builder, ownerSlackUserIds),
+      admin: toResolvedAccessGroup('admin', hydrated.groups.admin, ownerSlackUserIds),
     },
   };
 }
@@ -195,11 +190,12 @@ function channelAllowed(
     return group.allowMpim;
   }
 
-  return parseDelimitedIds(group.allowedChannelIds).includes(channelId);
+  return group.resolvedChannelIds.includes(channelId);
 }
 
 export function evaluateAccess(params: {
   config: AppConfig;
+  accessControl?: AccessControlConfig;
   userId: string;
   channelId: string;
   channelType?: string;
@@ -217,7 +213,7 @@ export function evaluateAccess(params: {
     };
   }
 
-  const accessControl = getConfiguredAccessControl(config);
+  const accessControl = params.accessControl ?? getConfiguredAccessControl(config);
   const userGroups = ACCESS_GROUP_KEYS.filter(key => accessControl.groups[key].resolvedUserIds.includes(userId));
   const matchedGroups = userGroups.filter(key => channelAllowed(accessControl.groups[key], channelId, channelType));
   const allowed = matchedGroups.some(key => ACCESS_RANK[key] >= ACCESS_RANK[requiredLevel]);

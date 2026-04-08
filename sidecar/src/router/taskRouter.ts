@@ -100,6 +100,7 @@ export async function routeTask(params: {
   const requiredLevel = resolveRequiredAccessLevel(resolvedIntent);
   const accessDecision = evaluateAccess({
     config,
+    accessControl,
     userId: task.event.userId,
     channelId: task.event.channelId,
     channelType: task.event.channelType,

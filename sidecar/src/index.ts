@@ -989,16 +989,20 @@ async function main(): Promise<void> {
         continue;
       }
 
-      const members = await resolveUserGroupMembers(client.webClient, handle);
-      setResolvedGroupMembers({ config, groupKey, members });
-      logger.info(
-        {
-          groupKey,
-          handle,
-          memberCount: getConfiguredAccessControl(config).groups[groupKey].resolvedUserIds.length,
-        },
-        'access group resolved',
-      );
+      try {
+        const members = await resolveUserGroupMembers(client.webClient, handle);
+        setResolvedGroupMembers({ config, groupKey, members });
+        logger.info(
+          {
+            groupKey,
+            handle,
+            memberCount: accessControl.groups[groupKey].resolvedUserIds.length,
+          },
+          'access group resolved',
+        );
+      } catch (error) {
+        logger.warn({ groupKey, handle, error: String(error) }, 'access group refresh failed');
+      }
     }
   };
 

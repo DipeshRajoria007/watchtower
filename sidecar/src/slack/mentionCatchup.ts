@@ -1,5 +1,5 @@
 import type { WebClient } from '@slack/web-api';
-import { getConfiguredAccessControl, parseDelimitedIds } from '../access/control.js';
+import { getConfiguredAccessControl } from '../access/control.js';
 import { detectMention } from '../router/intentParser.js';
 import { logger } from '../logging/logger.js';
 import type { AppConfig, SlackEventEnvelope } from '../types/contracts.js';
@@ -141,8 +141,8 @@ async function runMentionCatchup(deps: CatchupDeps): Promise<void> {
 }
 
 async function discoverChannels(client: WebClient, store: JobStore, config: AppConfig): Promise<string[]> {
-  const accessChannels = Object.values(getConfiguredAccessControl(config).groups).flatMap(group =>
-    parseDelimitedIds(group.allowedChannelIds),
+  const accessChannels = Object.values(getConfiguredAccessControl(config).groups).flatMap(
+    group => group.resolvedChannelIds,
   );
   const channelSet = new Set<string>([
     ...store.listKnownChannels(500),

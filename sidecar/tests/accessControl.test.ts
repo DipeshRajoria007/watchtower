@@ -3,6 +3,7 @@ import {
   buildLegacyAccessControlConfig,
   evaluateAccess,
   resolveRequiredAccessLevel,
+  setResolvedGroupMembers,
   toResolvedAccessControlConfig,
 } from '../src/access/control.js';
 import type { AppConfig } from '../src/types/contracts.js';
@@ -200,6 +201,26 @@ describe('access control evaluator', () => {
     expect(decision.ownerBypass).toBe(true);
   });
 
+  it('pre-resolves channel IDs and merges refreshed members with manual and owner overrides', () => {
+    const config = makeConfig();
+
+    expect(config.accessControl?.groups.builder.resolvedChannelIds).toEqual(['C-BUILD']);
+
+    setResolvedGroupMembers({
+      config,
+      groupKey: 'reviewer',
+      members: ['UREVIEW2'],
+    });
+    expect(config.accessControl?.groups.reviewer.resolvedUserIds).toEqual(['UREVIEW', 'UREVIEW2']);
+
+    setResolvedGroupMembers({
+      config,
+      groupKey: 'admin',
+      members: ['UADMIN2', 'UOWNER1'],
+    });
+    expect(config.accessControl?.groups.admin.resolvedUserIds).toEqual(['UOWNER1', 'UADMIN', 'UADMIN2']);
+  });
+
   it('seeds legacy builder and admin permissions from previous config', () => {
     const accessControl = buildLegacyAccessControlConfig({
       ownerSlackUserIds: ['UOWNER1'],
@@ -210,6 +231,7 @@ describe('access control evaluator', () => {
 
     expect(accessControl.mode).toBe('audit');
     expect(accessControl.groups.builder.allowedChannelIds).toBe('C-BUGS,C-OPS');
+    expect(accessControl.groups.builder.resolvedChannelIds).toEqual(['C-BUGS', 'C-OPS']);
     expect(accessControl.groups.admin.allowedChannelIds).toBe('C-BUGS,C-OPS');
     expect(accessControl.groups.admin.allowIm).toBe(true);
     expect(accessControl.groups.admin.resolvedUserIds).toEqual(['UOWNER1', 'UCOREDEV1']);
