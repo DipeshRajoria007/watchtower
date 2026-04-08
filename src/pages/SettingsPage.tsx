@@ -856,7 +856,9 @@ export function SettingsPage({
                             },
                           })
                         }
-                        placeholder={group.key === 'admin' ? 'platform-admins' : `${group.key}-team`}
+                        placeholder={
+                          group.key === 'admin' ? 'platform-admins,eng-leads' : `${group.key}-team,${group.key}-ext`
+                        }
                       />
                     </label>
 
