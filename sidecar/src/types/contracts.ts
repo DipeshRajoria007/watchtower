@@ -1,4 +1,7 @@
 export type AgentBackendId = 'codex' | 'claude-code' | 'cursor';
+export type AccessMode = 'audit' | 'enforce';
+export type AccessGroupKey = 'viewer' | 'reviewer' | 'builder' | 'admin';
+export type AccessLevel = AccessGroupKey;
 export type WorkflowIntent =
   | 'PR_REVIEW'
   | 'OWNER_AUTOPILOT'
@@ -23,6 +26,30 @@ export type LaunchpadRequestStatus =
   | 'FAILED'
   | 'PAUSED'
   | 'SKIPPED';
+
+export interface AccessGroupSettings {
+  slackUserGroupHandle: string;
+  manualUserIds: string;
+  allowedChannelIds: string;
+  allowIm: boolean;
+  allowMpim: boolean;
+}
+
+export interface AccessControlSettings {
+  mode: AccessMode;
+  groups: Record<AccessGroupKey, AccessGroupSettings>;
+}
+
+export interface ResolvedAccessGroup extends AccessGroupSettings {
+  key: AccessGroupKey;
+  resolvedChannelIds: string[];
+  resolvedUserIds: string[];
+}
+
+export interface AccessControlConfig {
+  mode: AccessMode;
+  groups: Record<AccessGroupKey, ResolvedAccessGroup>;
+}
 
 export interface AppConfig {
   platformPolicy: 'macos_only';
@@ -50,6 +77,7 @@ export interface AppConfig {
   prReviewTimeoutMs: number;
   bugFixTimeoutMs: number;
   pmTaskTimeoutMs: number;
+  accessControl?: AccessControlConfig;
 }
 
 export interface SlackEventEnvelope {

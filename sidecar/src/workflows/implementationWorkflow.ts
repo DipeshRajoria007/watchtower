@@ -7,6 +7,7 @@ import type {
   WorkflowResult,
   WorkflowStepLogger,
 } from '../types/contracts.js';
+import { getAdminUserIds } from '../access/control.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
 import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
@@ -208,6 +209,7 @@ export async function runImplementationWorkflow(params: {
       // For merge requests: check for unresolved review comments before proceeding
       const mergeIntent = /\bmerge\b/i.test(task.event.text);
       if (mergeIntent && task.prContext && ctx.githubToken) {
+        const adminUserIds = getAdminUserIds(config);
         const { unresolvedCount } = await fetchUnresolvedReviewThreadCount({
           owner: task.prContext.owner,
           repo: task.prContext.repo,
@@ -228,7 +230,7 @@ export async function runImplementationWorkflow(params: {
               slack,
               channelId: task.event.channelId,
               threadTs: task.event.threadTs,
-              approverUserIds: config.coreDevSlackUserIds,
+              approverUserIds: adminUserIds,
               triggerUserId: task.event.userId,
               approvalPromptTs: confirmResult.ts,
               logStep: logStep ?? (() => {}),
@@ -359,12 +361,13 @@ Write your response as a ready-to-post Slack message describing what you did.
 
     // Approval gate
     if (planMessageTs) {
+      const adminUserIds = getAdminUserIds(config);
       let approvalPromptTs: string | undefined;
       try {
         const promptResult = await slack.chat.postMessage({
           channel: task.event.channelId,
           thread_ts: task.event.threadTs,
-          text: 'Here\'s my plan. A core-dev member needs to approve before I proceed:\n• "yes" or "go" — I\'ll start coding\n• "no" or "stop" — I\'ll cancel\n• Or reply with changes you\'d like and I\'ll adjust',
+          text: 'Here\'s my plan. An admin needs to approve before I proceed:\n• "yes" or "go" — I\'ll start coding\n• "no" or "stop" — I\'ll cancel\n• Or reply with changes you\'d like and I\'ll adjust',
         });
         approvalPromptTs = promptResult.ts ?? undefined;
       } catch {
@@ -374,14 +377,14 @@ Write your response as a ready-to-post Slack message describing what you did.
       if (approvalPromptTs) {
         logStep?.({
           stage: 'implementation.approval.waiting',
-          message: 'Waiting for core-dev approval of plan before proceeding.',
+          message: 'Waiting for admin approval of plan before proceeding.',
         });
 
         const approval = await waitForApproval({
           slack,
           channelId: task.event.channelId,
           threadTs: task.event.threadTs,
-          approverUserIds: config.coreDevSlackUserIds,
+          approverUserIds: adminUserIds,
           triggerUserId: task.event.userId,
           approvalPromptTs,
           logStep: logStep ?? (() => {}),
@@ -400,7 +403,7 @@ Write your response as a ready-to-post Slack message describing what you did.
           return {
             workflow: 'IMPLEMENTATION',
             status: 'SKIPPED',
-            message: 'Plan rejected by core-dev member.',
+            message: 'Plan rejected by admin.',
             notifyDesktop: false,
             slackPosted: true,
           };

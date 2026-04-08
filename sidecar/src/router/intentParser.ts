@@ -1,4 +1,5 @@
 import type { AppConfig, NormalizedTask, PrContext, SlackEventEnvelope, WorkflowIntent } from '../types/contracts.js';
+import { getAdminUserIds } from '../access/control.js';
 import { hasDevAssistPrefix, hasNaturalDevAssistAlias } from './devAssistParser.js';
 
 const GITHUB_PR_REGEX = /https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)/g;
@@ -119,7 +120,7 @@ export function normalizeTask(
 ): NormalizedTask {
   const mention = detectMention(event.text, config, event.channelType);
   const isOwnerAuthor = config.ownerSlackUserIds.includes(event.userId);
-  const isCoreDevAuthor = config.coreDevSlackUserIds.includes(event.userId);
+  const isCoreDevAuthor = getAdminUserIds(config).includes(event.userId);
   const prContext = extractPrContext([event.text, ...threadTexts]);
 
   return {

@@ -8,7 +8,11 @@ export type ThreadMessage = {
   files?: SlackFileAttachment[];
 };
 
-export async function fetchThreadContext(client: WebClient, channel: string, threadTs: string): Promise<ThreadMessage[]> {
+export async function fetchThreadContext(
+  client: WebClient,
+  channel: string,
+  threadTs: string,
+): Promise<ThreadMessage[]> {
   const response = await client.conversations.replies({
     channel,
     ts: threadTs,
@@ -18,9 +22,7 @@ export async function fetchThreadContext(client: WebClient, channel: string, thr
 
   const messages = response.messages ?? [];
   return messages.map(message => {
-    const rawFiles = (message as Record<string, unknown>).files as
-      | Array<Record<string, unknown>>
-      | undefined;
+    const rawFiles = (message as Record<string, unknown>).files as Array<Record<string, unknown>> | undefined;
 
     const files: SlackFileAttachment[] | undefined = rawFiles
       ?.filter(
@@ -28,7 +30,7 @@ export async function fetchThreadContext(client: WebClient, channel: string, thr
           typeof f.id === 'string' &&
           typeof f.name === 'string' &&
           typeof f.mimetype === 'string' &&
-          typeof f.url_private_download === 'string'
+          typeof f.url_private_download === 'string',
       )
       .map(f => ({
         id: f.id as string,

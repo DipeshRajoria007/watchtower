@@ -1,10 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import {
-  registerActiveJob,
-  unregisterActiveJob,
-  cancelJob,
-  getActiveJobIds,
-} from '../src/state/activeJobs.js';
+import { registerActiveJob, unregisterActiveJob, cancelJob, getActiveJobIds } from '../src/state/activeJobs.js';
 
 describe('activeJobs', () => {
   beforeEach(() => {

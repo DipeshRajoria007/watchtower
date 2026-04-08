@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     fs,
     path::{Path, PathBuf},
     process::Stdio,
@@ -220,6 +220,7 @@ struct DashboardMetrics {
     avg_resolution_seconds_24h: i64,
     unknown_tasks_24h: i64,
     catchup_recovered_24h: i64,
+    access_audit_would_deny_24h: i64,
     success_streak: i64,
     chaos_index: i64,
 }
@@ -291,6 +292,52 @@ struct AppSettings {
     pm_task_timeout_ms: i64,
     core_dev_slack_user_ids: String,
     core_dev_slack_user_group: String,
+    access_control: AccessControlSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AccessGroupSettings {
+    slack_user_group_handle: String,
+    manual_user_ids: String,
+    allowed_channel_ids: String,
+    allow_im: bool,
+    allow_mpim: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AccessControlSettings {
+    mode: String,
+    groups: BTreeMap<String, AccessGroupSettings>,
+}
+
+fn access_group_keys() -> [&'static str; 4] {
+    ["viewer", "reviewer", "builder", "admin"]
+}
+
+fn default_access_group_settings() -> AccessGroupSettings {
+    AccessGroupSettings {
+        slack_user_group_handle: String::new(),
+        manual_user_ids: String::new(),
+        allowed_channel_ids: String::new(),
+        allow_im: false,
+        allow_mpim: false,
+    }
+}
+
+impl Default for AccessControlSettings {
+    fn default() -> Self {
+        let mut groups = BTreeMap::new();
+        for key in access_group_keys() {
+            groups.insert(key.to_string(), default_access_group_settings());
+        }
+
+        Self {
+            mode: "audit".to_string(),
+            groups,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -342,6 +389,7 @@ impl Default for AppSettings {
             pm_task_timeout_ms: 600_000,
             core_dev_slack_user_ids: String::new(),
             core_dev_slack_user_group: String::new(),
+            access_control: AccessControlSettings::default(),
         }
     }
 }
@@ -1210,6 +1258,16 @@ fn query_dashboard_metrics(connection: &Connection) -> Result<DashboardMetrics, 
         )
         .map_err(|err| format!("db query catchup_recovered_24h failed: {err}"))?;
 
+    let access_audit_would_deny_24h: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM job_logs
+             WHERE stage = 'access.audit.would_deny'
+               AND julianday(created_at) >= julianday('now', '-1 day')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("db query access_audit_would_deny_24h failed: {err}"))?;
+
     let success_rate_24h = if runs_24h <= 0 {
         100.0
     } else {
@@ -1217,7 +1275,8 @@ fn query_dashboard_metrics(connection: &Connection) -> Result<DashboardMetrics, 
     };
 
     let success_streak = query_success_streak(connection)?;
-    let mut chaos_index = failed_runs_24h * 4 + unknown_tasks_24h * 2;
+    let mut chaos_index =
+        failed_runs_24h * 4 + unknown_tasks_24h * 2 + access_audit_would_deny_24h.min(5);
     if avg_resolution_seconds_24h >= 600.0 {
         chaos_index += 2;
     }
@@ -1230,6 +1289,7 @@ fn query_dashboard_metrics(connection: &Connection) -> Result<DashboardMetrics, 
         avg_resolution_seconds_24h: avg_resolution_seconds_24h.round() as i64,
         unknown_tasks_24h,
         catchup_recovered_24h,
+        access_audit_would_deny_24h,
         success_streak,
         chaos_index,
     })
@@ -1590,6 +1650,18 @@ fn build_recommendations(
         });
     }
 
+    if metrics.access_audit_would_deny_24h > 0 {
+        recommendations.push(DashboardRecommendation {
+            id: "access-audit".to_string(),
+            priority: "MEDIUM".to_string(),
+            title: "Access audit warnings need review".to_string(),
+            detail: format!(
+                "{} request(s) would have been denied in the last 24h. Review audit logs before switching access mode to enforce.",
+                metrics.access_audit_would_deny_24h
+            ),
+        });
+    }
+
     if metrics.success_streak >= 10 {
         recommendations.push(DashboardRecommendation {
             id: "streak".to_string(),
@@ -1894,10 +1966,34 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
         )
         .map_err(|err| format!("db migration job_diffs failed: {err}"))?;
 
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS access_control_settings (
+              id INTEGER PRIMARY KEY CHECK (id = 1),
+              mode TEXT NOT NULL DEFAULT 'audit',
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT OR IGNORE INTO access_control_settings(id) VALUES(1);
+
+            CREATE TABLE IF NOT EXISTS access_control_groups (
+              group_key TEXT PRIMARY KEY,
+              slack_user_group_handle TEXT NOT NULL DEFAULT '',
+              manual_user_ids TEXT NOT NULL DEFAULT '',
+              allowed_channel_ids TEXT NOT NULL DEFAULT '',
+              allow_im INTEGER NOT NULL DEFAULT 0,
+              allow_mpim INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            ",
+        )
+        .map_err(|err| format!("db migration access control failed: {err}"))?;
+
     let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN pm_slack_user_ids TEXT NOT NULL DEFAULT ''", []);
     let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN pm_task_timeout_ms INTEGER NOT NULL DEFAULT 600000", []);
     let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN core_dev_slack_user_ids TEXT NOT NULL DEFAULT ''", []);
     let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN core_dev_slack_user_group TEXT NOT NULL DEFAULT ''", []);
+    ensure_access_control_seeded(&connection)?;
 
     Ok(())
 }
@@ -1928,6 +2024,212 @@ fn ensure_app_settings_column(
         .map_err(|err| format!("db add settings column {column_name} failed: {err}"))?;
 
     Ok(true)
+}
+
+fn ensure_access_control_seeded(connection: &Connection) -> Result<(), String> {
+    let now = Utc::now().to_rfc3339();
+    let existing_group_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM access_control_groups", [], |row| row.get(0))
+        .map_err(|err| format!("db inspect access_control_groups failed: {err}"))?;
+
+    for key in access_group_keys() {
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO access_control_groups(
+                   group_key,
+                   slack_user_group_handle,
+                   manual_user_ids,
+                   allowed_channel_ids,
+                   allow_im,
+                   allow_mpim,
+                   updated_at
+                 ) VALUES(?, '', '', '', 0, 0, ?)",
+                params![key, now],
+            )
+            .map_err(|err| format!("db seed access_control_groups failed: {err}"))?;
+    }
+
+    if existing_group_count > 0 {
+        return Ok(());
+    }
+
+    let legacy = connection
+        .query_row(
+            "SELECT
+               COALESCE(bugs_and_updates_channel_id, ''),
+               COALESCE(core_dev_slack_user_ids, ''),
+               COALESCE(core_dev_slack_user_group, '')
+             FROM app_settings
+             WHERE id = 1
+             LIMIT 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|err| format!("db read legacy access seed failed: {err}"))?
+        .unwrap_or_else(|| (String::new(), String::new(), String::new()));
+
+    connection
+        .execute(
+            "UPDATE access_control_settings
+             SET mode = 'audit',
+                 updated_at = ?
+             WHERE id = 1",
+            params![now],
+        )
+        .map_err(|err| format!("db seed access_control_settings failed: {err}"))?;
+
+    if !legacy.0.trim().is_empty() {
+        connection
+            .execute(
+                "UPDATE access_control_groups
+                 SET allowed_channel_ids = ?,
+                     updated_at = ?
+                 WHERE group_key = 'builder'",
+                params![legacy.0.trim(), now],
+            )
+            .map_err(|err| format!("db seed builder access group failed: {err}"))?;
+    }
+
+    connection
+        .execute(
+            "UPDATE access_control_groups
+             SET slack_user_group_handle = ?,
+                 manual_user_ids = ?,
+                 allowed_channel_ids = ?,
+                 allow_im = 1,
+                 allow_mpim = 1,
+                 updated_at = ?
+             WHERE group_key = 'admin'",
+            params![legacy.2.trim(), legacy.1.trim(), legacy.0.trim(), now],
+        )
+        .map_err(|err| format!("db seed admin access group failed: {err}"))?;
+
+    Ok(())
+}
+
+fn read_access_control_settings(connection: &Connection) -> Result<AccessControlSettings, String> {
+    ensure_access_control_seeded(connection)?;
+
+    let mode = connection
+        .query_row(
+            "SELECT mode FROM access_control_settings WHERE id = 1 LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|err| format!("db read access mode failed: {err}"))?
+        .unwrap_or_else(|| "audit".to_string());
+
+    let mut settings = AccessControlSettings {
+        mode: if mode == "enforce" {
+            "enforce".to_string()
+        } else {
+            "audit".to_string()
+        },
+        ..AccessControlSettings::default()
+    };
+
+    let mut stmt = connection
+        .prepare(
+            "SELECT
+               group_key,
+               slack_user_group_handle,
+               manual_user_ids,
+               allowed_channel_ids,
+               allow_im,
+               allow_mpim
+             FROM access_control_groups",
+        )
+        .map_err(|err| format!("db prepare access groups failed: {err}"))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                AccessGroupSettings {
+                    slack_user_group_handle: row.get(1)?,
+                    manual_user_ids: row.get(2)?,
+                    allowed_channel_ids: row.get(3)?,
+                    allow_im: row.get::<_, i64>(4)? != 0,
+                    allow_mpim: row.get::<_, i64>(5)? != 0,
+                },
+            ))
+        })
+        .map_err(|err| format!("db query access groups failed: {err}"))?;
+
+    for row in rows {
+        let (group_key, group_settings) =
+            row.map_err(|err| format!("db row access group failed: {err}"))?;
+        settings.groups.insert(group_key, group_settings);
+    }
+
+    Ok(settings)
+}
+
+fn persist_access_control_settings(
+    connection: &Connection,
+    access_control: &AccessControlSettings,
+) -> Result<(), String> {
+    ensure_access_control_seeded(connection)?;
+    let now = Utc::now().to_rfc3339();
+
+    connection
+        .execute(
+            "INSERT INTO access_control_settings(id, mode, updated_at)
+             VALUES(1, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+               mode = excluded.mode,
+               updated_at = excluded.updated_at",
+            params![access_control.mode.trim(), now],
+        )
+        .map_err(|err| format!("db save access mode failed: {err}"))?;
+
+    for key in access_group_keys() {
+        let group = access_control
+            .groups
+            .get(key)
+            .cloned()
+            .unwrap_or_else(default_access_group_settings);
+
+        connection
+            .execute(
+                "INSERT INTO access_control_groups(
+                   group_key,
+                   slack_user_group_handle,
+                   manual_user_ids,
+                   allowed_channel_ids,
+                   allow_im,
+                   allow_mpim,
+                   updated_at
+                 ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(group_key) DO UPDATE SET
+                   slack_user_group_handle = excluded.slack_user_group_handle,
+                   manual_user_ids = excluded.manual_user_ids,
+                   allowed_channel_ids = excluded.allowed_channel_ids,
+                   allow_im = excluded.allow_im,
+                   allow_mpim = excluded.allow_mpim,
+                   updated_at = excluded.updated_at",
+                params![
+                    key,
+                    group.slack_user_group_handle.trim(),
+                    group.manual_user_ids.trim(),
+                    group.allowed_channel_ids.trim(),
+                    if group.allow_im { 1 } else { 0 },
+                    if group.allow_mpim { 1 } else { 0 },
+                    now,
+                ],
+            )
+            .map_err(|err| format!("db save access group {key} failed: {err}"))?;
+    }
+
+    Ok(())
 }
 
 fn migrate_legacy_notification_audio_settings(connection: &Connection) -> Result<(), String> {
@@ -1986,7 +2288,7 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
         )
         .map_err(|err| format!("db prepare settings failed: {err}"))?;
 
-    let settings = stmt
+    let mut settings = stmt
         .query_row([], |row| {
             Ok(AppSettings {
                 slack_bot_token: row.get(0)?,
@@ -2016,11 +2318,14 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
                 pm_task_timeout_ms: row.get(24)?,
                 core_dev_slack_user_ids: row.get(25)?,
                 core_dev_slack_user_group: row.get(26)?,
+                access_control: AccessControlSettings::default(),
             })
         })
         .optional()
         .map_err(|err| format!("db read settings failed: {err}"))?
         .unwrap_or_default();
+
+    settings.access_control = read_access_control_settings(connection)?;
 
     Ok(settings)
 }
@@ -2121,6 +2426,8 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
         )
         .map_err(|err| format!("db save settings failed: {err}"))?;
 
+    persist_access_control_settings(connection, &settings.access_control)?;
+
     Ok(())
 }
 
@@ -2204,6 +2511,22 @@ fn validate_settings_for_save(settings: &AppSettings) -> Result<(), String> {
     validate_hex_color(&settings.theme_foreground_color, "themeForegroundColor")?;
     validate_hex_color(&settings.theme_accent_color, "themeAccentColor")?;
     validate_notification_audio_settings(settings)?;
+    validate_access_control_settings(&settings.access_control)?;
+
+    Ok(())
+}
+
+fn validate_access_control_settings(access_control: &AccessControlSettings) -> Result<(), String> {
+    match access_control.mode.trim() {
+        "audit" | "enforce" => {}
+        _ => return Err("accessControl.mode must be audit or enforce".to_string()),
+    }
+
+    for key in access_group_keys() {
+        if !access_control.groups.contains_key(key) {
+            return Err(format!("accessControl.groups.{key} is required"));
+        }
+    }
 
     Ok(())
 }
@@ -2398,10 +2721,6 @@ fn has_owner_ids(raw: &str) -> bool {
     !parse_owner_ids(raw).is_empty()
 }
 
-fn has_channel_ids(raw: &str) -> bool {
-    raw.split(',').any(|value| !value.trim().is_empty())
-}
-
 fn is_absolute_directory(path_value: &str) -> bool {
     let path = Path::new(path_value.trim());
     path.is_absolute() && path.is_dir()
@@ -2412,7 +2731,6 @@ fn is_settings_complete(settings: &AppSettings) -> bool {
         && !settings.slack_app_token.trim().is_empty()
         && !settings.bot_user_id.trim().is_empty()
         && has_owner_ids(&settings.owner_slack_user_ids)
-        && has_channel_ids(&settings.bugs_and_updates_channel_id)
         && is_absolute_directory(&settings.newton_web_path)
         && is_absolute_directory(&settings.newton_api_path)
 }
@@ -2998,6 +3316,108 @@ mod tests {
     }
 
     #[test]
+    fn app_settings_round_trip_access_control() {
+        let db_path = test_db_path();
+        initialize_db(&db_path).expect("initialize db");
+        let connection = Connection::open(&db_path).expect("open db");
+
+        let mut settings = complete_settings();
+        settings.access_control.mode = "enforce".to_string();
+        settings
+            .access_control
+            .groups
+            .get_mut("viewer")
+            .expect("viewer group")
+            .allowed_channel_ids = "C-VIEW".to_string();
+        settings
+            .access_control
+            .groups
+            .get_mut("admin")
+            .expect("admin group")
+            .allow_im = true;
+        settings
+            .access_control
+            .groups
+            .get_mut("admin")
+            .expect("admin group")
+            .manual_user_ids = "UADMIN1,UADMIN2".to_string();
+
+        persist_app_settings(&connection, &settings).expect("persist settings");
+        let loaded = read_app_settings(&connection).expect("read settings");
+
+        assert_eq!(loaded.access_control.mode, "enforce");
+        assert_eq!(
+            loaded
+                .access_control
+                .groups
+                .get("viewer")
+                .expect("viewer group")
+                .allowed_channel_ids,
+            "C-VIEW"
+        );
+        assert!(loaded
+            .access_control
+            .groups
+            .get("admin")
+            .expect("admin group")
+            .allow_im);
+        assert_eq!(
+            loaded
+                .access_control
+                .groups
+                .get("admin")
+                .expect("admin group")
+                .manual_user_ids,
+            "UADMIN1,UADMIN2"
+        );
+
+        drop(connection);
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn initialize_db_seeds_access_control_from_legacy_fields() {
+        let db_path = test_db_path();
+        initialize_db(&db_path).expect("initialize db");
+        let connection = Connection::open(&db_path).expect("open db");
+
+        connection
+            .execute(
+                "UPDATE app_settings
+                 SET bugs_and_updates_channel_id = ?,
+                     core_dev_slack_user_ids = ?,
+                     core_dev_slack_user_group = ?
+                 WHERE id = 1",
+                params!["C-BUGS,C-OPS", "UCOREDEV1", "core-dev"],
+            )
+            .expect("update legacy fields");
+        connection
+            .execute("DELETE FROM access_control_groups", [])
+            .expect("clear access groups");
+
+        ensure_access_control_seeded(&connection).expect("seed access control");
+        let access = read_access_control_settings(&connection).expect("read access control");
+
+        assert_eq!(access.mode, "audit");
+        assert_eq!(
+            access.groups.get("builder").expect("builder").allowed_channel_ids,
+            "C-BUGS,C-OPS"
+        );
+        assert_eq!(
+            access.groups.get("admin").expect("admin").slack_user_group_handle,
+            "core-dev"
+        );
+        assert_eq!(
+            access.groups.get("admin").expect("admin").manual_user_ids,
+            "UCOREDEV1"
+        );
+        assert!(access.groups.get("admin").expect("admin").allow_im);
+
+        drop(connection);
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
     fn validate_notification_audio_settings_uses_success_and_failure_profiles() {
         let settings = AppSettings {
             success_notification_audio_mode: "default".to_string(),
@@ -3049,6 +3469,7 @@ mod tests {
             avg_resolution_seconds_24h: 120,
             unknown_tasks_24h: 3,
             catchup_recovered_24h: 0,
+            access_audit_would_deny_24h: 0,
             success_streak: 2,
             chaos_index: 6,
         };
@@ -3070,6 +3491,7 @@ mod tests {
             avg_resolution_seconds_24h: 140,
             unknown_tasks_24h: 0,
             catchup_recovered_24h: 0,
+            access_audit_would_deny_24h: 0,
             success_streak: 1,
             chaos_index: 8,
         };
@@ -3094,5 +3516,28 @@ mod tests {
 
         assert!(hotspot.detail.contains("C-HIGH-FAILURES"));
         assert!(hotspot.detail.contains("7 failures"));
+    }
+
+    #[test]
+    fn recommendations_surface_access_audit_warning() {
+        let metrics = DashboardMetrics {
+            runs_24h: 8,
+            success_rate_24h: 100.0,
+            failed_runs_24h: 0,
+            avg_resolution_seconds_24h: 80,
+            unknown_tasks_24h: 0,
+            catchup_recovered_24h: 0,
+            access_audit_would_deny_24h: 3,
+            success_streak: 4,
+            chaos_index: 3,
+        };
+
+        let recommendations = build_recommendations(&metrics, &[]);
+        let access_audit = recommendations
+            .iter()
+            .find(|item| item.id == "access-audit")
+            .expect("access audit recommendation should exist");
+
+        assert!(access_audit.detail.contains("3 request(s)"));
     }
 }

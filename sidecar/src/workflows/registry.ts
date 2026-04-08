@@ -93,7 +93,7 @@ export function loadWorkflowTemplates(workflowsDir?: string): void {
       templates.push(template);
       logger.info(
         { name: template.name, triggers: template.triggers.length, keywords: template.keywords.length },
-        'loaded workflow template'
+        'loaded workflow template',
       );
     } catch (error) {
       logger.warn({ workflow: entry, error: String(error) }, 'failed to load workflow template');

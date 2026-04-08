@@ -726,14 +726,12 @@ describe('devAssistWorkflow', () => {
     expect(swarmResult.result?.command).toBe('MISSION_RUN_SWARM');
   });
 
-  it('updates trust policy via wt trust', async () => {
+  it('explains that wt trust is managed from settings', async () => {
     const slack = {
       chat: {
         postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
       },
     };
-    const setTrustPolicy = vi.fn();
-
     const task: NormalizedTask = {
       event: {
         eventId: 'EvDevAssist14',
@@ -780,17 +778,16 @@ describe('devAssistWorkflow', () => {
         upsertMissionStart: () => ({ id: 'mission:C1:111.22', status: 'ACTIVE' }),
         getMissionThread: () => undefined,
         startMissionSwarmRun: () => undefined,
-        setTrustPolicy,
         createReplayRequest: () => ({ requestId: 'replay:1', status: 'QUEUED' }),
       } as any,
     });
 
     expect(result.status).toBe('SUCCESS');
     expect(result.result?.command).toBe('TRUST_SET');
-    expect(setTrustPolicy).toHaveBeenCalledWith(
+    expect(result.result?.deprecated).toBe(true);
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        targetType: 'channel',
-        trustLevel: 'execute',
+        text: expect.stringContaining('managed from the Watchtower Settings page'),
       }),
     );
   });

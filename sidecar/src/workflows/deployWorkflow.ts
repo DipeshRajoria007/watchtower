@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { WebClient } from '@slack/web-api';
+import { getAdminUserIds } from '../access/control.js';
 import type { AppConfig, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
 import { highReasoningProfile } from '../codex/modelProfiles.js';
@@ -60,9 +61,10 @@ export async function runDeployWorkflow(params: {
     message: 'Running deploy workflow for newton-web production.',
   });
 
-  // Only core-dev members can trigger deploys
-  if (!config.coreDevSlackUserIds.includes(task.event.userId)) {
-    const msg = 'Deploy to production is restricted to core-dev members.';
+  const adminUserIds = getAdminUserIds(config);
+
+  if (!adminUserIds.includes(task.event.userId)) {
+    const msg = 'Deploy to production is restricted to admins.';
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,

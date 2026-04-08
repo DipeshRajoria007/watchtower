@@ -44,7 +44,7 @@ function scoreMatch(text: string, template: WorkflowTemplate): number {
 export function matchWorkflowTemplate(
   text: string,
   templates: WorkflowTemplate[],
-  threshold = 0.4
+  threshold = 0.4,
 ): WorkflowTemplate | undefined {
   let bestTemplate: WorkflowTemplate | undefined;
   let bestScore = 0;

@@ -8,12 +8,22 @@ export default tseslint.config(
   eslintConfigPrettier,
   {
     ignores: [
+      '.claude/**',
       'dist/**',
       'node_modules/**',
       'sidecar/dist/**',
       'sidecar/node_modules/**',
       'src-tauri/target/**',
     ],
+  },
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+      },
+    },
   },
   {
     rules: {

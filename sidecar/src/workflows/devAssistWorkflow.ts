@@ -23,7 +23,7 @@ const HELP_TEXT = [
   '- `wt mission start <goal>` -> start/update mission state for this thread',
   '- `wt mission show` -> show mission state for this thread',
   '- `wt mission run --swarm` -> launch planner/coder/reviewer/shipper run',
-  '- `wt trust <channel|user> <observe|suggest|execute|merge>` -> set approval gate',
+  '- `wt trust ...` -> deprecated; manage access control from the Watchtower Settings page',
   '- `wt replay <jobId>` -> queue replay of a previous job',
   '- `wt fork <jobId>` -> queue forked rerun from a previous job',
   '- `wt skill install <name>` -> register local skill metadata',
@@ -168,9 +168,7 @@ export async function runDevAssistWorkflow(params: {
       return `${index + 1}. [${run.status}] ${run.workflow} job=${shortId} updated=${run.updatedAt}`;
     });
 
-    const text = runs.length
-      ? ['Recent runs:', ...lines].join('\n')
-      : 'No runs found yet.';
+    const text = runs.length ? ['Recent runs:', ...lines].join('\n') : 'No runs found yet.';
 
     await slack.chat.postMessage({
       channel: task.event.channelId,
@@ -210,9 +208,7 @@ export async function runDevAssistWorkflow(params: {
       }`;
     });
 
-    const text = runs.length
-      ? ['Recent failures:', ...lines].join('\n')
-      : 'No failed runs found in recent history.';
+    const text = runs.length ? ['Recent failures:', ...lines].join('\n') : 'No failed runs found in recent history.';
 
     await slack.chat.postMessage({
       channel: task.event.channelId,
@@ -401,7 +397,11 @@ export async function runDevAssistWorkflow(params: {
       await slack.chat.postMessage({
         channel: task.event.channelId,
         thread_ts: task.event.threadTs,
-        text: `Job \`${resolvedJobId.slice(0, 8)}\` is not currently running. Active jobs: ${getActiveJobIds().map(id => id.slice(0, 8)).join(', ') || 'none'}`,
+        text: `Job \`${resolvedJobId.slice(0, 8)}\` is not currently running. Active jobs: ${
+          getActiveJobIds()
+            .map(id => id.slice(0, 8))
+            .join(', ') || 'none'
+        }`,
       });
     }
 
@@ -624,15 +624,8 @@ export async function runDevAssistWorkflow(params: {
   }
 
   if (command.type === 'TRUST_SET') {
-    const targetId = command.target === 'channel' ? task.event.channelId : task.event.userId;
-    store.setTrustPolicy({
-      targetType: command.target,
-      targetId,
-      trustLevel: command.level,
-      updatedBy: task.event.userId,
-    });
-
-    const text = `Trust policy updated: ${command.target} ${targetId} -> ${command.level}`;
+    const text =
+      'Access control is now managed from the Watchtower Settings page. `wt trust` no longer changes runtime permissions.';
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
@@ -648,8 +641,8 @@ export async function runDevAssistWorkflow(params: {
       result: {
         command: 'TRUST_SET',
         target: command.target,
-        targetId,
         level: command.level,
+        deprecated: true,
       },
     };
   }
@@ -827,9 +820,7 @@ export async function runDevAssistWorkflow(params: {
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
-      text: command.enabled
-        ? `Daily digest enabled at ${command.time}.`
-        : 'Daily digest disabled for this channel.',
+      text: command.enabled ? `Daily digest enabled at ${command.time}.` : 'Daily digest disabled for this channel.',
     });
 
     return {
@@ -962,12 +953,16 @@ export async function runDevAssistWorkflow(params: {
 
   if (command.type === 'WORKFLOW_LIST') {
     const templates = getWorkflowTemplates();
-    const text = templates.length > 0
-      ? [
-          `Registered workflow templates (${templates.length}):`,
-          ...templates.map((t, i) => `${i + 1}. *${t.name}* — ${t.description || 'no description'} (triggers: ${t.triggers.join(', ') || 'none'})`),
-        ].join('\n')
-      : 'No workflow templates registered. Add templates to `.workflows/` directory.';
+    const text =
+      templates.length > 0
+        ? [
+            `Registered workflow templates (${templates.length}):`,
+            ...templates.map(
+              (t, i) =>
+                `${i + 1}. *${t.name}* — ${t.description || 'no description'} (triggers: ${t.triggers.join(', ') || 'none'})`,
+            ),
+          ].join('\n')
+        : 'No workflow templates registered. Add templates to `.workflows/` directory.';
 
     await slack.chat.postMessage({
       channel: task.event.channelId,
@@ -1024,9 +1019,7 @@ export async function runDevAssistWorkflow(params: {
       return `${index + 1}. [${item.status}] ${item.workflow} job=${shortId}${thread}${summary}`;
     });
 
-    const text = queue.length
-      ? ['Your prioritized queue:', ...lines].join('\n')
-      : 'Your queue is clear right now.';
+    const text = queue.length ? ['Your prioritized queue:', ...lines].join('\n') : 'Your queue is clear right now.';
 
     await slack.chat.postMessage({
       channel: task.event.channelId,

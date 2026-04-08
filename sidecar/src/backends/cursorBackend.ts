@@ -63,10 +63,7 @@ export const cursorBackend: AgentBackend = {
   },
 
   buildArgs(request: AgentRunRequest, outputPath: string): string[] {
-    const args = [
-      '--prompt', request.prompt,
-      '--output', outputPath,
-    ];
+    const args = ['--prompt', request.prompt, '--output', outputPath];
     if (request.model) {
       args.push('--model', request.model);
     }

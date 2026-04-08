@@ -1,10 +1,6 @@
-export type DesktopNotificationTone = "success" | "failure";
+export type DesktopNotificationTone = 'success' | 'failure';
 
-export function notifyDesktop(
-  title: string,
-  body: string,
-  tone: DesktopNotificationTone = "failure",
-): void {
+export function notifyDesktop(title: string, body: string, tone: DesktopNotificationTone = 'failure'): void {
   const payload = JSON.stringify({
     title,
     body,

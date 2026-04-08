@@ -2,6 +2,8 @@ import { useRef } from 'react';
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react';
 import { THEME_FONT_OPTIONS, THEME_PRESETS, resolveAppTheme, resolveThemeFont } from '../lib/theme';
 import type {
+  AccessGroupKey,
+  AccessMode,
   AgentBackendId,
   AppSettings,
   NotificationAudioDefaultSoundId,
@@ -62,6 +64,54 @@ const AGENT_BACKEND_OPTIONS: AgentBackendOption[] = [
     description: 'Cursor AI coding assistant CLI.',
     id: 'cursor',
     label: 'Cursor',
+  },
+];
+
+type AccessModeOption = {
+  description: string;
+  id: AccessMode;
+  label: string;
+};
+
+type AccessGroupCard = {
+  description: string;
+  key: AccessGroupKey;
+  label: string;
+};
+
+const ACCESS_MODE_OPTIONS: AccessModeOption[] = [
+  {
+    id: 'audit',
+    label: 'Audit',
+    description: 'Log requests that would be denied, but still allow them through while you validate the rollout.',
+  },
+  {
+    id: 'enforce',
+    label: 'Enforce',
+    description: 'Block requests that do not match the configured group and channel rules.',
+  },
+];
+
+const ACCESS_GROUP_CARDS: AccessGroupCard[] = [
+  {
+    key: 'viewer',
+    label: 'Viewer',
+    description: 'Conversational, informational, and unknown-task fallback access.',
+  },
+  {
+    key: 'reviewer',
+    label: 'Reviewer',
+    description: 'PR review access on top of viewer capabilities.',
+  },
+  {
+    key: 'builder',
+    label: 'Builder',
+    description: 'Implementation and owner-autopilot execution access on top of reviewer capabilities.',
+  },
+  {
+    key: 'admin',
+    label: 'Admin',
+    description: 'Deploys, `wt` commands, and plan approvals. Owners always bypass these checks regardless.',
   },
 ];
 
@@ -278,12 +328,17 @@ export function SettingsPage({
       ready: Boolean(settings.slackBotToken.trim() && settings.slackAppToken.trim() && settings.botUserId.trim()),
     },
     {
-      label: 'Ownership / Channels',
-      complete: [hasCommaList(settings.ownerSlackUserIds), hasCommaList(settings.bugsAndUpdatesChannelId)].filter(
-        Boolean,
-      ).length,
-      items: 2,
-      ready: hasCommaList(settings.ownerSlackUserIds) && hasCommaList(settings.bugsAndUpdatesChannelId),
+      label: 'Ownership',
+      complete: [hasCommaList(settings.ownerSlackUserIds)].filter(Boolean).length,
+      items: 1,
+      ready: hasCommaList(settings.ownerSlackUserIds),
+    },
+    {
+      label: 'Access Control',
+      complete: [settings.accessControl.mode === 'audit' || settings.accessControl.mode === 'enforce'].filter(Boolean)
+        .length,
+      items: 1,
+      ready: settings.accessControl.mode === 'audit' || settings.accessControl.mode === 'enforce',
     },
     {
       label: 'Repo Paths',
@@ -705,10 +760,10 @@ export function SettingsPage({
           </SectionCard>
 
           <SectionCard
-            title="Ownership / Channels"
-            subtitle="Who owns Watchtower and where bug-fix workflows are allowed to auto-run."
+            title="Ownership"
+            subtitle="Owners retain unconditional bypass across all access groups and channels."
           >
-            <div className="settings-fields two-column">
+            <div className="settings-fields">
               <label className="field">
                 <span>Owner Slack User IDs</span>
                 <input
@@ -718,48 +773,187 @@ export function SettingsPage({
                   placeholder="U01234567,U07654321"
                 />
               </label>
+            </div>
+          </SectionCard>
 
+          <SectionCard
+            title="Access Control"
+            subtitle="Fixed viewer, reviewer, builder, and admin groups with explicit channel and DM scopes."
+          >
+            <div className="settings-fields">
               <label className="field">
-                <span>Core-Dev User Group</span>
-                <input
-                  type="text"
-                  value={settings.coreDevSlackUserGroup}
-                  onChange={event => updateSettings({ coreDevSlackUserGroup: event.target.value })}
-                  placeholder="core-dev"
-                />
-                <small className="field-hint">
-                  Slack user group handle (e.g. &quot;core-dev&quot;). Members resolved automatically. Owners always
-                  included. Refreshes every 30 min.
-                </small>
-              </label>
-
-              <label className="field">
-                <span>Core-Dev User IDs (override)</span>
-                <input
-                  type="text"
-                  value={settings.coreDevSlackUserIds}
-                  onChange={event => updateSettings({ coreDevSlackUserIds: event.target.value })}
-                  placeholder="U01234567,U07654321"
-                />
-                <small className="field-hint">Optional manual IDs merged with the user group above.</small>
-              </label>
-
-              <label className="field">
-                <span>Bug-fix Channel IDs</span>
-                <input
-                  type="text"
-                  value={settings.bugsAndUpdatesChannelId}
+                <span>Access Mode</span>
+                <select
+                  value={settings.accessControl.mode}
                   onChange={event =>
                     updateSettings({
-                      bugsAndUpdatesChannelId: event.target.value,
+                      accessControl: {
+                        ...settings.accessControl,
+                        mode: event.target.value as AccessMode,
+                      },
                     })
                   }
-                  placeholder="C01H25RNLJH,C02XXXXXXX"
-                />
+                >
+                  {ACCESS_MODE_OPTIONS.map(option => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
                 <small className="field-hint">
-                  Mentions are processed anywhere the bot is present. This list only governs bug-fix auto-runs.
+                  Owner IDs always bypass these restrictions. Start with Audit so would-be blocks show up in metrics and
+                  job logs before you flip to Enforce.
                 </small>
               </label>
+            </div>
+
+            <div className="settings-summary-grid access-group-grid">
+              {ACCESS_GROUP_CARDS.map(group => {
+                const groupSettings = settings.accessControl.groups[group.key];
+                return (
+                  <article className="settings-summary-card access-group-card" key={group.key}>
+                    <div className="settings-summary-top access-group-header">
+                      <strong>{group.label}</strong>
+                      <StatusBadge
+                        label={
+                          groupSettings.slackUserGroupHandle.trim() ||
+                          groupSettings.manualUserIds.trim() ||
+                          groupSettings.allowedChannelIds.trim() ||
+                          groupSettings.allowIm ||
+                          groupSettings.allowMpim
+                            ? 'Configured'
+                            : 'Empty'
+                        }
+                        tone={
+                          groupSettings.slackUserGroupHandle.trim() ||
+                          groupSettings.manualUserIds.trim() ||
+                          groupSettings.allowedChannelIds.trim() ||
+                          groupSettings.allowIm ||
+                          groupSettings.allowMpim
+                            ? 'info'
+                            : 'warn'
+                        }
+                      />
+                    </div>
+                    <p className="access-group-copy">{group.description}</p>
+
+                    <label className="field">
+                      <span>Slack User Group Handle</span>
+                      <input
+                        type="text"
+                        value={groupSettings.slackUserGroupHandle}
+                        onChange={event =>
+                          updateSettings({
+                            accessControl: {
+                              ...settings.accessControl,
+                              groups: {
+                                ...settings.accessControl.groups,
+                                [group.key]: {
+                                  ...groupSettings,
+                                  slackUserGroupHandle: event.target.value,
+                                },
+                              },
+                            },
+                          })
+                        }
+                        placeholder={group.key === 'admin' ? 'platform-admins' : `${group.key}-team`}
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>{group.key === 'admin' ? 'Manual User IDs (Break-Glass)' : 'Manual User IDs'}</span>
+                      <input
+                        type="text"
+                        value={groupSettings.manualUserIds}
+                        onChange={event =>
+                          updateSettings({
+                            accessControl: {
+                              ...settings.accessControl,
+                              groups: {
+                                ...settings.accessControl.groups,
+                                [group.key]: {
+                                  ...groupSettings,
+                                  manualUserIds: event.target.value,
+                                },
+                              },
+                            },
+                          })
+                        }
+                        placeholder="U01234567,U07654321"
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Allowed Channel IDs</span>
+                      <input
+                        type="text"
+                        value={groupSettings.allowedChannelIds}
+                        onChange={event =>
+                          updateSettings({
+                            accessControl: {
+                              ...settings.accessControl,
+                              groups: {
+                                ...settings.accessControl.groups,
+                                [group.key]: {
+                                  ...groupSettings,
+                                  allowedChannelIds: event.target.value,
+                                },
+                              },
+                            },
+                          })
+                        }
+                        placeholder="C01H25RNLJH,C02XXXXXXX"
+                      />
+                    </label>
+
+                    <div className="access-group-channel-toggles">
+                      <label className="access-toggle">
+                        <input
+                          type="checkbox"
+                          checked={groupSettings.allowIm}
+                          onChange={event =>
+                            updateSettings({
+                              accessControl: {
+                                ...settings.accessControl,
+                                groups: {
+                                  ...settings.accessControl.groups,
+                                  [group.key]: {
+                                    ...groupSettings,
+                                    allowIm: event.target.checked,
+                                  },
+                                },
+                              },
+                            })
+                          }
+                        />
+                        <span>Allow DM</span>
+                      </label>
+
+                      <label className="access-toggle">
+                        <input
+                          type="checkbox"
+                          checked={groupSettings.allowMpim}
+                          onChange={event =>
+                            updateSettings({
+                              accessControl: {
+                                ...settings.accessControl,
+                                groups: {
+                                  ...settings.accessControl.groups,
+                                  [group.key]: {
+                                    ...groupSettings,
+                                    allowMpim: event.target.checked,
+                                  },
+                                },
+                              },
+                            })
+                          }
+                        />
+                        <span>Allow MPIM</span>
+                      </label>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </SectionCard>
 

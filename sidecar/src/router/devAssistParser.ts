@@ -27,7 +27,10 @@ export type DevAssistCommand =
   | { type: 'WORKFLOW_RELOAD' };
 
 function stripMentions(text: string): string {
-  return text.replace(/<@[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  return text
+    .replace(/<@[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function stripPrefix(text: string): string | undefined {

@@ -2,7 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { z } from 'zod';
-import type { AgentBackendId, AppConfig } from './types/contracts.js';
+import {
+  buildLegacyAccessControlConfig,
+  createDefaultAccessControlSettings,
+  toResolvedAccessControlConfig,
+} from './access/control.js';
+import type { AccessControlSettings, AgentBackendId, AppConfig } from './types/contracts.js';
 
 const settingsSchema = z.object({
   slack_bot_token: z.string(),
@@ -61,6 +66,62 @@ function parseChannelIds(raw: string): string[] {
   return result;
 }
 
+function loadAccessControlSettings(db: Database.Database): AccessControlSettings | undefined {
+  const hasSettingsTable = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'access_control_settings' LIMIT 1")
+    .get() as { name?: string } | undefined;
+  const hasGroupsTable = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'access_control_groups' LIMIT 1")
+    .get() as { name?: string } | undefined;
+
+  if (!hasSettingsTable?.name || !hasGroupsTable?.name) {
+    return undefined;
+  }
+
+  const defaults = createDefaultAccessControlSettings();
+  const modeRow = db
+    .prepare(`SELECT COALESCE(mode, 'audit') AS mode FROM access_control_settings WHERE id = 1 LIMIT 1`)
+    .get() as { mode?: string } | undefined;
+
+  const rows = db
+    .prepare(
+      `SELECT
+      group_key,
+      COALESCE(slack_user_group_handle, '') AS slack_user_group_handle,
+      COALESCE(manual_user_ids, '') AS manual_user_ids,
+      COALESCE(allowed_channel_ids, '') AS allowed_channel_ids,
+      COALESCE(allow_im, 0) AS allow_im,
+      COALESCE(allow_mpim, 0) AS allow_mpim
+     FROM access_control_groups`,
+    )
+    .all() as Array<{
+    group_key?: string;
+    slack_user_group_handle?: string;
+    manual_user_ids?: string;
+    allowed_channel_ids?: string;
+    allow_im?: number;
+    allow_mpim?: number;
+  }>;
+
+  for (const row of rows) {
+    const key = row.group_key;
+    if (key !== 'viewer' && key !== 'reviewer' && key !== 'builder' && key !== 'admin') {
+      continue;
+    }
+
+    defaults.groups[key] = {
+      slackUserGroupHandle: row.slack_user_group_handle ?? '',
+      manualUserIds: row.manual_user_ids ?? '',
+      allowedChannelIds: row.allowed_channel_ids ?? '',
+      allowIm: Boolean(row.allow_im),
+      allowMpim: Boolean(row.allow_mpim),
+    };
+  }
+
+  defaults.mode = modeRow?.mode === 'enforce' ? 'enforce' : 'audit';
+  return defaults;
+}
+
 export function loadConfigFromDb(dbPath: string): AppConfig {
   const db = new Database(dbPath);
 
@@ -100,7 +161,7 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
       throw new Error(`Invalid settings row: ${parsed.error.message}`);
     }
 
-    return mapSettingsToConfig(parsed.data);
+    return mapSettingsToConfig(parsed.data, loadAccessControlSettings(db));
   } finally {
     db.close();
   }
@@ -118,7 +179,7 @@ export function readAgentBackend(dbPath: string): AgentBackendId {
   }
 }
 
-function mapSettingsToConfig(settings: SettingsRow): AppConfig {
+function mapSettingsToConfig(settings: SettingsRow, accessControlSettings?: AccessControlSettings): AppConfig {
   const ownerSlackUserIds = parseOwnerIds(settings.owner_slack_user_ids);
   const coreDevSlackUserIds = [...new Set([...parseOwnerIds(settings.core_dev_slack_user_ids), ...ownerSlackUserIds])];
   const bugFixChannelIds = parseChannelIds(settings.bugs_and_updates_channel_id);
@@ -128,7 +189,6 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
   if (!settings.slack_app_token.trim()) missingFields.push('slack_app_token');
   if (!settings.bot_user_id.trim()) missingFields.push('bot_user_id');
   if (ownerSlackUserIds.length === 0) missingFields.push('owner_slack_user_ids');
-  if (bugFixChannelIds.length === 0) missingFields.push('bugs_and_updates_channel_id');
   if (!settings.newton_web_path.trim()) missingFields.push('newton_web_path');
   if (!settings.newton_api_path.trim()) missingFields.push('newton_api_path');
 
@@ -140,6 +200,15 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
 
   const newtonWeb = mustBeAbsoluteExistingDir(settings.newton_web_path, 'newton_web_path');
   const newtonApi = mustBeAbsoluteExistingDir(settings.newton_api_path, 'newton_api_path');
+  const accessControl =
+    accessControlSettings !== undefined
+      ? toResolvedAccessControlConfig(accessControlSettings, ownerSlackUserIds)
+      : buildLegacyAccessControlConfig({
+          ownerSlackUserIds,
+          coreDevSlackUserIds,
+          coreDevSlackUserGroup: settings.core_dev_slack_user_group.trim(),
+          allowedChannelsForBugFix: bugFixChannelIds,
+        });
 
   return {
     platformPolicy: 'macos_only',
@@ -150,7 +219,7 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
     botUserId: settings.bot_user_id.trim(),
     slackBotToken: settings.slack_bot_token.trim(),
     slackAppToken: settings.slack_app_token.trim(),
-    bugsAndUpdatesChannelId: bugFixChannelIds[0],
+    bugsAndUpdatesChannelId: bugFixChannelIds[0] ?? '',
     allowedChannelsForBugFix: bugFixChannelIds,
     repoPaths: {
       newtonWeb,
@@ -167,5 +236,6 @@ function mapSettingsToConfig(settings: SettingsRow): AppConfig {
     prReviewTimeoutMs: settings.pr_review_timeout_ms,
     bugFixTimeoutMs: settings.bug_fix_timeout_ms,
     pmTaskTimeoutMs: settings.pm_task_timeout_ms,
+    accessControl,
   };
 }

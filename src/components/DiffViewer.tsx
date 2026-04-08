@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
-import type { DiffFileEntry } from "../types";
-import { StatusBadge } from "./primitives";
+import { useMemo, useState } from 'react';
+import type { DiffFileEntry } from '../types';
+import { StatusBadge } from './primitives';
 
 type DiffViewerProps = {
   branchName: string;
@@ -18,13 +18,13 @@ type ParsedHunk = {
 
 function parseDiffIntoHunks(diffText: string): ParsedHunk[] {
   const hunks: ParsedHunk[] = [];
-  const lines = diffText.split("\n");
-  let currentFile = "";
-  let currentHeader = "";
+  const lines = diffText.split('\n');
+  let currentFile = '';
+  let currentHeader = '';
   let currentLines: string[] = [];
 
   for (const line of lines) {
-    if (line.startsWith("diff --git")) {
+    if (line.startsWith('diff --git')) {
       if (currentFile) {
         hunks.push({
           filePath: currentFile,
@@ -52,36 +52,26 @@ function parseDiffIntoHunks(diffText: string): ParsedHunk[] {
   return hunks;
 }
 
-function statusColor(
-  status: DiffFileEntry["status"],
-): "success" | "warn" | "danger" {
+function statusColor(status: DiffFileEntry['status']): 'success' | 'warn' | 'danger' {
   switch (status) {
-    case "added":
-      return "success";
-    case "deleted":
-      return "danger";
+    case 'added':
+      return 'success';
+    case 'deleted':
+      return 'danger';
     default:
-      return "warn";
+      return 'warn';
   }
 }
 
-export function DiffViewer({
-  branchName,
-  diffText,
-  files,
-  insertions,
-  deletions,
-}: DiffViewerProps) {
-  const [selectedFile, setSelectedFile] = useState<string | null>(
-    files[0]?.path ?? null,
-  );
-  const [viewMode, setViewMode] = useState<"unified" | "split">("unified");
+export function DiffViewer({ branchName, diffText, files, insertions, deletions }: DiffViewerProps) {
+  const [selectedFile, setSelectedFile] = useState<string | null>(files[0]?.path ?? null);
+  const [viewMode, setViewMode] = useState<'unified' | 'split'>('unified');
 
   const hunks = useMemo(() => parseDiffIntoHunks(diffText), [diffText]);
 
   const selectedHunk = useMemo(() => {
     if (!selectedFile) return null;
-    return hunks.find((h) => h.filePath === selectedFile) ?? null;
+    return hunks.find(h => h.filePath === selectedFile) ?? null;
   }, [hunks, selectedFile]);
 
   return (
@@ -95,17 +85,13 @@ export function DiffViewer({
         </div>
         <div className="diff-view-toggle" role="group">
           <button
-            className={viewMode === "unified" ? "active" : ""}
+            className={viewMode === 'unified' ? 'active' : ''}
             type="button"
-            onClick={() => setViewMode("unified")}
+            onClick={() => setViewMode('unified')}
           >
             Unified
           </button>
-          <button
-            className={viewMode === "split" ? "active" : ""}
-            type="button"
-            onClick={() => setViewMode("split")}
-          >
+          <button className={viewMode === 'split' ? 'active' : ''} type="button" onClick={() => setViewMode('split')}>
             Split
           </button>
         </div>
@@ -114,21 +100,14 @@ export function DiffViewer({
       <div className="diff-body">
         <div className="diff-file-sidebar">
           <ul>
-            {files.map((file) => (
+            {files.map(file => (
               <li key={file.path}>
                 <button
-                  className={
-                    file.path === selectedFile
-                      ? "diff-file-item selected"
-                      : "diff-file-item"
-                  }
+                  className={file.path === selectedFile ? 'diff-file-item selected' : 'diff-file-item'}
                   type="button"
                   onClick={() => setSelectedFile(file.path)}
                 >
-                  <StatusBadge
-                    label={file.status[0].toUpperCase()}
-                    tone={statusColor(file.status)}
-                  />
+                  <StatusBadge label={file.status[0].toUpperCase()} tone={statusColor(file.status)} />
                   <span className="diff-file-path">{file.path}</span>
                   <span className="diff-file-stats">
                     <span className="diff-stat-add">+{file.insertions}</span>
@@ -145,13 +124,10 @@ export function DiffViewer({
             <pre className="diff-hunk-pre">
               <code>
                 {selectedHunk.lines.map((line, i) => {
-                  let lineClass = "diff-line";
-                  if (line.startsWith("+") && !line.startsWith("+++"))
-                    lineClass = "diff-line diff-add";
-                  else if (line.startsWith("-") && !line.startsWith("---"))
-                    lineClass = "diff-line diff-del";
-                  else if (line.startsWith("@@"))
-                    lineClass = "diff-line diff-hunk-header";
+                  let lineClass = 'diff-line';
+                  if (line.startsWith('+') && !line.startsWith('+++')) lineClass = 'diff-line diff-add';
+                  else if (line.startsWith('-') && !line.startsWith('---')) lineClass = 'diff-line diff-del';
+                  else if (line.startsWith('@@')) lineClass = 'diff-line diff-hunk-header';
 
                   return (
                     <div key={i} className={lineClass}>

@@ -37,12 +37,7 @@ const HUMOR_MARKER_PATTERN =
 const NEUTRAL_REACTIONS = ['eyes', 'memo', 'white_check_mark'] as const;
 
 const FALLBACK_REPLIES: Record<UnknownReplyTrack, string[]> = {
-  direct_reply: [
-    'noted.',
-    'understood.',
-    'message received.',
-    'go ahead.',
-  ],
+  direct_reply: ['noted.', 'understood.', 'message received.', 'go ahead.'],
   task_clarifier: [
     'share the exact outcome you want me to handle.',
     'please specify the single deliverable.',
@@ -111,10 +106,12 @@ function normalizeReply(reply: string): string {
   }
 
   const wasQuestion = collapsed.includes('?');
-  let candidate = collapsed.replace(
-    /\s*(?:[;,.-]|\s+or\b|\s+but\b|\s+before\b)\s+[^.?!]*(?:kpi|layoff|layoffs|budget|committee|boardroom|townhall|scope creep|surprise deliverable|trust issues|self-destruct|entropy|fun column|office-banter|workplace banter|corporate-jokes|natural force|smoke)[^.?!]*[.?!]?$/i,
-    ''
-  ).trim();
+  let candidate = collapsed
+    .replace(
+      /\s*(?:[;,.-]|\s+or\b|\s+but\b|\s+before\b)\s+[^.?!]*(?:kpi|layoff|layoffs|budget|committee|boardroom|townhall|scope creep|surprise deliverable|trust issues|self-destruct|entropy|fun column|office-banter|workplace banter|corporate-jokes|natural force|smoke)[^.?!]*[.?!]?$/i,
+      '',
+    )
+    .trim();
 
   if (!candidate) {
     candidate = collapsed;
@@ -163,14 +160,12 @@ async function generateUnknownReplyWithCodex(params: {
   slack: WebClient;
   logStep?: WorkflowStepLogger;
 }): Promise<UnknownReply> {
-  const { task, config, slack, logStep } = params;
+  const { task, slack, logStep } = params;
 
   const threadMessages = await fetchThreadContext(slack, task.event.channelId, task.event.threadTs).catch(() => []);
   const threadTexts = [task.event.text, ...threadMessages.map(message => message.text)];
   const track = classifyUnknownReplyTrack(threadTexts);
-  const threadContext = threadTexts
-    .filter(Boolean)
-    .join('\n---\n');
+  const threadContext = threadTexts.filter(Boolean).join('\n---\n');
 
   const prompt = `
 ${buildMentionSystemPrompt({ task, workflow: 'UNKNOWN' })}
@@ -328,7 +323,7 @@ export async function runUnknownTaskWorkflow(params: {
 
   notifyDesktop(
     'Watchtower unknown task',
-    `No configured workflow matched channel=${task.event.channelId} thread=${task.event.threadTs}`
+    `No configured workflow matched channel=${task.event.channelId} thread=${task.event.threadTs}`,
   );
 
   return {

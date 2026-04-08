@@ -35,7 +35,8 @@ const PROMPT_PRESETS = [
   },
   {
     label: 'Draft reply',
-    prompt: 'Draft a concise Slack reply that acknowledges the issue, explains the next step, and asks for the missing detail.',
+    prompt:
+      'Draft a concise Slack reply that acknowledges the issue, explains the next step, and asks for the missing detail.',
   },
 ];
 
@@ -180,12 +181,7 @@ export function SlackLaunchpad({
 
           <div className="slack-launchpad-actions">
             {isMiniOg ? (
-              <button
-                className="primary-button"
-                type="button"
-                onClick={submitMiniOg}
-                disabled={!canRunMiniOg}
-              >
+              <button className="primary-button" type="button" onClick={submitMiniOg} disabled={!canRunMiniOg}>
                 {submitting ? 'Queueing...' : 'Run miniOG'}
               </button>
             ) : null}

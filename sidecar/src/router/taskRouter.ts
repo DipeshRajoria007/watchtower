@@ -8,6 +8,7 @@ import type {
   WorkflowResult,
   WorkflowStepLogger,
 } from '../types/contracts.js';
+import { evaluateAccess, getConfiguredAccessControl, resolveRequiredAccessLevel } from '../access/control.js';
 import type { JobStore } from '../state/jobStore.js';
 import { runDevAssistWorkflow } from '../workflows/devAssistWorkflow.js';
 import { runDeployWorkflow } from '../workflows/deployWorkflow.js';
@@ -35,58 +36,56 @@ export async function routeTask(params: {
   signal?: AbortSignal;
 }): Promise<WorkflowResult> {
   const { task, config, slack, store, jobId, logStep, signal } = params;
-
-  // DEV_ASSIST is deterministic (explicit wt/ prefix or natural alias) — route immediately.
-  if (task.intent === 'DEV_ASSIST') {
-    return runDevAssistWorkflow({ task, config, slack, store, logStep });
-  }
-
-  // DEPLOY is deterministic (deploy + prod/app reference) — route before AI classifier.
-  if (task.intent === 'DEPLOY') {
-    return runDeployWorkflow({ task, config, slack, logStep, signal });
-  }
+  let resolvedIntent: WorkflowIntent = task.intent;
+  let classificationReasoning: string | undefined;
 
   // Presence pings: cheap regex check, skip the AI classifier entirely.
   const userMessage = (task.event.text ?? '')
     .replace(/<@[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  if (isPresencePing(userMessage)) {
-    return runConversationalWorkflow({ task, config, slack, logStep });
+
+  if (task.intent !== 'DEV_ASSIST' && task.intent !== 'DEPLOY') {
+    if (isPresencePing(userMessage)) {
+      resolvedIntent = 'CONVERSATIONAL';
+    } else {
+      // For all other intents, use AI to classify.
+      // Pass mentionType so the classifier knows if this is a direct @miniOG mention
+      // or an indirect @theOG mention (owner-mention triggers should be filtered for relevance).
+      const hasPrUrl = Boolean(task.prContext);
+      const classification = await classifyWorkflowIntent({
+        userMessage,
+        hasPrUrl,
+        mentionType: task.mentionType,
+        logStep,
+      });
+      classificationReasoning = classification.reasoning;
+
+      if (classification.intent !== task.intent) {
+        logStep?.({
+          stage: 'router.classify.override',
+          message: `AI classifier resolved intent: ${task.intent} → ${classification.intent} (confidence=${classification.confidence.toFixed(2)}).`,
+          data: {
+            originalIntent: task.intent,
+            classifiedIntent: classification.intent,
+            confidence: classification.confidence,
+            reasoning: classification.reasoning,
+          },
+        });
+      }
+
+      resolvedIntent = classification.intent;
+    }
   }
 
-  // For all other intents, use AI to classify.
-  // Pass mentionType so the classifier knows if this is a direct @miniOG mention
-  // or an indirect @theOG mention (owner-mention triggers should be filtered for relevance).
-  const hasPrUrl = Boolean(task.prContext);
-  const classification = await classifyWorkflowIntent({
-    userMessage,
-    hasPrUrl,
-    mentionType: task.mentionType,
-    logStep,
-  });
-
-  if (classification.intent !== task.intent) {
-    logStep?.({
-      stage: 'router.classify.override',
-      message: `AI classifier resolved intent: ${task.intent} → ${classification.intent} (confidence=${classification.confidence.toFixed(2)}).`,
-      data: {
-        originalIntent: task.intent,
-        classifiedIntent: classification.intent,
-        confidence: classification.confidence,
-        reasoning: classification.reasoning,
-      },
-    });
-  }
-
-  const resolvedIntent: WorkflowIntent = classification.intent;
+  const routedTask = resolvedIntent !== task.intent ? { ...task, intent: resolvedIntent } : task;
 
   // NONE = classifier determined this is human-to-human conversation, miniOG should stay silent
   if (resolvedIntent === 'NONE') {
     logStep?.({
       stage: 'router.silent',
       message: 'Classifier returned NONE — staying silent for this human-to-human conversation.',
-      data: { reasoning: classification.reasoning },
+      data: { reasoning: classificationReasoning },
     });
     return {
       workflow: 'NONE',
@@ -97,21 +96,89 @@ export async function routeTask(params: {
     };
   }
 
+  const accessControl = getConfiguredAccessControl(config);
+  const requiredLevel = resolveRequiredAccessLevel(resolvedIntent);
+  const accessDecision = evaluateAccess({
+    config,
+    accessControl,
+    userId: task.event.userId,
+    channelId: task.event.channelId,
+    channelType: task.event.channelType,
+    requiredLevel,
+  });
+
+  if (!accessDecision.allowed) {
+    logStep?.({
+      stage: accessControl.mode === 'audit' ? 'access.audit.would_deny' : 'access.enforce.denied',
+      message:
+        accessControl.mode === 'audit'
+          ? 'Access control would deny this request, but audit mode allowed it to continue.'
+          : 'Access control denied this request.',
+      level: accessControl.mode === 'audit' ? 'WARN' : 'INFO',
+      data: {
+        intent: resolvedIntent,
+        requiredLevel,
+        userGroups: accessDecision.userGroups,
+        matchedGroups: accessDecision.matchedGroups,
+        userId: task.event.userId,
+        channelId: task.event.channelId,
+      },
+    });
+
+    if (accessControl.mode === 'enforce') {
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: accessDecision.reason ?? 'Access denied.',
+      });
+
+      return {
+        workflow: resolvedIntent,
+        status: 'SKIPPED',
+        message: accessDecision.reason ?? 'Access denied.',
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+  } else {
+    logStep?.({
+      stage: accessDecision.ownerBypass ? 'access.owner_bypass' : 'access.allowed',
+      message: accessDecision.ownerBypass
+        ? 'Owner bypass granted unrestricted access.'
+        : 'Access control allowed this request.',
+      data: {
+        intent: resolvedIntent,
+        requiredLevel,
+        userGroups: accessDecision.userGroups,
+        matchedGroups: accessDecision.matchedGroups,
+        userId: task.event.userId,
+        channelId: task.event.channelId,
+      },
+    });
+  }
+
   if (resolvedIntent === 'PR_REVIEW') {
-    const routedTask = resolvedIntent !== task.intent ? { ...task, intent: resolvedIntent } : task;
     return runPrReviewWorkflow({ task: routedTask, config, slack, store, jobId, logStep, signal });
   }
 
   if (resolvedIntent === 'IMPLEMENTATION' || resolvedIntent === 'OWNER_AUTOPILOT') {
-    return runImplementationWorkflow({ task, config, slack, store, jobId, logStep, signal });
+    return runImplementationWorkflow({ task: routedTask, config, slack, store, jobId, logStep, signal });
   }
 
   if (resolvedIntent === 'INFORMATIONAL') {
-    return runInformationalWorkflow({ task, config, slack, logStep, signal });
+    return runInformationalWorkflow({ task: routedTask, config, slack, logStep, signal });
   }
 
   if (resolvedIntent === 'CONVERSATIONAL') {
-    return runConversationalWorkflow({ task, config, slack, logStep });
+    return runConversationalWorkflow({ task: routedTask, config, slack, logStep });
+  }
+
+  if (resolvedIntent === 'DEV_ASSIST') {
+    return runDevAssistWorkflow({ task: routedTask, config, slack, store, logStep });
+  }
+
+  if (resolvedIntent === 'DEPLOY') {
+    return runDeployWorkflow({ task: routedTask, config, slack, logStep, signal });
   }
 
   // Check file-based workflow templates before falling through to unknown
@@ -125,11 +192,11 @@ export async function routeTask(params: {
         data: { templateName: matched.name },
       });
 
-      return runTemplateWorkflow({ task, config, slack, template: matched, logStep, signal });
+      return runTemplateWorkflow({ task: routedTask, config, slack, template: matched, logStep, signal });
     }
   }
 
-  return runUnknownTaskWorkflow({ task, config, slack, logStep });
+  return runUnknownTaskWorkflow({ task: routedTask, config, slack, logStep });
 }
 
 async function runTemplateWorkflow(params: {
