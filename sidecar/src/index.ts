@@ -984,25 +984,33 @@ async function main(): Promise<void> {
     const accessControl = getConfiguredAccessControl(config);
     for (const groupKey of Object.keys(accessControl.groups) as AccessGroupKey[]) {
       const group = accessControl.groups[groupKey];
-      const handle = group.slackUserGroupHandle.trim();
-      if (!handle) {
+      const handles = group.slackUserGroupHandle
+        .split(',')
+        .map(h => h.trim())
+        .filter(Boolean);
+      if (handles.length === 0) {
         continue;
       }
 
-      try {
-        const members = await resolveUserGroupMembers(client.webClient, handle);
-        setResolvedGroupMembers({ config, groupKey, members });
-        logger.info(
-          {
-            groupKey,
-            handle,
-            memberCount: accessControl.groups[groupKey].resolvedUserIds.length,
-          },
-          'access group resolved',
-        );
-      } catch (error) {
-        logger.warn({ groupKey, handle, error: String(error) }, 'access group refresh failed');
+      const allMembers: string[] = [];
+      for (const handle of handles) {
+        try {
+          const members = await resolveUserGroupMembers(client.webClient, handle);
+          allMembers.push(...members);
+        } catch (error) {
+          logger.warn({ groupKey, handle, error: String(error) }, 'access group handle refresh failed');
+        }
       }
+
+      setResolvedGroupMembers({ config, groupKey, members: allMembers });
+      logger.info(
+        {
+          groupKey,
+          handles,
+          memberCount: getConfiguredAccessControl(config).groups[groupKey].resolvedUserIds.length,
+        },
+        'access group resolved',
+      );
     }
   };
 
