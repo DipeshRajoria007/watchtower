@@ -288,6 +288,84 @@ describe('routeTask access control', () => {
     expect(runDevAssistWorkflow).toHaveBeenCalledOnce();
   });
 
+  it('hard-blocks DMs from non-allowlisted users even in audit mode', async () => {
+    const config = makeConfig('audit');
+    const slack = makeSlack();
+    const logStep = vi.fn();
+
+    const result = await routeTask({
+      task: makeTask({
+        userId: 'UREVIEW', // reviewer has allowIm:false
+        channelId: 'D-REVIEW',
+        text: 'hey miniOG',
+      }),
+      config,
+      slack: slack as never,
+      store: {} as never,
+      logStep,
+    });
+
+    expect(result.status).toBe('SKIPPED');
+    expect(runPrReviewWorkflow).not.toHaveBeenCalled();
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'D-REVIEW',
+        text: "You don't have DM access to miniOG. Ask an admin to add you.",
+      }),
+    );
+    expect(logStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'access.dm.denied',
+      }),
+    );
+  });
+
+  it('allows DMs from users in a group with allowIm enabled', async () => {
+    const config = makeConfig('audit');
+    const slack = makeSlack();
+    classifyWorkflowIntent.mockResolvedValueOnce({
+      intent: 'CONVERSATIONAL',
+      confidence: 0.9,
+      reasoning: 'casual chat',
+    });
+
+    const result = await routeTask({
+      task: makeTask({
+        userId: 'UVIEWER', // viewer has allowIm:true
+        channelId: 'D-VIEWER',
+        text: '<@UBOT1> hey',
+      }),
+      config,
+      slack: slack as never,
+      store: {} as never,
+      logStep: vi.fn(),
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(runConversationalWorkflow).toHaveBeenCalledOnce();
+    expect(slack.chat.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('lets the owner DM miniOG regardless of group config', async () => {
+    const config = makeConfig('audit');
+    const slack = makeSlack();
+
+    const result = await routeTask({
+      task: makeTask({
+        userId: 'UOWNER1',
+        channelId: 'D-OWNER',
+        text: '<@UBOT1> status check',
+      }),
+      config,
+      slack: slack as never,
+      store: {} as never,
+      logStep: vi.fn(),
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(slack.chat.postMessage).not.toHaveBeenCalled();
+  });
+
   it('blocks builders from deploy and lets the owner bypass', async () => {
     const config = makeConfig('enforce');
     const slack = makeSlack();
