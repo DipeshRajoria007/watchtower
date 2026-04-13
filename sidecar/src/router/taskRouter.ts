@@ -108,13 +108,25 @@ export async function routeTask(params: {
   });
 
   if (!accessDecision.allowed) {
+    const isDirectMessage = task.event.channelType === 'im' || task.event.channelType === 'mpim';
+    const shouldBlock = accessControl.mode === 'enforce' || isDirectMessage;
+    const stage =
+      isDirectMessage && accessControl.mode === 'audit'
+        ? 'access.dm.denied'
+        : accessControl.mode === 'enforce'
+          ? 'access.enforce.denied'
+          : 'access.audit.would_deny';
+    const message =
+      isDirectMessage && accessControl.mode === 'audit'
+        ? 'DMs and MPIMs are always enforced; blocked despite audit mode.'
+        : accessControl.mode === 'enforce'
+          ? 'Access control denied this request.'
+          : 'Access control would deny this request, but audit mode allowed it to continue.';
+
     logStep?.({
-      stage: accessControl.mode === 'audit' ? 'access.audit.would_deny' : 'access.enforce.denied',
-      message:
-        accessControl.mode === 'audit'
-          ? 'Access control would deny this request, but audit mode allowed it to continue.'
-          : 'Access control denied this request.',
-      level: accessControl.mode === 'audit' ? 'WARN' : 'INFO',
+      stage,
+      message,
+      level: shouldBlock ? 'INFO' : 'WARN',
       data: {
         intent: resolvedIntent,
         requiredLevel,
@@ -122,20 +134,25 @@ export async function routeTask(params: {
         matchedGroups: accessDecision.matchedGroups,
         userId: task.event.userId,
         channelId: task.event.channelId,
+        channelType: task.event.channelType,
       },
     });
 
-    if (accessControl.mode === 'enforce') {
+    if (shouldBlock) {
+      const denialText = isDirectMessage
+        ? "You don't have DM access to miniOG. Ask an admin to add you."
+        : (accessDecision.reason ?? 'Access denied.');
+
       await slack.chat.postMessage({
         channel: task.event.channelId,
         thread_ts: task.event.threadTs,
-        text: accessDecision.reason ?? 'Access denied.',
+        text: denialText,
       });
 
       return {
         workflow: resolvedIntent,
         status: 'SKIPPED',
-        message: accessDecision.reason ?? 'Access denied.',
+        message: denialText,
         notifyDesktop: false,
         slackPosted: true,
       };
