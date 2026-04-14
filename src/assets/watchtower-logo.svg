@@ -1,0 +1,153 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" overflow="visible">
+  <style>
+    @keyframes radarSweep {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    @keyframes beaconPulse {
+      0%, 100% { opacity: 1; filter: drop-shadow(0 0 4px rgba(94,234,212,0.6)); }
+      50% { opacity: 0.7; filter: drop-shadow(0 0 8px rgba(94,234,212,0.9)); }
+    }
+    @keyframes ringExpand {
+      0% { r: 9; opacity: 0.2; }
+      100% { r: 18; opacity: 0; }
+    }
+    @keyframes logoBreath {
+      0%, 100% { opacity: 0.7; transform: scale(1.8); }
+      50% { opacity: 1; transform: scale(2); }
+    }
+    .radar-sweep { transform-origin: 64px 36px; animation: radarSweep 4s linear infinite; }
+    .beacon-pulse { animation: beaconPulse 2s ease-in-out infinite; }
+    .ring-expand { animation: ringExpand 2s ease-out infinite; }
+    .ambient-glow { transform-origin: 64px 64px; animation: logoBreath 4s ease-in-out infinite; }
+  </style>
+
+  <defs>
+    <!-- Ambient glow gradient -->
+    <radialGradient id="wt-ambient" cx="64" cy="64" r="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5EEAD4" stop-opacity="0.12"/>
+      <stop offset="70%" stop-color="#5EEAD4" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Teal accent gradient — vertical -->
+    <linearGradient id="wt-teal" x1="64" y1="0" x2="64" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5EEAD4"/>
+      <stop offset="100%" stop-color="#2DD4BF"/>
+    </linearGradient>
+
+    <!-- Beacon glow -->
+    <radialGradient id="wt-beacon" cx="64" cy="34" r="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5EEAD4" stop-opacity="0.6"/>
+      <stop offset="60%" stop-color="#5EEAD4" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#5EEAD4" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Dark bg gradient for the icon plate -->
+    <linearGradient id="wt-bg" x1="64" y1="0" x2="64" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#111113"/>
+      <stop offset="100%" stop-color="#08080A"/>
+    </linearGradient>
+
+    <!-- Sweep beam gradient -->
+    <linearGradient id="wt-sweep" x1="64" y1="34" x2="96" y2="10" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5EEAD4" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#5EEAD4" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Clipping for the sweep to stay within icon bounds -->
+    <clipPath id="wt-clip">
+      <rect x="4" y="4" width="120" height="120" rx="28"/>
+    </clipPath>
+  </defs>
+
+  <!-- === Outer ambient glow === -->
+  <circle cx="64" cy="64" r="64" fill="url(#wt-ambient)" class="ambient-glow"/>
+
+  <!-- === Background plate === -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#wt-bg)"/>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="none" stroke="#5EEAD4" stroke-opacity="0.12" stroke-width="1"/>
+
+  <!-- === Subtle grid texture inside plate === -->
+  <g clip-path="url(#wt-clip)" opacity="0.06">
+    <line x1="4" y1="14" x2="124" y2="14" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="4" y1="24" x2="124" y2="24" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="4" y1="34" x2="124" y2="34" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="4" y1="44" x2="124" y2="44" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="4" y1="54" x2="124" y2="54" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="4" y1="64" x2="124" y2="64" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="4" y1="74" x2="124" y2="74" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="4" y1="84" x2="124" y2="84" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="4" y1="94" x2="124" y2="94" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="4" y1="104" x2="124" y2="104" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="4" y1="114" x2="124" y2="114" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="14" y1="4" x2="14" y2="124" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="24" y1="4" x2="24" y2="124" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="34" y1="4" x2="34" y2="124" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="44" y1="4" x2="44" y2="124" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="54" y1="4" x2="54" y2="124" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="64" y1="4" x2="64" y2="124" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="74" y1="4" x2="74" y2="124" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="84" y1="4" x2="84" y2="124" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="94" y1="4" x2="94" y2="124" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="104" y1="4" x2="104" y2="124" stroke="#5EEAD4" stroke-width="0.5"/>
+    <line x1="114" y1="4" x2="114" y2="124" stroke="#5EEAD4" stroke-width="0.5"/>
+  </g>
+
+  <!-- === Radar rings (concentric circles from beacon point) === -->
+  <g clip-path="url(#wt-clip)">
+    <circle cx="64" cy="36" r="16" fill="none" stroke="#5EEAD4" stroke-width="0.6" opacity="0.1"/>
+    <circle cx="64" cy="36" r="28" fill="none" stroke="#5EEAD4" stroke-width="0.5" opacity="0.07"/>
+    <circle cx="64" cy="36" r="42" fill="none" stroke="#5EEAD4" stroke-width="0.4" opacity="0.04"/>
+  </g>
+
+  <!-- === Radar sweep beam === -->
+  <g clip-path="url(#wt-clip)">
+    <path d="M64 36 L96 8 A48 48 0 0 0 64 36Z" fill="url(#wt-sweep)" class="radar-sweep"/>
+  </g>
+
+  <!-- === Beacon glow === -->
+  <circle cx="64" cy="36" r="32" fill="url(#wt-beacon)"/>
+
+  <!-- === Tower structure === -->
+  <!-- Main tower body — tapered trapezoid -->
+  <path d="M52 52 L48 108 L80 108 L76 52Z" fill="#0A0A0B" stroke="url(#wt-teal)" stroke-width="1.5" stroke-linejoin="round"/>
+
+  <!-- Tower inner line details -->
+  <line x1="56" y1="62" x2="72" y2="62" stroke="#5EEAD4" stroke-width="0.6" opacity="0.3"/>
+  <line x1="55" y1="72" x2="73" y2="72" stroke="#5EEAD4" stroke-width="0.6" opacity="0.2"/>
+  <line x1="54" y1="82" x2="74" y2="82" stroke="#5EEAD4" stroke-width="0.6" opacity="0.15"/>
+  <line x1="53" y1="92" x2="75" y2="92" stroke="#5EEAD4" stroke-width="0.6" opacity="0.1"/>
+
+  <!-- Tower window / viewport -->
+  <rect x="58" y="56" width="12" height="8" rx="2" fill="none" stroke="#5EEAD4" stroke-width="0.8" opacity="0.5"/>
+  <rect x="60" y="58" width="8" height="4" rx="1" fill="#5EEAD4" opacity="0.12"/>
+
+  <!-- Tower top cap -->
+  <path d="M50 52 L64 40 L78 52Z" fill="#0A0A0B" stroke="url(#wt-teal)" stroke-width="1.5" stroke-linejoin="round"/>
+
+  <!-- === Beacon point (the eye) === -->
+  <circle cx="64" cy="36" r="3.5" fill="#5EEAD4" class="beacon-pulse"/>
+  <circle cx="64" cy="36" r="6" fill="none" stroke="#5EEAD4" stroke-width="0.8" opacity="0.4"/>
+  <circle cx="64" cy="36" r="9" fill="none" stroke="#5EEAD4" stroke-width="0.5" opacity="0.15" class="ring-expand"/>
+
+  <!-- === Base platform === -->
+  <path d="M40 108 L88 108" stroke="url(#wt-teal)" stroke-width="2" stroke-linecap="round"/>
+  <!-- Base reflection glow -->
+  <line x1="44" y1="112" x2="84" y2="112" stroke="#5EEAD4" stroke-width="0.5" opacity="0.08"/>
+
+  <!-- === Corner accent marks (engineering blueprint feel) === -->
+  <g opacity="0.15" stroke="#5EEAD4" stroke-width="0.8">
+    <!-- Top-left -->
+    <line x1="12" y1="16" x2="12" y2="24"/>
+    <line x1="12" y1="16" x2="20" y2="16"/>
+    <!-- Top-right -->
+    <line x1="116" y1="16" x2="116" y2="24"/>
+    <line x1="116" y1="16" x2="108" y2="16"/>
+    <!-- Bottom-left -->
+    <line x1="12" y1="112" x2="12" y2="104"/>
+    <line x1="12" y1="112" x2="20" y2="112"/>
+    <!-- Bottom-right -->
+    <line x1="116" y1="112" x2="116" y2="104"/>
+    <line x1="116" y1="112" x2="108" y2="112"/>
+  </g>
+</svg>
