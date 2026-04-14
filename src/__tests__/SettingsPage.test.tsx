@@ -64,8 +64,75 @@ function makeSettings(): AppSettings {
   };
 }
 
+function renderAndNavigateToAccess(onSettingsChange = vi.fn()) {
+  render(
+    <SettingsPage
+      onSettingsChange={onSettingsChange}
+      onImportNotificationAudio={vi.fn().mockResolvedValue(undefined)}
+      onPreviewNotification={vi.fn()}
+      onSubmit={vi.fn()}
+      previewingNotificationTone={null}
+      savingSettings={false}
+      settings={makeSettings()}
+      settingsConfigured
+      settingsMessage={null}
+      uploadingNotificationAudioTone={null}
+    />,
+  );
+
+  // Navigate to the Access section via sidebar
+  fireEvent.click(screen.getByText('Access'));
+  return onSettingsChange;
+}
+
 describe('SettingsPage', () => {
-  it('renders the access-control section and group cards', () => {
+  it('renders the access-control section and role tabs when navigated to', () => {
+    renderAndNavigateToAccess();
+
+    expect(screen.getAllByText('Access Control').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Viewer').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Reviewer').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Builder').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Admin').length).toBeGreaterThan(0);
+  });
+
+  it('maps access mode change into onSettingsChange', () => {
+    const onSettingsChange = renderAndNavigateToAccess();
+
+    const accessMode = screen.getByDisplayValue('Audit');
+    fireEvent.change(accessMode, { target: { value: 'enforce' } });
+    expect(onSettingsChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accessControl: expect.objectContaining({
+          mode: 'enforce',
+        }),
+      }),
+    );
+  });
+
+  it('maps DM toggle for a selected role into onSettingsChange', () => {
+    const onSettingsChange = renderAndNavigateToAccess();
+
+    // Default active role is admin — switch to reviewer
+    fireEvent.click(screen.getByText('Reviewer'));
+    onSettingsChange.mockClear();
+
+    const allowDmToggle = screen.getByLabelText('Allow DM');
+    fireEvent.click(allowDmToggle);
+    expect(onSettingsChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accessControl: expect.objectContaining({
+          groups: expect.objectContaining({
+            reviewer: expect.objectContaining({
+              allowIm: true,
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('shows the sidebar nav with all four sections', () => {
     render(
       <SettingsPage
         onSettingsChange={vi.fn()}
@@ -81,18 +148,16 @@ describe('SettingsPage', () => {
       />,
     );
 
-    expect(screen.getAllByText('Access Control').length).toBeGreaterThan(0);
-    expect(screen.getByText('Viewer')).toBeTruthy();
-    expect(screen.getByText('Reviewer')).toBeTruthy();
-    expect(screen.getByText('Builder')).toBeTruthy();
-    expect(screen.getByText('Admin')).toBeTruthy();
+    expect(screen.getByText('Appearance')).toBeTruthy();
+    expect(screen.getByText('Connections')).toBeTruthy();
+    expect(screen.getByText('Access')).toBeTruthy();
+    expect(screen.getByText('Automation')).toBeTruthy();
   });
 
-  it('maps access mode and DM toggle changes into onSettingsChange', () => {
-    const onSettingsChange = vi.fn();
+  it('shows the health strip', () => {
     render(
       <SettingsPage
-        onSettingsChange={onSettingsChange}
+        onSettingsChange={vi.fn()}
         onImportNotificationAudio={vi.fn().mockResolvedValue(undefined)}
         onPreviewNotification={vi.fn()}
         onSubmit={vi.fn()}
@@ -105,29 +170,8 @@ describe('SettingsPage', () => {
       />,
     );
 
-    const accessMode = screen.getByDisplayValue('Audit');
-    fireEvent.change(accessMode, { target: { value: 'enforce' } });
-    expect(onSettingsChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        accessControl: expect.objectContaining({
-          mode: 'enforce',
-        }),
-      }),
-    );
-
-    onSettingsChange.mockClear();
-    const allowDmToggles = screen.getAllByLabelText('Allow DM');
-    fireEvent.click(allowDmToggles[1]);
-    expect(onSettingsChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        accessControl: expect.objectContaining({
-          groups: expect.objectContaining({
-            reviewer: expect.objectContaining({
-              allowIm: true,
-            }),
-          }),
-        }),
-      }),
-    );
+    expect(screen.getByText(/Slack \u2713/)).toBeTruthy();
+    expect(screen.getByText(/Repos 2\/2/)).toBeTruthy();
+    expect(screen.getByText('Access: Audit')).toBeTruthy();
   });
 });

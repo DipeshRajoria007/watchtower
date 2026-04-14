@@ -2019,6 +2019,91 @@ h3 {
   gap: 16px;
 }
 
+/* Health strip — compact readiness indicators replacing the old summary grid */
+.settings-health-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: 13px;
+}
+
+.health-chip {
+  color: var(--text-muted);
+}
+
+.health-chip.ok {
+  color: var(--text-soft);
+}
+
+.health-chip.warn {
+  color: var(--warning);
+}
+
+.health-divider {
+  color: var(--text-label);
+}
+
+/* Two-pane settings layout: sidebar nav + content pane */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.settings-sidebar-nav {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+
+.settings-sidebar-nav .nav-button {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.nav-button-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.nav-button-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.settings-sidebar-nav .nav-button.active .nav-button-hint {
+  color: var(--text-soft);
+}
+
+.settings-pane {
+  min-width: 0;
+}
+
+/* Access control role tabs */
+.access-role-tabs {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.access-role-detail {
+  display: grid;
+  gap: 14px;
+}
+
 .settings-summary-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
