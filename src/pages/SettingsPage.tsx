@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react';
 import { THEME_FONT_OPTIONS, THEME_PRESETS, resolveAppTheme, resolveThemeFont } from '../lib/theme';
 import type {
@@ -11,7 +11,7 @@ import type {
   NotificationAudioTone,
   ThemePresetId,
 } from '../types';
-import { EmptyState, MetricCard, PageIntro, SectionCard, StatusBadge } from '../components/primitives';
+import { EmptyState, PageIntro, SectionCard, StatusBadge, TabBar } from '../components/primitives';
 
 type SettingsPageProps = {
   onSettingsChange: (settings: AppSettings) => void;
@@ -170,6 +170,15 @@ const NOTIFICATION_AUDIO_SOUND_CARDS: NotificationAudioSoundCard[] = [
   { description: 'Small crystal tick', id: 'tink', label: 'Tink' },
 ];
 
+type SettingsSection = 'appearance' | 'connections' | 'access' | 'automation';
+
+const SETTINGS_NAV: { description: string; key: SettingsSection; label: string }[] = [
+  { key: 'appearance', label: 'Appearance', description: 'Theme and notification sounds' },
+  { key: 'connections', label: 'Connections', description: 'Slack tokens and repo paths' },
+  { key: 'access', label: 'Access', description: 'Ownership and role-based controls' },
+  { key: 'automation', label: 'Automation', description: 'Backend and runtime limits' },
+];
+
 function buildThemePreviewStyle(theme: ReturnType<typeof resolveAppTheme>): CSSProperties {
   return {
     '--theme-preview-accent': theme.accentColor,
@@ -241,6 +250,8 @@ export function SettingsPage({
 }: SettingsPageProps) {
   const successNotificationAudioInputRef = useRef<HTMLInputElement | null>(null);
   const failureNotificationAudioInputRef = useRef<HTMLInputElement | null>(null);
+  const [activeSection, setActiveSection] = useState<SettingsSection>('appearance');
+  const [activeRole, setActiveRole] = useState<AccessGroupKey>('admin');
 
   if (!settings) {
     return (
@@ -362,13 +373,18 @@ export function SettingsPage({
   ];
 
   const completeSections = sections.filter(section => section.ready).length;
+  const slackSection = sections.find(s => s.label === 'Slack Auth')!;
+  const repoSection = sections.find(s => s.label === 'Repo Paths')!;
+
+  const activeRoleGroup = settings.accessControl.groups[activeRole];
+  const activeRoleCard = ACCESS_GROUP_CARDS.find(g => g.key === activeRole)!;
 
   return (
     <div className="page-stack settings-page">
       <PageIntro
         eyebrow="Runtime + Appearance"
         title="Settings"
-        description="Slack auth, ownership rules, repo boundaries, execution limits, desktop appearance, and notification audio all live in one polished configuration surface."
+        description="Slack auth, ownership, access control, repo boundaries, runtime limits, and desktop appearance."
         actions={
           <StatusBadge
             label={settingsConfigured ? 'Runtime Ready' : 'Action Needed'}
@@ -378,683 +394,729 @@ export function SettingsPage({
       />
 
       <form className="settings-form-page" onSubmit={onSubmit}>
-        <SectionCard
-          title="Completeness Summary"
-          subtitle="Runtime readiness still mirrors the backend contract. Theme choices are optional and save alongside the required runtime fields."
-          count={`${completeSections}/${sections.length}`}
-        >
-          <div className="settings-summary-grid">
-            <MetricCard
-              label="Sections Ready"
-              value={`${completeSections}/${sections.length}`}
-              tone={settingsConfigured ? 'success' : 'warning'}
-            />
-            <MetricCard
-              label="Runtime Status"
-              value={settingsConfigured ? 'Ready' : 'Incomplete'}
-              tone={settingsConfigured ? 'success' : 'danger'}
-            />
-            <MetricCard label="Active Theme" value={activeTheme.label} tone="accent" />
-            {sections.map(section => (
-              <article className="settings-summary-card" key={section.label}>
-                <div className="settings-summary-top">
-                  <strong>{section.label}</strong>
-                  <StatusBadge label={section.ready ? 'Ready' : 'Pending'} tone={section.ready ? 'success' : 'warn'} />
+        <div className="settings-health-strip">
+          <span className={slackSection.ready ? 'health-chip ok' : 'health-chip warn'}>
+            Slack {slackSection.ready ? '\u2713' : '\u2014'}
+          </span>
+          <span className="health-divider">&middot;</span>
+          <span className={repoSection.ready ? 'health-chip ok' : 'health-chip warn'}>
+            Repos {repoSection.complete}/{repoSection.items}
+          </span>
+          <span className="health-divider">&middot;</span>
+          <span className="health-chip ok">
+            Access: {settings.accessControl.mode === 'enforce' ? 'Enforce' : 'Audit'}
+          </span>
+          <span className="health-divider">&middot;</span>
+          <span className={settingsConfigured ? 'health-chip ok' : 'health-chip warn'}>
+            {completeSections}/{sections.length} ready
+          </span>
+        </div>
+
+        <div className="settings-layout">
+          <nav className="settings-sidebar-nav">
+            {SETTINGS_NAV.map(item => (
+              <button
+                key={item.key}
+                className={activeSection === item.key ? 'nav-button active' : 'nav-button'}
+                type="button"
+                aria-current={activeSection === item.key ? 'page' : undefined}
+                onClick={() => setActiveSection(item.key)}
+              >
+                <div>
+                  <span className="nav-button-label">{item.label}</span>
+                  <span className="nav-button-hint">{item.description}</span>
                 </div>
-                <p>
-                  {section.complete}/{section.items} checks complete
-                </p>
-              </article>
+              </button>
             ))}
-          </div>
-        </SectionCard>
+          </nav>
 
-        <div className="settings-sections">
-          <SectionCard
-            title="Theme"
-            subtitle="Presets repaint background, foreground, accent, and typography across the desktop shell. Select Custom to unlock manual pickers."
-          >
-            <div className="theme-section-layout">
-              <div className="theme-presets-grid">
-                {themeCards.map(card => {
-                  const selected = settings.themePreset === card.id;
-
-                  return (
-                    <button
-                      key={card.id}
-                      className={selected ? 'theme-preset-card active' : 'theme-preset-card'}
-                      type="button"
-                      onClick={() => updateSettings({ themePreset: card.id })}
-                    >
-                      <div className="theme-preset-top">
-                        <div>
-                          <strong>{card.label}</strong>
-                          <p>{card.description}</p>
-                        </div>
-                        <StatusBadge
-                          label={selected ? 'Active' : card.id === 'custom' ? 'Manual' : 'Preset'}
-                          tone={selected ? 'success' : 'info'}
-                        />
-                      </div>
-
-                      <div className="theme-swatch-strip" aria-hidden="true">
-                        <span style={{ backgroundColor: card.backgroundColor }} />
-                        <span style={{ backgroundColor: card.foregroundColor }} />
-                        <span style={{ backgroundColor: card.accentColor }} />
-                      </div>
-
-                      <div className="theme-preset-meta">
-                        <span>{card.fontLabel}</span>
-                        <span>{card.accentColor}</span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <article className="theme-preview-card" style={themePreviewStyle}>
-                <div className="theme-preview-top">
-                  <div>
-                    <p className="theme-preview-kicker">Live Preview</p>
-                    <h3>{activeTheme.label}</h3>
-                  </div>
-                  <StatusBadge label={activeTheme.isCustom ? 'Custom' : 'Preset'} tone="info" />
-                </div>
-
-                <p className="theme-preview-copy">{activeTheme.description}</p>
-
-                <div className="theme-preview-surface">
-                  <div className="theme-preview-line">
-                    <span>Watchtower</span>
-                    <span>{activeTheme.font.label}</span>
-                  </div>
-                  <strong>Sidecar healthy. Queue under control.</strong>
-                  <p>Background, foreground, accent, and type update live while you edit settings.</p>
-                  <div className="theme-preview-actions">
-                    <button type="button">Primary Action</button>
-                    <span>{activeTheme.accentColor}</span>
-                  </div>
-                </div>
-              </article>
-            </div>
-
-            {settings.themePreset === 'custom' ? (
-              <div className="settings-fields two-column theme-custom-grid">
-                <label className="field">
-                  <span>Background Color</span>
-                  <div className="theme-color-control">
-                    <input
-                      type="color"
-                      value={settings.themeBackgroundColor}
-                      onChange={event =>
-                        updateSettings({
-                          themeBackgroundColor: event.target.value.toUpperCase(),
-                        })
-                      }
-                    />
-                    <strong>{settings.themeBackgroundColor.toUpperCase()}</strong>
-                  </div>
-                </label>
-
-                <label className="field">
-                  <span>Foreground Color</span>
-                  <div className="theme-color-control">
-                    <input
-                      type="color"
-                      value={settings.themeForegroundColor}
-                      onChange={event =>
-                        updateSettings({
-                          themeForegroundColor: event.target.value.toUpperCase(),
-                        })
-                      }
-                    />
-                    <strong>{settings.themeForegroundColor.toUpperCase()}</strong>
-                  </div>
-                </label>
-
-                <label className="field">
-                  <span>Accent Color</span>
-                  <div className="theme-color-control">
-                    <input
-                      type="color"
-                      value={settings.themeAccentColor}
-                      onChange={event =>
-                        updateSettings({
-                          themeAccentColor: event.target.value.toUpperCase(),
-                        })
-                      }
-                    />
-                    <strong>{settings.themeAccentColor.toUpperCase()}</strong>
-                  </div>
-                </label>
-
-                <label className="field">
-                  <span>Font Family</span>
-                  <select
-                    value={settings.themeFontFamily}
-                    onChange={event =>
-                      updateSettings({
-                        themeFontFamily: event.target.value as AppSettings['themeFontFamily'],
-                      })
-                    }
-                  >
-                    {THEME_FONT_OPTIONS.map(option => (
-                      <option key={option.id} value={option.id}>
-                        {option.label} - {option.note}
-                      </option>
-                    ))}
-                  </select>
-                  <small className="field-hint">
-                    Custom values preview instantly and save with the rest of your local app settings.
-                  </small>
-                </label>
-              </div>
-            ) : (
-              <p className="muted theme-custom-hint">
-                Switch to Custom if you want to pick the exact colors and font family yourself.
-              </p>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            title="Notification Audio"
-            subtitle="Configure distinct success and failure sounds. Each profile can stay silent, use a built-in macOS alert, or import a custom file."
-          >
-            <div className="audio-profile-grid">
-              {notificationAudioProfiles.map(profile => {
-                const profileSettings = readNotificationAudioProfile(settings, profile.tone);
-                const customNotificationAudioFile = readFileNameFromPath(profileSettings.customPath);
-                const activeNotificationAudioLabel =
-                  profileSettings.mode === 'off'
-                    ? 'Silent'
-                    : profileSettings.mode === 'custom'
-                      ? (customNotificationAudioFile ?? 'Custom file')
-                      : (NOTIFICATION_AUDIO_SOUND_CARDS.find(sound => sound.id === profileSettings.defaultSound)
-                          ?.label ?? 'Built-in sound');
-                const canPreviewNotification =
-                  profileSettings.mode !== 'custom' || Boolean(customNotificationAudioFile);
-                const inputRef =
-                  profile.tone === 'success' ? successNotificationAudioInputRef : failureNotificationAudioInputRef;
-                const isUploading = uploadingNotificationAudioTone === profile.tone;
-                const isPreviewing = previewingNotificationTone === profile.tone;
-                const toneLabel = profile.tone === 'success' ? 'Success' : 'Failure';
-
-                return (
-                  <article className="audio-profile-card" key={profile.tone}>
-                    <div className="settings-choice-top">
-                      <div>
-                        <strong>{profile.title}</strong>
-                        <p>{profile.description}</p>
-                      </div>
-                      <StatusBadge label={toneLabel} tone={profile.tone === 'success' ? 'success' : 'warn'} />
-                    </div>
-
-                    <div className="audio-mode-grid">
-                      {NOTIFICATION_AUDIO_MODE_CARDS.map(card => {
-                        const selected = profileSettings.mode === card.id;
+          <div className="settings-pane">
+            {/* ──────── Appearance ──────── */}
+            {activeSection === 'appearance' && (
+              <div className="settings-sections">
+                <SectionCard
+                  title="Theme"
+                  subtitle="Presets repaint background, foreground, accent, and typography across the desktop shell. Select Custom to unlock manual pickers."
+                >
+                  <div className="theme-section-layout">
+                    <div className="theme-presets-grid">
+                      {themeCards.map(card => {
+                        const selected = settings.themePreset === card.id;
 
                         return (
                           <button
                             key={card.id}
-                            className={selected ? 'settings-choice-card active' : 'settings-choice-card'}
+                            className={selected ? 'theme-preset-card active' : 'theme-preset-card'}
                             type="button"
-                            onClick={() =>
-                              updateSettings(buildNotificationAudioProfilePatch(profile.tone, { mode: card.id }))
-                            }
+                            onClick={() => updateSettings({ themePreset: card.id })}
                           >
-                            <div className="settings-choice-top">
-                              <strong>{card.label}</strong>
+                            <div className="theme-preset-top">
+                              <div>
+                                <strong>{card.label}</strong>
+                                <p>{card.description}</p>
+                              </div>
                               <StatusBadge
-                                label={selected ? 'Selected' : 'Available'}
+                                label={selected ? 'Active' : card.id === 'custom' ? 'Manual' : 'Preset'}
                                 tone={selected ? 'success' : 'info'}
                               />
                             </div>
-                            <p>{card.description}</p>
+
+                            <div className="theme-swatch-strip" aria-hidden="true">
+                              <span style={{ backgroundColor: card.backgroundColor }} />
+                              <span style={{ backgroundColor: card.foregroundColor }} />
+                              <span style={{ backgroundColor: card.accentColor }} />
+                            </div>
+
+                            <div className="theme-preset-meta">
+                              <span>{card.fontLabel}</span>
+                              <span>{card.accentColor}</span>
+                            </div>
                           </button>
                         );
                       })}
                     </div>
 
-                    {profileSettings.mode === 'default' ? (
-                      <div className="audio-sound-grid">
-                        {NOTIFICATION_AUDIO_SOUND_CARDS.map(sound => {
-                          const selected = profileSettings.defaultSound === sound.id;
+                    <article className="theme-preview-card" style={themePreviewStyle}>
+                      <div className="theme-preview-top">
+                        <div>
+                          <p className="theme-preview-kicker">Live Preview</p>
+                          <h3>{activeTheme.label}</h3>
+                        </div>
+                        <StatusBadge label={activeTheme.isCustom ? 'Custom' : 'Preset'} tone="info" />
+                      </div>
 
-                          return (
+                      <p className="theme-preview-copy">{activeTheme.description}</p>
+
+                      <div className="theme-preview-surface">
+                        <div className="theme-preview-line">
+                          <span>Watchtower</span>
+                          <span>{activeTheme.font.label}</span>
+                        </div>
+                        <strong>Sidecar healthy. Queue under control.</strong>
+                        <p>Background, foreground, accent, and type update live while you edit settings.</p>
+                        <div className="theme-preview-actions">
+                          <button type="button">Primary Action</button>
+                          <span>{activeTheme.accentColor}</span>
+                        </div>
+                      </div>
+                    </article>
+                  </div>
+
+                  {settings.themePreset === 'custom' ? (
+                    <div className="settings-fields two-column theme-custom-grid">
+                      <label className="field">
+                        <span>Background Color</span>
+                        <div className="theme-color-control">
+                          <input
+                            type="color"
+                            value={settings.themeBackgroundColor}
+                            onChange={event =>
+                              updateSettings({
+                                themeBackgroundColor: event.target.value.toUpperCase(),
+                              })
+                            }
+                          />
+                          <strong>{settings.themeBackgroundColor.toUpperCase()}</strong>
+                        </div>
+                      </label>
+
+                      <label className="field">
+                        <span>Foreground Color</span>
+                        <div className="theme-color-control">
+                          <input
+                            type="color"
+                            value={settings.themeForegroundColor}
+                            onChange={event =>
+                              updateSettings({
+                                themeForegroundColor: event.target.value.toUpperCase(),
+                              })
+                            }
+                          />
+                          <strong>{settings.themeForegroundColor.toUpperCase()}</strong>
+                        </div>
+                      </label>
+
+                      <label className="field">
+                        <span>Accent Color</span>
+                        <div className="theme-color-control">
+                          <input
+                            type="color"
+                            value={settings.themeAccentColor}
+                            onChange={event =>
+                              updateSettings({
+                                themeAccentColor: event.target.value.toUpperCase(),
+                              })
+                            }
+                          />
+                          <strong>{settings.themeAccentColor.toUpperCase()}</strong>
+                        </div>
+                      </label>
+
+                      <label className="field">
+                        <span>Font Family</span>
+                        <select
+                          value={settings.themeFontFamily}
+                          onChange={event =>
+                            updateSettings({
+                              themeFontFamily: event.target.value as AppSettings['themeFontFamily'],
+                            })
+                          }
+                        >
+                          {THEME_FONT_OPTIONS.map(option => (
+                            <option key={option.id} value={option.id}>
+                              {option.label} - {option.note}
+                            </option>
+                          ))}
+                        </select>
+                        <small className="field-hint">
+                          Custom values preview instantly and save with the rest of your local app settings.
+                        </small>
+                      </label>
+                    </div>
+                  ) : (
+                    <p className="muted theme-custom-hint">
+                      Switch to Custom if you want to pick the exact colors and font family yourself.
+                    </p>
+                  )}
+                </SectionCard>
+
+                <SectionCard
+                  title="Notification Audio"
+                  subtitle="Configure distinct success and failure sounds. Each profile can stay silent, use a built-in macOS alert, or import a custom file."
+                >
+                  <div className="audio-profile-grid">
+                    {notificationAudioProfiles.map(profile => {
+                      const profileSettings = readNotificationAudioProfile(settings, profile.tone);
+                      const customNotificationAudioFile = readFileNameFromPath(profileSettings.customPath);
+                      const activeNotificationAudioLabel =
+                        profileSettings.mode === 'off'
+                          ? 'Silent'
+                          : profileSettings.mode === 'custom'
+                            ? (customNotificationAudioFile ?? 'Custom file')
+                            : (NOTIFICATION_AUDIO_SOUND_CARDS.find(sound => sound.id === profileSettings.defaultSound)
+                                ?.label ?? 'Built-in sound');
+                      const canPreviewNotification =
+                        profileSettings.mode !== 'custom' || Boolean(customNotificationAudioFile);
+                      const inputRef =
+                        profile.tone === 'success'
+                          ? successNotificationAudioInputRef
+                          : failureNotificationAudioInputRef;
+                      const isUploading = uploadingNotificationAudioTone === profile.tone;
+                      const isPreviewing = previewingNotificationTone === profile.tone;
+                      const toneLabel = profile.tone === 'success' ? 'Success' : 'Failure';
+
+                      return (
+                        <article className="audio-profile-card" key={profile.tone}>
+                          <div className="settings-choice-top">
+                            <div>
+                              <strong>{profile.title}</strong>
+                              <p>{profile.description}</p>
+                            </div>
+                            <StatusBadge label={toneLabel} tone={profile.tone === 'success' ? 'success' : 'warn'} />
+                          </div>
+
+                          <div className="audio-mode-grid">
+                            {NOTIFICATION_AUDIO_MODE_CARDS.map(card => {
+                              const selected = profileSettings.mode === card.id;
+
+                              return (
+                                <button
+                                  key={card.id}
+                                  className={selected ? 'settings-choice-card active' : 'settings-choice-card'}
+                                  type="button"
+                                  onClick={() =>
+                                    updateSettings(buildNotificationAudioProfilePatch(profile.tone, { mode: card.id }))
+                                  }
+                                >
+                                  <div className="settings-choice-top">
+                                    <strong>{card.label}</strong>
+                                    <StatusBadge
+                                      label={selected ? 'Selected' : 'Available'}
+                                      tone={selected ? 'success' : 'info'}
+                                    />
+                                  </div>
+                                  <p>{card.description}</p>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {profileSettings.mode === 'default' ? (
+                            <div className="audio-sound-grid">
+                              {NOTIFICATION_AUDIO_SOUND_CARDS.map(sound => {
+                                const selected = profileSettings.defaultSound === sound.id;
+
+                                return (
+                                  <button
+                                    key={sound.id}
+                                    className={selected ? 'settings-choice-card active' : 'settings-choice-card'}
+                                    type="button"
+                                    onClick={() =>
+                                      updateSettings(
+                                        buildNotificationAudioProfilePatch(profile.tone, { defaultSound: sound.id }),
+                                      )
+                                    }
+                                  >
+                                    <div className="settings-choice-top">
+                                      <strong>{sound.label}</strong>
+                                      <StatusBadge
+                                        label={selected ? 'Active' : 'Sound'}
+                                        tone={selected ? 'success' : 'info'}
+                                      />
+                                    </div>
+                                    <p>{sound.description}</p>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+
+                          {profileSettings.mode === 'custom' ? (
+                            <div className="audio-custom-card">
+                              <div>
+                                <p className="theme-preview-kicker">Imported File</p>
+                                <strong>{customNotificationAudioFile ?? 'No custom audio selected yet'}</strong>
+                                <p className="theme-preview-copy">
+                                  Supported formats: `.aiff`, `.aif`, `.wav`, `.mp3`, `.m4a`, `.caf`. Watchtower copies
+                                  the file into local app storage and reuses it for future notifications.
+                                </p>
+                              </div>
+
+                              <div className="audio-custom-actions">
+                                <input
+                                  ref={inputRef}
+                                  type="file"
+                                  accept=".aiff,.aif,.wav,.mp3,.m4a,.caf,audio/*"
+                                  onChange={handleNotificationAudioFileChange(profile.tone)}
+                                  hidden
+                                />
+
+                                <button
+                                  className="ghost-button"
+                                  type="button"
+                                  onClick={() => inputRef.current?.click()}
+                                  disabled={uploadingNotificationAudioTone !== null}
+                                >
+                                  {isUploading
+                                    ? 'Importing...'
+                                    : customNotificationAudioFile
+                                      ? 'Replace Audio File'
+                                      : 'Choose Audio File'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+
+                          <div className="notification-preview-strip">
+                            <div>
+                              <p className="theme-preview-kicker">{toneLabel} Preview</p>
+                              <strong>
+                                {profileSettings.mode === 'off'
+                                  ? `${toneLabel} notifications stay silent.`
+                                  : `Current sound: ${activeNotificationAudioLabel}`}
+                              </strong>
+                              <p className="theme-preview-copy">
+                                {profile.previewCopy} Uses the same Tauri event path as a real sidecar notification so
+                                you can inspect the in-app toast styling and hear the selected alert sound.
+                              </p>
+                            </div>
+
                             <button
-                              key={sound.id}
-                              className={selected ? 'settings-choice-card active' : 'settings-choice-card'}
+                              className="ghost-button"
                               type="button"
-                              onClick={() =>
-                                updateSettings(
-                                  buildNotificationAudioProfilePatch(profile.tone, { defaultSound: sound.id }),
-                                )
+                              onClick={() => onPreviewNotification(profile.tone)}
+                              disabled={
+                                previewingNotificationTone !== null ||
+                                uploadingNotificationAudioTone !== null ||
+                                !canPreviewNotification
                               }
                             >
-                              <div className="settings-choice-top">
-                                <strong>{sound.label}</strong>
-                                <StatusBadge
-                                  label={selected ? 'Active' : 'Sound'}
-                                  tone={selected ? 'success' : 'info'}
-                                />
-                              </div>
-                              <p>{sound.description}</p>
+                              {isPreviewing ? 'Playing Preview...' : `Preview ${toneLabel}`}
                             </button>
-                          );
-                        })}
-                      </div>
-                    ) : null}
+                          </div>
 
-                    {profileSettings.mode === 'custom' ? (
-                      <div className="audio-custom-card">
-                        <div>
-                          <p className="theme-preview-kicker">Imported File</p>
-                          <strong>{customNotificationAudioFile ?? 'No custom audio selected yet'}</strong>
-                          <p className="theme-preview-copy">
-                            Supported formats: `.aiff`, `.aif`, `.wav`, `.mp3`, `.m4a`, `.caf`. Watchtower copies the
-                            file into local app storage and reuses it for future notifications.
-                          </p>
-                        </div>
+                          {profileSettings.mode === 'custom' && !customNotificationAudioFile ? (
+                            <p className="error">Pick a file before saving custom mode.</p>
+                          ) : (
+                            <p className="field-hint">
+                              Built-in sounds use `/System/Library/Sounds`. Custom uploads stay local to this Mac.
+                            </p>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                </SectionCard>
+              </div>
+            )}
 
-                        <div className="audio-custom-actions">
-                          <input
-                            ref={inputRef}
-                            type="file"
-                            accept=".aiff,.aif,.wav,.mp3,.m4a,.caf,audio/*"
-                            onChange={handleNotificationAudioFileChange(profile.tone)}
-                            hidden
-                          />
-
-                          <button
-                            className="ghost-button"
-                            type="button"
-                            onClick={() => inputRef.current?.click()}
-                            disabled={uploadingNotificationAudioTone !== null}
-                          >
-                            {isUploading
-                              ? 'Importing...'
-                              : customNotificationAudioFile
-                                ? 'Replace Audio File'
-                                : 'Choose Audio File'}
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    <div className="notification-preview-strip">
-                      <div>
-                        <p className="theme-preview-kicker">{toneLabel} Preview</p>
-                        <strong>
-                          {profileSettings.mode === 'off'
-                            ? `${toneLabel} notifications stay silent.`
-                            : `Current sound: ${activeNotificationAudioLabel}`}
-                        </strong>
-                        <p className="theme-preview-copy">
-                          {profile.previewCopy} Uses the same Tauri event path as a real sidecar notification so you can
-                          inspect the in-app toast styling and hear the selected alert sound.
-                        </p>
-                      </div>
-
-                      <button
-                        className="ghost-button"
-                        type="button"
-                        onClick={() => onPreviewNotification(profile.tone)}
-                        disabled={
-                          previewingNotificationTone !== null ||
-                          uploadingNotificationAudioTone !== null ||
-                          !canPreviewNotification
-                        }
-                      >
-                        {isPreviewing ? 'Playing Preview...' : `Preview ${toneLabel}`}
-                      </button>
-                    </div>
-
-                    {profileSettings.mode === 'custom' && !customNotificationAudioFile ? (
-                      <p className="error">Pick a file before saving custom mode.</p>
-                    ) : (
-                      <p className="field-hint">
-                        Built-in sounds use `/System/Library/Sounds`. Custom uploads stay local to this Mac.
-                      </p>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
-          </SectionCard>
-
-          <SectionCard
-            title="Slack Auth"
-            subtitle="Tokens and bot identity used to establish the Slack socket connection."
-          >
-            <div className="settings-fields two-column">
-              <label className="field">
-                <span>Slack Bot Token</span>
-                <input
-                  type="password"
-                  value={settings.slackBotToken}
-                  onChange={event => updateSettings({ slackBotToken: event.target.value })}
-                  placeholder="xoxb-..."
-                />
-              </label>
-
-              <label className="field">
-                <span>Slack App Token</span>
-                <input
-                  type="password"
-                  value={settings.slackAppToken}
-                  onChange={event => updateSettings({ slackAppToken: event.target.value })}
-                  placeholder="xapp-..."
-                />
-              </label>
-
-              <label className="field">
-                <span>Bot Slack User ID</span>
-                <input
-                  type="text"
-                  value={settings.botUserId}
-                  onChange={event => updateSettings({ botUserId: event.target.value })}
-                  placeholder="U0BOTUSER"
-                />
-              </label>
-            </div>
-          </SectionCard>
-
-          <SectionCard
-            title="Ownership"
-            subtitle="Owners retain unconditional bypass across all access groups and channels."
-          >
-            <div className="settings-fields">
-              <label className="field">
-                <span>Owner Slack User IDs</span>
-                <input
-                  type="text"
-                  value={settings.ownerSlackUserIds}
-                  onChange={event => updateSettings({ ownerSlackUserIds: event.target.value })}
-                  placeholder="U01234567,U07654321"
-                />
-              </label>
-            </div>
-          </SectionCard>
-
-          <SectionCard
-            title="Access Control"
-            subtitle="Fixed viewer, reviewer, builder, and admin groups with explicit channel and DM scopes."
-          >
-            <div className="settings-fields">
-              <label className="field">
-                <span>Access Mode</span>
-                <select
-                  value={settings.accessControl.mode}
-                  onChange={event =>
-                    updateSettings({
-                      accessControl: {
-                        ...settings.accessControl,
-                        mode: event.target.value as AccessMode,
-                      },
-                    })
-                  }
+            {/* ──────── Connections ──────── */}
+            {activeSection === 'connections' && (
+              <div className="settings-sections">
+                <SectionCard
+                  title="Slack Auth"
+                  subtitle="Tokens and bot identity used to establish the Slack socket connection."
                 >
-                  {ACCESS_MODE_OPTIONS.map(option => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <small className="field-hint">
-                  Owner IDs always bypass these restrictions. Start with Audit so would-be blocks show up in metrics and
-                  job logs before you flip to Enforce.
-                </small>
-              </label>
-            </div>
-
-            <div className="settings-summary-grid access-group-grid">
-              {ACCESS_GROUP_CARDS.map(group => {
-                const groupSettings = settings.accessControl.groups[group.key];
-                return (
-                  <article className="settings-summary-card access-group-card" key={group.key}>
-                    <div className="settings-summary-top access-group-header">
-                      <strong>{group.label}</strong>
-                      <StatusBadge
-                        label={
-                          groupSettings.slackUserGroupHandle.trim() ||
-                          groupSettings.manualUserIds.trim() ||
-                          groupSettings.allowedChannelIds.trim() ||
-                          groupSettings.allowIm ||
-                          groupSettings.allowMpim
-                            ? 'Configured'
-                            : 'Empty'
-                        }
-                        tone={
-                          groupSettings.slackUserGroupHandle.trim() ||
-                          groupSettings.manualUserIds.trim() ||
-                          groupSettings.allowedChannelIds.trim() ||
-                          groupSettings.allowIm ||
-                          groupSettings.allowMpim
-                            ? 'info'
-                            : 'warn'
-                        }
-                      />
-                    </div>
-                    <p className="access-group-copy">{group.description}</p>
-
+                  <div className="settings-fields two-column">
                     <label className="field">
-                      <span>Slack User Group Handle</span>
+                      <span>Slack Bot Token</span>
                       <input
-                        type="text"
-                        value={groupSettings.slackUserGroupHandle}
-                        onChange={event =>
-                          updateSettings({
-                            accessControl: {
-                              ...settings.accessControl,
-                              groups: {
-                                ...settings.accessControl.groups,
-                                [group.key]: {
-                                  ...groupSettings,
-                                  slackUserGroupHandle: event.target.value,
-                                },
-                              },
-                            },
-                          })
-                        }
-                        placeholder={
-                          group.key === 'admin' ? 'platform-admins,eng-leads' : `${group.key}-team,${group.key}-ext`
-                        }
+                        type="password"
+                        value={settings.slackBotToken}
+                        onChange={event => updateSettings({ slackBotToken: event.target.value })}
+                        placeholder="xoxb-..."
                       />
                     </label>
 
                     <label className="field">
-                      <span>{group.key === 'admin' ? 'Manual User IDs (Break-Glass)' : 'Manual User IDs'}</span>
+                      <span>Slack App Token</span>
+                      <input
+                        type="password"
+                        value={settings.slackAppToken}
+                        onChange={event => updateSettings({ slackAppToken: event.target.value })}
+                        placeholder="xapp-..."
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Bot Slack User ID</span>
                       <input
                         type="text"
-                        value={groupSettings.manualUserIds}
-                        onChange={event =>
-                          updateSettings({
-                            accessControl: {
-                              ...settings.accessControl,
-                              groups: {
-                                ...settings.accessControl.groups,
-                                [group.key]: {
-                                  ...groupSettings,
-                                  manualUserIds: event.target.value,
-                                },
-                              },
-                            },
-                          })
-                        }
+                        value={settings.botUserId}
+                        onChange={event => updateSettings({ botUserId: event.target.value })}
+                        placeholder="U0BOTUSER"
+                      />
+                    </label>
+                  </div>
+                </SectionCard>
+
+                <SectionCard
+                  title="Repo Paths"
+                  subtitle="Absolute local directories that Watchtower is allowed to operate against."
+                >
+                  <div className="settings-fields two-column">
+                    <label className="field">
+                      <span>newton-web Path</span>
+                      <input
+                        type="text"
+                        value={settings.newtonWebPath}
+                        onChange={event => updateSettings({ newtonWebPath: event.target.value })}
+                        placeholder="/Users/you/code/newton-web"
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>newton-api Path</span>
+                      <input
+                        type="text"
+                        value={settings.newtonApiPath}
+                        onChange={event => updateSettings({ newtonApiPath: event.target.value })}
+                        placeholder="/Users/you/code/newton-api"
+                      />
+                      <small className="field-hint">
+                        Save-time validation requires absolute paths that already exist on disk.
+                      </small>
+                    </label>
+                  </div>
+                </SectionCard>
+              </div>
+            )}
+
+            {/* ──────── Access ──────── */}
+            {activeSection === 'access' && (
+              <div className="settings-sections">
+                <SectionCard
+                  title="Ownership"
+                  subtitle="Owners retain unconditional bypass across all access groups and channels."
+                >
+                  <div className="settings-fields">
+                    <label className="field">
+                      <span>Owner Slack User IDs</span>
+                      <input
+                        type="text"
+                        value={settings.ownerSlackUserIds}
+                        onChange={event => updateSettings({ ownerSlackUserIds: event.target.value })}
                         placeholder="U01234567,U07654321"
                       />
                     </label>
+                  </div>
+                </SectionCard>
 
+                <SectionCard
+                  title="Access Control"
+                  subtitle="Fixed viewer, reviewer, builder, and admin groups with explicit channel and DM scopes."
+                >
+                  <div className="settings-fields">
                     <label className="field">
-                      <span>Allowed Channel IDs</span>
-                      <input
-                        type="text"
-                        value={groupSettings.allowedChannelIds}
+                      <span>Access Mode</span>
+                      <select
+                        value={settings.accessControl.mode}
                         onChange={event =>
                           updateSettings({
                             accessControl: {
                               ...settings.accessControl,
-                              groups: {
-                                ...settings.accessControl.groups,
-                                [group.key]: {
-                                  ...groupSettings,
-                                  allowedChannelIds: event.target.value,
-                                },
-                              },
+                              mode: event.target.value as AccessMode,
                             },
                           })
                         }
-                        placeholder="C01H25RNLJH,C02XXXXXXX"
+                      >
+                        {ACCESS_MODE_OPTIONS.map(option => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <small className="field-hint">
+                        Owner IDs always bypass these restrictions. DMs and MPIMs are always enforced regardless of
+                        mode. Start with Audit for channel-level rollout before flipping to Enforce.
+                      </small>
+                    </label>
+                  </div>
+
+                  <div className="access-role-tabs">
+                    <TabBar
+                      value={activeRole}
+                      onChange={setActiveRole}
+                      tabs={ACCESS_GROUP_CARDS.map(group => {
+                        const gs = settings.accessControl.groups[group.key];
+                        const configured =
+                          gs.slackUserGroupHandle.trim() ||
+                          gs.manualUserIds.trim() ||
+                          gs.allowedChannelIds.trim() ||
+                          gs.allowIm ||
+                          gs.allowMpim;
+                        return {
+                          value: group.key,
+                          label: group.label,
+                          count: configured ? 1 : 0,
+                        };
+                      })}
+                    />
+
+                    <article className="access-role-detail">
+                      <div className="access-group-header">
+                        <strong>{activeRoleCard.label}</strong>
+                        <StatusBadge
+                          label={
+                            activeRoleGroup.slackUserGroupHandle.trim() ||
+                            activeRoleGroup.manualUserIds.trim() ||
+                            activeRoleGroup.allowedChannelIds.trim() ||
+                            activeRoleGroup.allowIm ||
+                            activeRoleGroup.allowMpim
+                              ? 'Configured'
+                              : 'Empty'
+                          }
+                          tone={
+                            activeRoleGroup.slackUserGroupHandle.trim() ||
+                            activeRoleGroup.manualUserIds.trim() ||
+                            activeRoleGroup.allowedChannelIds.trim() ||
+                            activeRoleGroup.allowIm ||
+                            activeRoleGroup.allowMpim
+                              ? 'info'
+                              : 'warn'
+                          }
+                        />
+                      </div>
+                      <p className="access-group-copy">{activeRoleCard.description}</p>
+
+                      <div className="settings-fields">
+                        <label className="field">
+                          <span>Slack User Group Handle</span>
+                          <input
+                            type="text"
+                            value={activeRoleGroup.slackUserGroupHandle}
+                            onChange={event =>
+                              updateSettings({
+                                accessControl: {
+                                  ...settings.accessControl,
+                                  groups: {
+                                    ...settings.accessControl.groups,
+                                    [activeRole]: {
+                                      ...activeRoleGroup,
+                                      slackUserGroupHandle: event.target.value,
+                                    },
+                                  },
+                                },
+                              })
+                            }
+                            placeholder={
+                              activeRole === 'admin'
+                                ? 'platform-admins,eng-leads'
+                                : `${activeRole}-team,${activeRole}-ext`
+                            }
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>{activeRole === 'admin' ? 'Manual User IDs (Break-Glass)' : 'Manual User IDs'}</span>
+                          <input
+                            type="text"
+                            value={activeRoleGroup.manualUserIds}
+                            onChange={event =>
+                              updateSettings({
+                                accessControl: {
+                                  ...settings.accessControl,
+                                  groups: {
+                                    ...settings.accessControl.groups,
+                                    [activeRole]: {
+                                      ...activeRoleGroup,
+                                      manualUserIds: event.target.value,
+                                    },
+                                  },
+                                },
+                              })
+                            }
+                            placeholder="U01234567,U07654321"
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Allowed Channel IDs</span>
+                          <input
+                            type="text"
+                            value={activeRoleGroup.allowedChannelIds}
+                            onChange={event =>
+                              updateSettings({
+                                accessControl: {
+                                  ...settings.accessControl,
+                                  groups: {
+                                    ...settings.accessControl.groups,
+                                    [activeRole]: {
+                                      ...activeRoleGroup,
+                                      allowedChannelIds: event.target.value,
+                                    },
+                                  },
+                                },
+                              })
+                            }
+                            placeholder="C01H25RNLJH,C02XXXXXXX"
+                          />
+                        </label>
+                      </div>
+
+                      <div className="access-group-channel-toggles">
+                        <label className="access-toggle">
+                          <input
+                            type="checkbox"
+                            checked={activeRoleGroup.allowIm}
+                            onChange={event =>
+                              updateSettings({
+                                accessControl: {
+                                  ...settings.accessControl,
+                                  groups: {
+                                    ...settings.accessControl.groups,
+                                    [activeRole]: {
+                                      ...activeRoleGroup,
+                                      allowIm: event.target.checked,
+                                    },
+                                  },
+                                },
+                              })
+                            }
+                          />
+                          <span>Allow DM</span>
+                        </label>
+
+                        <label className="access-toggle">
+                          <input
+                            type="checkbox"
+                            checked={activeRoleGroup.allowMpim}
+                            onChange={event =>
+                              updateSettings({
+                                accessControl: {
+                                  ...settings.accessControl,
+                                  groups: {
+                                    ...settings.accessControl.groups,
+                                    [activeRole]: {
+                                      ...activeRoleGroup,
+                                      allowMpim: event.target.checked,
+                                    },
+                                  },
+                                },
+                              })
+                            }
+                          />
+                          <span>Allow MPIM</span>
+                        </label>
+                      </div>
+                    </article>
+                  </div>
+                </SectionCard>
+              </div>
+            )}
+
+            {/* ──────── Automation ──────── */}
+            {activeSection === 'automation' && (
+              <div className="settings-sections">
+                <SectionCard
+                  title="Agent Backend"
+                  subtitle="Choose which AI coding CLI runs your workflows. The selected CLI must be installed and accessible from PATH."
+                >
+                  <div className="settings-fields two-column">
+                    <label className="field">
+                      <span>Backend CLI</span>
+                      <select
+                        value={settings.agentBackend}
+                        onChange={event =>
+                          updateSettings({
+                            agentBackend: event.target.value as AgentBackendId,
+                          })
+                        }
+                      >
+                        {AGENT_BACKEND_OPTIONS.map(option => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <small className="field-hint">
+                        Workflows will use this CLI for all agent executions. Changing the backend takes effect after
+                        saving and restarting the sidecar.
+                      </small>
+                    </label>
+                  </div>
+                </SectionCard>
+
+                <SectionCard
+                  title="Runtime Limits / Timeouts"
+                  subtitle="Concurrency, execution windows, and repo classification sensitivity."
+                >
+                  <div className="settings-fields two-column">
+                    <label className="field">
+                      <span>Max Concurrent Jobs</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={settings.maxConcurrentJobs}
+                        onChange={event =>
+                          updateSettings({
+                            maxConcurrentJobs: Number(event.target.value) || 1,
+                          })
+                        }
                       />
                     </label>
 
-                    <div className="access-group-channel-toggles">
-                      <label className="access-toggle">
-                        <input
-                          type="checkbox"
-                          checked={groupSettings.allowIm}
-                          onChange={event =>
-                            updateSettings({
-                              accessControl: {
-                                ...settings.accessControl,
-                                groups: {
-                                  ...settings.accessControl.groups,
-                                  [group.key]: {
-                                    ...groupSettings,
-                                    allowIm: event.target.checked,
-                                  },
-                                },
-                              },
-                            })
-                          }
-                        />
-                        <span>Allow DM</span>
-                      </label>
-
-                      <label className="access-toggle">
-                        <input
-                          type="checkbox"
-                          checked={groupSettings.allowMpim}
-                          onChange={event =>
-                            updateSettings({
-                              accessControl: {
-                                ...settings.accessControl,
-                                groups: {
-                                  ...settings.accessControl.groups,
-                                  [group.key]: {
-                                    ...groupSettings,
-                                    allowMpim: event.target.checked,
-                                  },
-                                },
-                              },
-                            })
-                          }
-                        />
-                        <span>Allow MPIM</span>
-                      </label>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          </SectionCard>
-
-          <SectionCard
-            title="Repo Paths"
-            subtitle="Absolute local directories that Watchtower is allowed to operate against."
-          >
-            <div className="settings-fields two-column">
-              <label className="field">
-                <span>newton-web Path</span>
-                <input
-                  type="text"
-                  value={settings.newtonWebPath}
-                  onChange={event => updateSettings({ newtonWebPath: event.target.value })}
-                  placeholder="/Users/you/code/newton-web"
-                />
-              </label>
-
-              <label className="field">
-                <span>newton-api Path</span>
-                <input
-                  type="text"
-                  value={settings.newtonApiPath}
-                  onChange={event => updateSettings({ newtonApiPath: event.target.value })}
-                  placeholder="/Users/you/code/newton-api"
-                />
-                <small className="field-hint">
-                  Save-time validation requires absolute paths that already exist on disk.
-                </small>
-              </label>
-            </div>
-          </SectionCard>
-
-          <SectionCard
-            title="Runtime Limits / Timeouts"
-            subtitle="Concurrency, execution windows, and repo classification sensitivity."
-          >
-            <div className="settings-fields two-column">
-              <label className="field">
-                <span>Max Concurrent Jobs</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={settings.maxConcurrentJobs}
-                  onChange={event =>
-                    updateSettings({
-                      maxConcurrentJobs: Number(event.target.value) || 1,
-                    })
-                  }
-                />
-              </label>
-
-              <label className="field">
-                <span>Repo Classifier Threshold</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={settings.repoClassifierThreshold}
-                  onChange={event =>
-                    updateSettings({
-                      repoClassifierThreshold: Number(event.target.value),
-                    })
-                  }
-                />
-              </label>
-            </div>
-          </SectionCard>
-
-          <SectionCard
-            title="Agent Backend"
-            subtitle="Choose which AI coding CLI runs your workflows. The selected CLI must be installed and accessible from PATH."
-          >
-            <div className="settings-fields two-column">
-              <label className="field">
-                <span>Backend CLI</span>
-                <select
-                  value={settings.agentBackend}
-                  onChange={event =>
-                    updateSettings({
-                      agentBackend: event.target.value as AgentBackendId,
-                    })
-                  }
-                >
-                  {AGENT_BACKEND_OPTIONS.map(option => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <small className="field-hint">
-                  Workflows will use this CLI for all agent executions. Changing the backend takes effect after saving
-                  and restarting the sidecar.
-                </small>
-              </label>
-            </div>
-          </SectionCard>
+                    <label className="field">
+                      <span>Repo Classifier Threshold</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={settings.repoClassifierThreshold}
+                        onChange={event =>
+                          updateSettings({
+                            repoClassifierThreshold: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+                </SectionCard>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="settings-sticky-bar">
