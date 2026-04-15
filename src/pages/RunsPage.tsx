@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import type { DashboardData, JobLogEntry, PipelineRunData, RunSummary } from '../types';
+import type { DashboardData, JobCostSummary, JobLogEntry, PipelineRunData, RunSummary } from '../types';
 import {
   PageIntro,
   RunsFilterBar,
@@ -11,7 +11,14 @@ import {
   WorkflowGraph,
 } from '../components/primitives';
 import type { SortDirection, SortField } from '../components/primitives';
-import { formatTimestamp, getStatusTone } from '../lib/formatters';
+import {
+  formatCostUsd,
+  formatDurationMs,
+  formatPercent,
+  formatTimestamp,
+  formatTokens,
+  getStatusTone,
+} from '../lib/formatters';
 import { AgentPipelineView } from '../components/AgentPipelineView';
 import { GlowCard } from '../components/GlowCard';
 
@@ -40,6 +47,25 @@ export function RunsPage({
   const [sortField, setSortField] = useState<SortField>('updatedAt');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [activeStage, setActiveStage] = useState<string | null>(null);
+  const [costSummary, setCostSummary] = useState<JobCostSummary | null>(null);
+
+  useEffect(() => {
+    if (!detailRunId) {
+      setCostSummary(null);
+      return;
+    }
+    let cancelled = false;
+    invoke<JobCostSummary>('get_job_cost_summary', { jobId: detailRunId })
+      .then(summary => {
+        if (!cancelled) setCostSummary(summary);
+      })
+      .catch(() => {
+        if (!cancelled) setCostSummary(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detailRunId]);
 
   const allRuns = useMemo(() => {
     if (!data) return [] as RunSummary[];
@@ -172,6 +198,28 @@ export function RunsPage({
                 <span>Trace Entries</span>
                 <strong>{selectedRunLogs.length}</strong>
               </div>
+              <div>
+                <span>Cost</span>
+                <strong>{formatCostUsd(costSummary?.totalCostUsd ?? null)}</strong>
+              </div>
+              <div>
+                <span>Tokens (in / out)</span>
+                <strong>
+                  {formatTokens(costSummary?.totalInputTokens ?? null)}
+                  {' / '}
+                  {formatTokens(costSummary?.totalOutputTokens ?? null)}
+                </strong>
+              </div>
+              <div>
+                <span>Cache Hit</span>
+                <strong>
+                  {(() => {
+                    if (!costSummary) return '—';
+                    const denom = costSummary.totalInputTokens + costSummary.totalCacheReadTokens;
+                    return denom > 0 ? formatPercent(costSummary.totalCacheReadTokens / denom) : '—';
+                  })()}
+                </strong>
+              </div>
             </div>
 
             {selectedRun.errorMessage ? (
@@ -203,6 +251,82 @@ export function RunsPage({
           </GlowCard>
         ) : null}
 
+        {costSummary && costSummary.callCount > 0 ? (
+          <GlowCard>
+            <section className="surface-card">
+              <div className="section-head">
+                <div className="section-heading-copy">
+                  <div className="section-title-row">
+                    <h2>Cost &amp; Tokens</h2>
+                    <span className="section-count">{costSummary.callCount}</span>
+                  </div>
+                  <p className="muted">Per-agent invocation cost, latency, and token usage</p>
+                </div>
+              </div>
+              <div className="detail-grid">
+                <div>
+                  <span>Total cost</span>
+                  <strong>{formatCostUsd(costSummary.totalCostUsd)}</strong>
+                </div>
+                <div>
+                  <span>Total wall-clock</span>
+                  <strong>{formatDurationMs(costSummary.totalDurationMs)}</strong>
+                </div>
+                <div>
+                  <span>Input tokens</span>
+                  <strong>{formatTokens(costSummary.totalInputTokens)}</strong>
+                </div>
+                <div>
+                  <span>Output tokens</span>
+                  <strong>{formatTokens(costSummary.totalOutputTokens)}</strong>
+                </div>
+                <div>
+                  <span>Cache read tokens</span>
+                  <strong>{formatTokens(costSummary.totalCacheReadTokens)}</strong>
+                </div>
+                <div>
+                  <span>Calls</span>
+                  <strong>{costSummary.callCount}</strong>
+                </div>
+              </div>
+              <div className="cost-table-scroll">
+                <table className="cost-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Role</th>
+                      <th>Backend</th>
+                      <th>Model</th>
+                      <th className="num">Duration</th>
+                      <th className="num">In</th>
+                      <th className="num">Out</th>
+                      <th className="num">Cache R</th>
+                      <th className="num">Cost</th>
+                      <th>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {costSummary.calls.map(call => (
+                      <tr key={call.id} className={call.ok ? '' : 'row-failed'}>
+                        <td>{formatTimestamp(call.createdAt)}</td>
+                        <td>{call.role ?? '—'}</td>
+                        <td>{call.backend}</td>
+                        <td className="muted">{call.model ?? '—'}</td>
+                        <td className="num">{formatDurationMs(call.durationMs)}</td>
+                        <td className="num">{formatTokens(call.inputTokens)}</td>
+                        <td className="num">{formatTokens(call.outputTokens)}</td>
+                        <td className="num">{formatTokens(call.cacheReadTokens)}</td>
+                        <td className="num">{formatCostUsd(call.costUsd)}</td>
+                        <td className="muted">{call.costSource ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </GlowCard>
+        ) : null}
+
         <GlowCard>
           <section className="surface-card">
             <div className="section-head">
@@ -218,7 +342,9 @@ export function RunsPage({
           </section>
         </GlowCard>
 
-        {selectedRunPipeline ? <AgentPipelineView pipelineRun={selectedRunPipeline} /> : null}
+        {selectedRunPipeline ? (
+          <AgentPipelineView pipelineRun={selectedRunPipeline} calls={costSummary?.calls} />
+        ) : null}
       </div>
     );
   }

@@ -8,6 +8,7 @@ import { LiveLogConsole } from './components/primitives';
 import { applyAppTheme } from './lib/theme';
 import { formatSidecarLine } from './lib/formatters';
 import { IntelligencePage } from './pages/IntelligencePage';
+import { PerformancePage } from './pages/PerformancePage';
 import { LaunchpadPage } from './pages/LaunchpadPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { RunsPage } from './pages/RunsPage';
@@ -541,6 +542,10 @@ function App() {
       ) : null}
 
       {view === 'intelligence' ? <IntelligencePage data={data} /> : null}
+
+      {view === 'performance' ? (
+        <PerformancePage onSelectRun={setSelectedRunId} onNavigateRuns={() => navigateToView('runs')} />
+      ) : null}
 
       {view === 'diagnostics' ? (
         <div className="page-stack">

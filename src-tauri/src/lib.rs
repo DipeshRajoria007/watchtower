@@ -223,6 +223,88 @@ struct DashboardMetrics {
     access_audit_would_deny_24h: i64,
     success_streak: i64,
     chaos_index: i64,
+    cost_24h_usd: f64,
+    tokens_input_24h: i64,
+    tokens_output_24h: i64,
+    cache_read_tokens_24h: i64,
+    cache_hit_rate_24h: f64,
+    avg_cost_per_run_usd: f64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AgentCallRow {
+    id: i64,
+    job_id: String,
+    pipeline_run_id: Option<String>,
+    role: Option<String>,
+    backend: String,
+    model: Option<String>,
+    duration_ms: i64,
+    input_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+    cache_read_tokens: Option<i64>,
+    cache_creation_tokens: Option<i64>,
+    cost_usd: Option<f64>,
+    cost_source: Option<String>,
+    ok: bool,
+    created_at: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct JobCostSummary {
+    job_id: String,
+    total_cost_usd: f64,
+    total_duration_ms: i64,
+    total_input_tokens: i64,
+    total_output_tokens: i64,
+    total_cache_read_tokens: i64,
+    total_cache_creation_tokens: i64,
+    call_count: i64,
+    calls: Vec<AgentCallRow>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GroupedAggregate {
+    key: String,
+    calls: i64,
+    total_cost_usd: f64,
+    total_duration_ms: i64,
+    avg_cost_usd: f64,
+    avg_duration_ms: f64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TopRun {
+    job_id: String,
+    workflow: String,
+    status: String,
+    started_at: String,
+    duration_ms: i64,
+    cost_usd: f64,
+    input_tokens: i64,
+    output_tokens: i64,
+    call_count: i64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PerformanceOverview {
+    since_iso: String,
+    until_iso: String,
+    total_cost_usd: f64,
+    total_calls: i64,
+    total_input_tokens: i64,
+    total_output_tokens: i64,
+    total_cache_read_tokens: i64,
+    cache_hit_rate: f64,
+    avg_cost_per_run_usd: f64,
+    by_workflow: Vec<GroupedAggregate>,
+    by_backend_model: Vec<GroupedAggregate>,
+    top_runs: Vec<TopRun>,
 }
 
 #[derive(Serialize, Clone)]
@@ -467,7 +549,9 @@ pub fn run() {
             emit_preview_notification,
             get_job_diff,
             create_pr_from_job,
-            cancel_job
+            cancel_job,
+            get_job_cost_summary,
+            get_performance_overview
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -604,6 +688,274 @@ async fn get_pipeline_run(
         .map_err(|err| format!("db query pipeline_run failed: {err}"))?;
 
     Ok(result)
+}
+
+fn map_agent_call_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentCallRow> {
+    Ok(AgentCallRow {
+        id: row.get(0)?,
+        job_id: row.get(1)?,
+        pipeline_run_id: row.get(2)?,
+        role: row.get(3)?,
+        backend: row.get(4)?,
+        model: row.get(5)?,
+        duration_ms: row.get(6)?,
+        input_tokens: row.get(7)?,
+        output_tokens: row.get(8)?,
+        cache_read_tokens: row.get(9)?,
+        cache_creation_tokens: row.get(10)?,
+        cost_usd: row.get(11)?,
+        cost_source: row.get(12)?,
+        ok: row.get::<_, i64>(13)? == 1,
+        created_at: row.get(14)?,
+    })
+}
+
+#[tauri::command]
+async fn get_job_cost_summary(
+    job_id: String,
+    state: State<'_, AppState>,
+) -> Result<JobCostSummary, String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+
+    let mut stmt = connection
+        .prepare(
+            "SELECT id, job_id, pipeline_run_id, role, backend, model, duration_ms,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    cost_usd, cost_source, ok, created_at
+             FROM agent_calls
+             WHERE job_id = ?
+             ORDER BY id ASC",
+        )
+        .map_err(|err| format!("db prepare agent_calls failed: {err}"))?;
+
+    let rows = stmt
+        .query_map(params![job_id], map_agent_call_row)
+        .map_err(|err| format!("db query agent_calls failed: {err}"))?;
+
+    let mut calls: Vec<AgentCallRow> = Vec::new();
+    for row in rows {
+        calls.push(row.map_err(|err| format!("db row agent_calls failed: {err}"))?);
+    }
+
+    let mut summary = JobCostSummary {
+        job_id: job_id.clone(),
+        total_cost_usd: 0.0,
+        total_duration_ms: 0,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cache_read_tokens: 0,
+        total_cache_creation_tokens: 0,
+        call_count: calls.len() as i64,
+        calls: Vec::new(),
+    };
+    for c in &calls {
+        summary.total_cost_usd += c.cost_usd.unwrap_or(0.0);
+        summary.total_duration_ms += c.duration_ms;
+        summary.total_input_tokens += c.input_tokens.unwrap_or(0);
+        summary.total_output_tokens += c.output_tokens.unwrap_or(0);
+        summary.total_cache_read_tokens += c.cache_read_tokens.unwrap_or(0);
+        summary.total_cache_creation_tokens += c.cache_creation_tokens.unwrap_or(0);
+    }
+    summary.calls = calls;
+    Ok(summary)
+}
+
+#[tauri::command]
+async fn get_performance_overview(
+    since_iso: String,
+    until_iso: String,
+    state: State<'_, AppState>,
+) -> Result<PerformanceOverview, String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+
+    // Headline rollups
+    let (total_cost_usd, total_calls, total_input_tokens, total_output_tokens, total_cache_read_tokens): (
+        f64,
+        i64,
+        i64,
+        i64,
+        i64,
+    ) = connection
+        .query_row(
+            "SELECT
+                COALESCE(SUM(cost_usd), 0.0),
+                COUNT(*),
+                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM(output_tokens), 0),
+                COALESCE(SUM(cache_read_tokens), 0)
+             FROM agent_calls
+             WHERE created_at >= ? AND created_at < ?",
+            params![since_iso, until_iso],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .unwrap_or((0.0, 0, 0, 0, 0));
+
+    let cache_denom = total_input_tokens + total_cache_read_tokens;
+    let cache_hit_rate = if cache_denom > 0 {
+        total_cache_read_tokens as f64 / cache_denom as f64
+    } else {
+        0.0
+    };
+    let runs_in_window: i64 = connection
+        .query_row(
+            "SELECT COUNT(DISTINCT job_id) FROM agent_calls WHERE created_at >= ? AND created_at < ?",
+            params![since_iso, until_iso],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    let avg_cost_per_run_usd = if runs_in_window > 0 {
+        total_cost_usd / runs_in_window as f64
+    } else {
+        0.0
+    };
+
+    // By workflow (joined to jobs)
+    let by_workflow = {
+        let mut stmt = connection
+            .prepare(
+                "SELECT j.workflow AS key,
+                        COUNT(c.id) AS calls,
+                        COALESCE(SUM(c.cost_usd), 0.0) AS total_cost,
+                        COALESCE(SUM(c.duration_ms), 0) AS total_duration
+                 FROM agent_calls c
+                 JOIN jobs j ON j.id = c.job_id
+                 WHERE c.created_at >= ? AND c.created_at < ?
+                 GROUP BY j.workflow
+                 ORDER BY total_cost DESC",
+            )
+            .map_err(|err| format!("db prepare by_workflow failed: {err}"))?;
+        let rows = stmt
+            .query_map(params![since_iso, until_iso], |row| {
+                let key: String = row.get(0)?;
+                let calls: i64 = row.get(1)?;
+                let total_cost: f64 = row.get(2)?;
+                let total_duration: i64 = row.get(3)?;
+                Ok(GroupedAggregate {
+                    key,
+                    calls,
+                    total_cost_usd: total_cost,
+                    total_duration_ms: total_duration,
+                    avg_cost_usd: if calls > 0 { total_cost / calls as f64 } else { 0.0 },
+                    avg_duration_ms: if calls > 0 {
+                        total_duration as f64 / calls as f64
+                    } else {
+                        0.0
+                    },
+                })
+            })
+            .map_err(|err| format!("db query by_workflow failed: {err}"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|err| format!("db row by_workflow failed: {err}"))?);
+        }
+        out
+    };
+
+    // By backend:model
+    let by_backend_model = {
+        let mut stmt = connection
+            .prepare(
+                "SELECT (backend || ':' || COALESCE(model, 'default')) AS key,
+                        COUNT(*) AS calls,
+                        COALESCE(SUM(cost_usd), 0.0) AS total_cost,
+                        COALESCE(SUM(duration_ms), 0) AS total_duration
+                 FROM agent_calls
+                 WHERE created_at >= ? AND created_at < ?
+                 GROUP BY backend, model
+                 ORDER BY total_cost DESC",
+            )
+            .map_err(|err| format!("db prepare by_backend_model failed: {err}"))?;
+        let rows = stmt
+            .query_map(params![since_iso, until_iso], |row| {
+                let key: String = row.get(0)?;
+                let calls: i64 = row.get(1)?;
+                let total_cost: f64 = row.get(2)?;
+                let total_duration: i64 = row.get(3)?;
+                Ok(GroupedAggregate {
+                    key,
+                    calls,
+                    total_cost_usd: total_cost,
+                    total_duration_ms: total_duration,
+                    avg_cost_usd: if calls > 0 { total_cost / calls as f64 } else { 0.0 },
+                    avg_duration_ms: if calls > 0 {
+                        total_duration as f64 / calls as f64
+                    } else {
+                        0.0
+                    },
+                })
+            })
+            .map_err(|err| format!("db query by_backend_model failed: {err}"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|err| format!("db row by_backend_model failed: {err}"))?);
+        }
+        out
+    };
+
+    // Top runs by cost
+    let top_runs = {
+        let mut stmt = connection
+            .prepare(
+                "SELECT j.id, j.workflow, j.status, j.created_at,
+                        COALESCE(SUM(c.duration_ms), 0) AS duration_ms,
+                        COALESCE(SUM(c.cost_usd), 0.0) AS cost_usd,
+                        COALESCE(SUM(c.input_tokens), 0) AS input_tokens,
+                        COALESCE(SUM(c.output_tokens), 0) AS output_tokens,
+                        COUNT(c.id) AS call_count
+                 FROM agent_calls c
+                 JOIN jobs j ON j.id = c.job_id
+                 WHERE c.created_at >= ? AND c.created_at < ?
+                 GROUP BY j.id
+                 ORDER BY cost_usd DESC
+                 LIMIT 25",
+            )
+            .map_err(|err| format!("db prepare top_runs failed: {err}"))?;
+        let rows = stmt
+            .query_map(params![since_iso, until_iso], |row| {
+                Ok(TopRun {
+                    job_id: row.get(0)?,
+                    workflow: row.get(1)?,
+                    status: row.get(2)?,
+                    started_at: row.get(3)?,
+                    duration_ms: row.get(4)?,
+                    cost_usd: row.get(5)?,
+                    input_tokens: row.get(6)?,
+                    output_tokens: row.get(7)?,
+                    call_count: row.get(8)?,
+                })
+            })
+            .map_err(|err| format!("db query top_runs failed: {err}"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|err| format!("db row top_runs failed: {err}"))?);
+        }
+        out
+    };
+
+    Ok(PerformanceOverview {
+        since_iso,
+        until_iso,
+        total_cost_usd,
+        total_calls,
+        total_input_tokens,
+        total_output_tokens,
+        total_cache_read_tokens,
+        cache_hit_rate,
+        avg_cost_per_run_usd,
+        by_workflow,
+        by_backend_model,
+        top_runs,
+    })
 }
 
 #[tauri::command]
@@ -1282,6 +1634,42 @@ fn query_dashboard_metrics(connection: &Connection) -> Result<DashboardMetrics, 
     }
     chaos_index = chaos_index.clamp(0, 100);
 
+    // Cost & token rollups from agent_calls (table is created by sidecar on
+    // first run; query is tolerant of an empty/missing-column scenario).
+    let cost_row = connection
+        .query_row(
+            "SELECT
+                COALESCE(SUM(cost_usd), 0.0) AS total_cost,
+                COALESCE(SUM(input_tokens), 0) AS total_input,
+                COALESCE(SUM(output_tokens), 0) AS total_output,
+                COALESCE(SUM(cache_read_tokens), 0) AS total_cache_read
+             FROM agent_calls
+             WHERE julianday(created_at) >= julianday('now', '-1 day')",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, f64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .unwrap_or((0.0, 0, 0, 0));
+    let (cost_24h_usd, tokens_input_24h, tokens_output_24h, cache_read_tokens_24h) = cost_row;
+
+    let cache_denominator = tokens_input_24h + cache_read_tokens_24h;
+    let cache_hit_rate_24h = if cache_denominator > 0 {
+        cache_read_tokens_24h as f64 / cache_denominator as f64
+    } else {
+        0.0
+    };
+    let avg_cost_per_run_usd = if runs_24h > 0 {
+        cost_24h_usd / runs_24h as f64
+    } else {
+        0.0
+    };
+
     Ok(DashboardMetrics {
         runs_24h,
         success_rate_24h,
@@ -1292,6 +1680,12 @@ fn query_dashboard_metrics(connection: &Connection) -> Result<DashboardMetrics, 
         access_audit_would_deny_24h,
         success_streak,
         chaos_index,
+        cost_24h_usd,
+        tokens_input_24h,
+        tokens_output_24h,
+        cache_read_tokens_24h,
+        cache_hit_rate_24h,
+        avg_cost_per_run_usd,
     })
 }
 
@@ -3472,6 +3866,12 @@ mod tests {
             access_audit_would_deny_24h: 0,
             success_streak: 2,
             chaos_index: 6,
+            cost_24h_usd: 0.0,
+            tokens_input_24h: 0,
+            tokens_output_24h: 0,
+            cache_read_tokens_24h: 0,
+            cache_hit_rate_24h: 0.0,
+            avg_cost_per_run_usd: 0.0,
         };
 
         let below_threshold = build_recommendations(&metrics, &[]);
@@ -3494,6 +3894,12 @@ mod tests {
             access_audit_would_deny_24h: 0,
             success_streak: 1,
             chaos_index: 8,
+            cost_24h_usd: 0.0,
+            tokens_input_24h: 0,
+            tokens_output_24h: 0,
+            cache_read_tokens_24h: 0,
+            cache_hit_rate_24h: 0.0,
+            avg_cost_per_run_usd: 0.0,
         };
         let channel_heat = vec![
             ChannelHeat {
@@ -3530,6 +3936,12 @@ mod tests {
             access_audit_would_deny_24h: 3,
             success_streak: 4,
             chaos_index: 3,
+            cost_24h_usd: 0.0,
+            tokens_input_24h: 0,
+            tokens_output_24h: 0,
+            cache_read_tokens_24h: 0,
+            cache_hit_rate_24h: 0.0,
+            avg_cost_per_run_usd: 0.0,
         };
 
         let recommendations = build_recommendations(&metrics, &[]);

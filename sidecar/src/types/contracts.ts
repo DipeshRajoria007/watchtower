@@ -162,6 +162,15 @@ export interface CodexRunRequest {
   signal?: AbortSignal;
 }
 
+export interface TokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+}
+
+export type CostSource = 'reported' | 'computed';
+
 export interface CodexRunResult {
   ok: boolean;
   exitCode: number | null;
@@ -171,6 +180,57 @@ export interface CodexRunResult {
   stderr: string;
   lastMessage: string;
   parsedJson?: Record<string, unknown>;
+  /** Wall-clock duration from process spawn to exit, in milliseconds. */
+  durationMs: number;
+  /** Token usage extracted from backend output, when available. */
+  usage?: TokenUsage;
+  /** Cost in USD: backend-reported when available, otherwise computed from price table. */
+  costUsd?: number;
+  /** Provenance of `costUsd` so callers can distinguish authoritative vs estimated costs. */
+  costSource?: CostSource;
+  /** Backend that produced this result. */
+  backend: AgentBackendId;
+  /** Model identifier used (request.model when set, otherwise backend default). */
+  modelUsed?: string;
+}
+
+export interface AgentCallRecord {
+  id?: number;
+  jobId: string;
+  pipelineRunId?: string;
+  role?: string;
+  backend: AgentBackendId;
+  model?: string;
+  durationMs: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  costUsd?: number;
+  costSource?: CostSource;
+  ok: boolean;
+  createdAt: string;
+}
+
+export interface JobCostSummary {
+  jobId: string;
+  totalCostUsd: number;
+  totalDurationMs: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheCreationTokens: number;
+  callCount: number;
+  calls: AgentCallRecord[];
+}
+
+export interface CallSummarySince {
+  totalCostUsd: number;
+  totalCalls: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  cacheHitRate: number;
 }
 
 export interface WorkflowResult {

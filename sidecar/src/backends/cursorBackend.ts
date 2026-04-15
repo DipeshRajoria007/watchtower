@@ -1,6 +1,6 @@
 import fsSync from 'node:fs';
 import path, { delimiter as pathDelimiter } from 'node:path';
-import type { AgentBackend, AgentRunRequest } from './types.js';
+import type { AgentBackend, AgentRunRequest, ParsedBackendOutput } from './types.js';
 import { parseStructuredOutput } from './codexBackend.js';
 
 function isExecutable(filePath: string): boolean {
@@ -80,7 +80,9 @@ export const cursorBackend: AgentBackend = {
     return env;
   },
 
-  parseOutput(raw: string): { parsedJson?: Record<string, unknown>; strategy?: string } {
+  parseOutput(raw: string): ParsedBackendOutput {
+    // Cursor CLI does not currently emit a structured usage envelope; cost is
+    // computed from the price table when token counts surface elsewhere.
     return parseStructuredOutput(raw);
   },
 

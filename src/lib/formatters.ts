@@ -6,6 +6,41 @@ export function prettyJson(raw: string): string {
   }
 }
 
+export function formatCostUsd(value: number | null | undefined, fractionDigits = 4): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return '—';
+  }
+  if (value === 0) return '$0';
+  if (value >= 1) return `$${value.toFixed(2)}`;
+  const fixed = value.toFixed(fractionDigits);
+  return `$${fixed.replace(/\.?0+$/, '')}`;
+}
+
+export function formatTokens(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return '—';
+  }
+  if (value === 0) return '0';
+  if (value < 1000) return String(value);
+  if (value < 1_000_000) return `${(value / 1000).toFixed(1)}K`;
+  return `${(value / 1_000_000).toFixed(2)}M`;
+}
+
+export function formatPercent(rate: number | null | undefined, fractionDigits = 0): string {
+  if (rate === null || rate === undefined || !Number.isFinite(rate)) {
+    return '—';
+  }
+  return `${(rate * 100).toFixed(fractionDigits)}%`;
+}
+
+export function formatDurationMs(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms) || ms <= 0) {
+    return '0ms';
+  }
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return formatDurationSeconds(Math.round(ms / 1000));
+}
+
 export function formatDurationSeconds(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) {
     return '0s';

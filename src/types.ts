@@ -1,4 +1,12 @@
-export type AppView = 'overview' | 'launchpad' | 'runs' | 'intelligence' | 'diagnostics' | 'settings' | 'review';
+export type AppView =
+  | 'overview'
+  | 'launchpad'
+  | 'runs'
+  | 'intelligence'
+  | 'performance'
+  | 'diagnostics'
+  | 'settings'
+  | 'review';
 
 export type SlackCommandTarget = 'miniog' | 'watchtower';
 
@@ -51,6 +59,78 @@ export type DashboardMetrics = {
   accessAuditWouldDeny24h: number;
   successStreak: number;
   chaosIndex: number;
+  cost24hUsd: number;
+  tokensInput24h: number;
+  tokensOutput24h: number;
+  cacheReadTokens24h: number;
+  cacheHitRate24h: number;
+  avgCostPerRunUsd: number;
+};
+
+export type AgentCallRow = {
+  id: number;
+  jobId: string;
+  pipelineRunId: string | null;
+  role: string | null;
+  backend: string;
+  model: string | null;
+  durationMs: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+  costUsd: number | null;
+  costSource: string | null;
+  ok: boolean;
+  createdAt: string;
+};
+
+export type JobCostSummary = {
+  jobId: string;
+  totalCostUsd: number;
+  totalDurationMs: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheCreationTokens: number;
+  callCount: number;
+  calls: AgentCallRow[];
+};
+
+export type GroupedAggregate = {
+  key: string;
+  calls: number;
+  totalCostUsd: number;
+  totalDurationMs: number;
+  avgCostUsd: number;
+  avgDurationMs: number;
+};
+
+export type TopRun = {
+  jobId: string;
+  workflow: string;
+  status: string;
+  startedAt: string;
+  durationMs: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  callCount: number;
+};
+
+export type PerformanceOverview = {
+  sinceIso: string;
+  untilIso: string;
+  totalCostUsd: number;
+  totalCalls: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  cacheHitRate: number;
+  avgCostPerRunUsd: number;
+  byWorkflow: GroupedAggregate[];
+  byBackendModel: GroupedAggregate[];
+  topRuns: TopRun[];
 };
 
 export type DashboardRecommendation = {
