@@ -9,6 +9,7 @@ import {
   LaunchpadIcon,
   MenuIcon,
   OverviewIcon,
+  PerformanceIcon,
   RunsIcon,
   SettingsIcon,
 } from './icons';
@@ -53,6 +54,7 @@ export function AppShell({
       badgeTone: failuresCount > 0 ? 'danger' : 'info',
     },
     { view: 'intelligence', label: 'Intelligence', icon: <IntelligenceIcon /> },
+    { view: 'performance', label: 'Performance', icon: <PerformanceIcon /> },
     { view: 'diagnostics', label: 'Diagnostics', icon: <DiagnosticsIcon /> },
     {
       view: 'settings',

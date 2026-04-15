@@ -16,6 +16,7 @@ import { logger } from './logging/logger.js';
 import { notifyDesktop } from './notify/desktopNotifier.js';
 import { assertMacOS } from './platform.js';
 import { evaluatePolicy, loadPolicies } from './policies/evaluator.js';
+import { agentCallContext } from './state/runContext.js';
 import { normalizeTask } from './router/intentParser.js';
 import { routeTask } from './router/taskRouter.js';
 import { startMentionCatchup } from './slack/mentionCatchup.js';
@@ -677,15 +678,17 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         const currentBackend = readAgentBackend(dbPath);
         setActiveBackend(currentBackend);
 
-        const result = await routeTask({
-          task: routedTask,
-          config,
-          slack: eventClient,
-          store,
-          jobId,
-          logStep,
-          signal: abortController.signal,
-        });
+        const result = await agentCallContext.run({ jobId, store }, () =>
+          routeTask({
+            task: routedTask,
+            config,
+            slack: eventClient,
+            store,
+            jobId,
+            logStep,
+            signal: abortController.signal,
+          }),
+        );
         const hasPrInResult =
           result.result?.prUrl && typeof result.result.prUrl === 'string' && result.result.prUrl !== '';
         const diagnosis =

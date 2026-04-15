@@ -66,4 +66,41 @@ describe('claudeCodeBackend.parseOutput', () => {
     expect(parsed.parsedJson?.summary).toBe('Direct JSON output.');
     expect(parsed.strategy).toBe('direct');
   });
+
+  it('extracts cost_usd and usage tokens from the outer envelope', () => {
+    const wrapper = JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      result: 'Plain reply.',
+      session_id: 'sess-1',
+      cost_usd: 0.0123,
+      usage: {
+        input_tokens: 1500,
+        output_tokens: 320,
+        cache_creation_input_tokens: 200,
+        cache_read_input_tokens: 800,
+      },
+    });
+
+    const parsed = claudeCodeBackend.parseOutput(wrapper);
+    expect(parsed.costUsd).toBe(0.0123);
+    expect(parsed.usage).toEqual({
+      inputTokens: 1500,
+      outputTokens: 320,
+      cacheCreationTokens: 200,
+      cacheReadTokens: 800,
+    });
+  });
+
+  it('returns undefined usage when envelope has no usage block', () => {
+    const wrapper = JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      result: 'no usage info here',
+      session_id: 'sess-2',
+    });
+    const parsed = claudeCodeBackend.parseOutput(wrapper);
+    expect(parsed.usage).toBeUndefined();
+    expect(parsed.costUsd).toBeUndefined();
+  });
 });

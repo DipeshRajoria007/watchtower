@@ -1340,6 +1340,114 @@ h3 {
   word-break: break-word;
 }
 
+.cost-table-scroll {
+  margin-top: 16px;
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.cost-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+}
+
+.cost-table thead th {
+  text-align: left;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.625rem;
+  color: var(--text-label);
+  padding: 8px 12px;
+  background: rgba(17, 17, 19, 0.85);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.cost-table tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  vertical-align: middle;
+}
+
+.cost-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cost-table tbody tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.cost-table .num,
+.cost-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.cost-table .row-failed td {
+  color: var(--text-warning, #f5a458);
+}
+
+.cost-table .muted {
+  color: var(--text-label);
+  font-size: 0.7rem;
+}
+
+.cost-table .row-clickable {
+  cursor: pointer;
+}
+
+.cost-table .row-clickable:hover td {
+  background: rgba(100, 150, 220, 0.06);
+}
+
+.performance-range-toggle {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.performance-range-toggle .range-button {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(17, 17, 19, 0.6);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.performance-range-toggle .range-button:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--text-primary);
+}
+
+.performance-range-toggle .range-button.active {
+  background: rgba(100, 150, 220, 0.15);
+  border-color: rgba(100, 150, 220, 0.4);
+  color: var(--text-primary);
+}
+
+.bar-track {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(100, 150, 220, 0.6), rgba(100, 200, 240, 0.85));
+  border-radius: 3px;
+  transition: width 200ms ease;
+}
+
 /* ============================================================
    Slack Markdown — inline rich text
    ============================================================ */
@@ -3045,10 +3153,15 @@ h3 {
 }
 
 .pipeline-duration,
-.pipeline-retries {
+.pipeline-retries,
+.pipeline-cost {
   font-family: var(--font-mono);
   font-size: 0.6875rem;
   color: var(--text-muted);
+}
+
+.pipeline-cost {
+  color: var(--text-accent, #7ad);
 }
 
 .pipeline-retries {
@@ -3120,6 +3233,12 @@ h3 {
   font-size: 0.6875rem;
   color: var(--text-muted);
   margin-left: auto;
+}
+
+.pipeline-step-cost {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text-accent, #7ad);
 }
 
 .pipeline-step-findings-count {

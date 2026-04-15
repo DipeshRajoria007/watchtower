@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
+  formatCostUsd,
   formatDurationSeconds,
+  formatPercent,
+  formatTokens,
   formatTimestamp,
   getPriorityTone,
   getStatusTone,
@@ -433,6 +436,24 @@ export function PulseMetrics({ metrics }: { metrics: DashboardMetrics }) {
         tone={metrics.chaosIndex > 0 ? 'warning' : 'neutral'}
         variant="compact"
       />
+      <MetricCard
+        label="24h Cost"
+        value={formatCostUsd(metrics.cost24hUsd)}
+        tone={metrics.cost24hUsd > 0 ? 'accent' : 'neutral'}
+        variant="compact"
+      />
+      <MetricCard
+        label="24h Tokens"
+        value={`${formatTokens(metrics.tokensInput24h)} ↓ / ${formatTokens(metrics.tokensOutput24h)} ↑`}
+        variant="compact"
+      />
+      <MetricCard
+        label="Cache Hit"
+        value={formatPercent(metrics.cacheHitRate24h)}
+        tone={metrics.cacheHitRate24h > 0 ? 'success' : 'neutral'}
+        variant="compact"
+      />
+      <MetricCard label="Avg Cost / Run" value={formatCostUsd(metrics.avgCostPerRunUsd)} variant="compact" />
     </div>
   );
 }

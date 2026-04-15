@@ -2,9 +2,11 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import type { CodexRunRequest, CodexRunResult } from '../types/contracts.js';
+import type { CodexRunRequest, CodexRunResult, CostSource } from '../types/contracts.js';
 import type { AgentBackend, AgentBackendId } from '../backends/types.js';
 import { getBackend } from '../backends/registry.js';
+import { computeCostUsd } from '../pricing/modelPrices.js';
+import { agentCallContext } from '../state/runContext.js';
 
 let activeBackendId: AgentBackendId = 'codex';
 
@@ -187,6 +189,8 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
 
   let timedOut = false;
   let cancelled = false;
+  const modelUsed = request.model ?? backend.defaultModel();
+  const spawnedAt = Date.now();
   const child = spawn(executable, args, {
     cwd: request.cwd,
     env,
@@ -341,8 +345,45 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
       });
     }
 
+    const durationMs = Date.now() - spawnedAt;
+    const usage = parsedOutput.usage;
+    let costUsd = parsedOutput.costUsd;
+    let costSource: CostSource | undefined = costUsd !== undefined ? 'reported' : undefined;
+    if (costUsd === undefined && usage) {
+      const computed = computeCostUsd(usage, modelUsed);
+      if (computed !== undefined) {
+        costUsd = computed;
+        costSource = 'computed';
+      }
+    }
+
+    const ok = !timedOut && !cancelled && exitCode === 0;
+
+    const callContext = agentCallContext.getStore();
+    if (callContext) {
+      try {
+        callContext.store.recordAgentCall({
+          jobId: callContext.jobId,
+          pipelineRunId: callContext.pipelineRunId,
+          role: callContext.role,
+          backend: backend.id,
+          model: modelUsed,
+          durationMs,
+          inputTokens: usage?.inputTokens,
+          outputTokens: usage?.outputTokens,
+          cacheReadTokens: usage?.cacheReadTokens,
+          cacheCreationTokens: usage?.cacheCreationTokens,
+          costUsd,
+          costSource,
+          ok,
+        });
+      } catch {
+        // Non-fatal: persistence failure should not block agent execution
+      }
+    }
+
     return {
-      ok: !timedOut && !cancelled && exitCode === 0,
+      ok,
       exitCode,
       timedOut,
       cancelled,
@@ -350,6 +391,12 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
       stderr,
       lastMessage,
       parsedJson,
+      durationMs,
+      usage,
+      costUsd,
+      costSource,
+      backend: backend.id,
+      modelUsed,
     };
   } catch (error) {
     request.onLog?.({
@@ -360,6 +407,25 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
         error: String(error),
       },
     });
+
+    const errorDurationMs = Date.now() - spawnedAt;
+
+    const callContext = agentCallContext.getStore();
+    if (callContext) {
+      try {
+        callContext.store.recordAgentCall({
+          jobId: callContext.jobId,
+          pipelineRunId: callContext.pipelineRunId,
+          role: callContext.role,
+          backend: backend.id,
+          model: modelUsed,
+          durationMs: errorDurationMs,
+          ok: false,
+        });
+      } catch {
+        // Non-fatal
+      }
+    }
 
     return {
       ok: false,
@@ -373,6 +439,9 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
           : ''
       }`,
       lastMessage: '',
+      durationMs: errorDurationMs,
+      backend: backend.id,
+      modelUsed,
     };
   } finally {
     request.onLog?.({

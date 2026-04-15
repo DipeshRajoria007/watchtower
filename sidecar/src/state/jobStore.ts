@@ -1,5 +1,10 @@
 import Database from 'better-sqlite3';
 import type {
+  AgentBackendId,
+  AgentCallRecord,
+  CallSummarySince,
+  CostSource,
+  JobCostSummary,
   JobLogLevel,
   JobLogRecord,
   JobRecord,
@@ -266,6 +271,27 @@ export class JobStore {
         job_id TEXT PRIMARY KEY,
         created_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS agent_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL,
+        pipeline_run_id TEXT,
+        role TEXT,
+        backend TEXT NOT NULL,
+        model TEXT,
+        duration_ms INTEGER NOT NULL,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cache_read_tokens INTEGER,
+        cache_creation_tokens INTEGER,
+        cost_usd REAL,
+        cost_source TEXT,
+        ok INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_calls_job_id ON agent_calls(job_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_calls_created_at ON agent_calls(created_at);
+      CREATE INDEX IF NOT EXISTS idx_agent_calls_pipeline_run ON agent_calls(pipeline_run_id);
     `);
 
     // Add PM config columns to app_settings if missing
@@ -361,6 +387,139 @@ export class JobStore {
       deletions: row.deletions as number,
       createdAt: row.created_at as string,
     };
+  }
+
+  recordAgentCall(record: Omit<AgentCallRecord, 'id' | 'createdAt'> & { createdAt?: string }): void {
+    const createdAt = record.createdAt ?? new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO agent_calls(
+           job_id, pipeline_run_id, role, backend, model, duration_ms,
+           input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+           cost_usd, cost_source, ok, created_at
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        record.jobId,
+        record.pipelineRunId ?? null,
+        record.role ?? null,
+        record.backend,
+        record.model ?? null,
+        record.durationMs,
+        record.inputTokens ?? null,
+        record.outputTokens ?? null,
+        record.cacheReadTokens ?? null,
+        record.cacheCreationTokens ?? null,
+        record.costUsd ?? null,
+        record.costSource ?? null,
+        record.ok ? 1 : 0,
+        createdAt,
+      );
+  }
+
+  private mapAgentCallRow(row: Record<string, unknown>): AgentCallRecord {
+    return {
+      id: row.id as number,
+      jobId: row.job_id as string,
+      pipelineRunId: (row.pipeline_run_id as string | null) ?? undefined,
+      role: (row.role as string | null) ?? undefined,
+      backend: row.backend as AgentBackendId,
+      model: (row.model as string | null) ?? undefined,
+      durationMs: row.duration_ms as number,
+      inputTokens: (row.input_tokens as number | null) ?? undefined,
+      outputTokens: (row.output_tokens as number | null) ?? undefined,
+      cacheReadTokens: (row.cache_read_tokens as number | null) ?? undefined,
+      cacheCreationTokens: (row.cache_creation_tokens as number | null) ?? undefined,
+      costUsd: (row.cost_usd as number | null) ?? undefined,
+      costSource: ((row.cost_source as string | null) ?? undefined) as CostSource | undefined,
+      ok: (row.ok as number) === 1,
+      createdAt: row.created_at as string,
+    };
+  }
+
+  getJobCallSummary(jobId: string): JobCostSummary {
+    const rows = this.db
+      .prepare(
+        `SELECT id, job_id, pipeline_run_id, role, backend, model, duration_ms,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                cost_usd, cost_source, ok, created_at
+         FROM agent_calls
+         WHERE job_id = ?
+         ORDER BY id ASC`,
+      )
+      .all(jobId) as Array<Record<string, unknown>>;
+
+    const calls = rows.map(r => this.mapAgentCallRow(r));
+    const totals = calls.reduce(
+      (acc, c) => {
+        acc.totalCostUsd += c.costUsd ?? 0;
+        acc.totalDurationMs += c.durationMs;
+        acc.totalInputTokens += c.inputTokens ?? 0;
+        acc.totalOutputTokens += c.outputTokens ?? 0;
+        acc.totalCacheReadTokens += c.cacheReadTokens ?? 0;
+        acc.totalCacheCreationTokens += c.cacheCreationTokens ?? 0;
+        return acc;
+      },
+      {
+        totalCostUsd: 0,
+        totalDurationMs: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        totalCacheReadTokens: 0,
+        totalCacheCreationTokens: 0,
+      },
+    );
+
+    return {
+      jobId,
+      ...totals,
+      callCount: calls.length,
+      calls,
+    };
+  }
+
+  getCallSummarySince(sinceIso: string): CallSummarySince {
+    const row = this.db
+      .prepare(
+        `SELECT
+           COALESCE(SUM(cost_usd), 0) AS total_cost_usd,
+           COUNT(*) AS total_calls,
+           COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+           COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
+           COALESCE(SUM(cache_read_tokens), 0) AS total_cache_read_tokens
+         FROM agent_calls
+         WHERE created_at >= ?`,
+      )
+      .get(sinceIso) as Record<string, number>;
+
+    const totalInput = Number(row.total_input_tokens ?? 0);
+    const totalCacheRead = Number(row.total_cache_read_tokens ?? 0);
+    const denom = totalInput + totalCacheRead;
+    const cacheHitRate = denom > 0 ? totalCacheRead / denom : 0;
+
+    return {
+      totalCostUsd: Number(row.total_cost_usd ?? 0),
+      totalCalls: Number(row.total_calls ?? 0),
+      totalInputTokens: totalInput,
+      totalOutputTokens: Number(row.total_output_tokens ?? 0),
+      totalCacheReadTokens: totalCacheRead,
+      cacheHitRate,
+    };
+  }
+
+  listCallsBetween(sinceIso: string, untilIso: string, limit = 5000): AgentCallRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, job_id, pipeline_run_id, role, backend, model, duration_ms,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                cost_usd, cost_source, ok, created_at
+         FROM agent_calls
+         WHERE created_at >= ? AND created_at < ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(sinceIso, untilIso, limit) as Array<Record<string, unknown>>;
+    return rows.map(r => this.mapAgentCallRow(r));
   }
 
   hasEvent(eventId: string): boolean {

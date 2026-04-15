@@ -7,6 +7,7 @@ import type { WorkflowStepLogger } from '../types/contracts.js';
 import { buildPromptForRole } from './prompts.js';
 import { profileForAgentRole } from '../codex/modelProfiles.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
+import { withAgentCallContext } from '../state/runContext.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
 
 export type PipelineStore = {
@@ -359,15 +360,17 @@ export async function runAgentPipeline(params: {
     const schemaFile = SCHEMA_MAP[role];
     const schemaPath = schemaFile ? path.resolve(process.cwd(), `schemas/${schemaFile}`) : undefined;
 
-    const result = await runCodex({
-      cwd: ctx.repoPath,
-      prompt,
-      outputSchemaPath: schemaPath,
-      githubToken: ctx.githubToken,
-      ...profile,
-      // timeoutMs: perAgentTimeoutMs,
-      onLog: logStep,
-    });
+    const result = await withAgentCallContext({ pipelineRunId, role }, () =>
+      runCodex({
+        cwd: ctx.repoPath,
+        prompt,
+        outputSchemaPath: schemaPath,
+        githubToken: ctx.githubToken,
+        ...profile,
+        // timeoutMs: perAgentTimeoutMs,
+        onLog: logStep,
+      }),
+    );
 
     const durationMs = Date.now() - agentStart;
     const output = result.parsedJson ?? {};
@@ -518,14 +521,16 @@ export async function runAgentPipeline(params: {
         const coderSchemaPath = undefined; // coder has no dedicated schema
         const coderStart = Date.now();
 
-        const coderRetryResult = await runCodex({
-          cwd: ctx.repoPath,
-          prompt: coderPrompt,
-          outputSchemaPath: coderSchemaPath,
-          githubToken: ctx.githubToken,
-          ...coderProfile,
-          onLog: logStep,
-        });
+        const coderRetryResult = await withAgentCallContext({ pipelineRunId, role: 'coder' }, () =>
+          runCodex({
+            cwd: ctx.repoPath,
+            prompt: coderPrompt,
+            outputSchemaPath: coderSchemaPath,
+            githubToken: ctx.githubToken,
+            ...coderProfile,
+            onLog: logStep,
+          }),
+        );
 
         const coderRetryDuration = Date.now() - coderStart;
         const coderOutput = coderRetryResult.parsedJson ?? {};

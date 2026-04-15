@@ -1,7 +1,7 @@
 import fsSync from 'node:fs';
 import os from 'node:os';
 import path, { delimiter as pathDelimiter } from 'node:path';
-import type { AgentBackend, AgentRunRequest } from './types.js';
+import type { AgentBackend, AgentRunRequest, ParsedBackendOutput } from './types.js';
 
 function isExecutable(filePath: string): boolean {
   try {
@@ -163,7 +163,10 @@ export const codexBackend: AgentBackend = {
     return env;
   },
 
-  parseOutput(raw: string): { parsedJson?: Record<string, unknown>; strategy?: string } {
+  parseOutput(raw: string): ParsedBackendOutput {
+    // Codex `--output-last-message` writes only the final assistant message, so
+    // there is no usage/cost envelope to extract here. Cost is computed from
+    // the price table at storage time when token counts are available.
     return parseStructuredOutput(raw);
   },
 
@@ -246,7 +249,7 @@ function extractFirstTopLevelJsonObject(raw: string): string | undefined {
   return undefined;
 }
 
-export function parseStructuredOutput(raw: string): { parsedJson?: Record<string, unknown>; strategy?: string } {
+export function parseStructuredOutput(raw: string): ParsedBackendOutput {
   try {
     const parsedJson = parseJsonObject(raw.trim());
     if (parsedJson) {
