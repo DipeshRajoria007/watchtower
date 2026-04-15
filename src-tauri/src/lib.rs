@@ -66,6 +66,7 @@ impl SupervisorStatus {
 struct SupervisorControl {
     shutdown_requested: Arc<AtomicBool>,
     sidecar_pid: Arc<Mutex<Option<u32>>>,
+    restart_requested: Arc<AtomicBool>,
 }
 
 impl SupervisorControl {
@@ -75,6 +76,18 @@ impl SupervisorControl {
 
     fn is_shutdown_requested(&self) -> bool {
         self.shutdown_requested.load(Ordering::SeqCst)
+    }
+
+    /// Signal an intentional restart (e.g. after a settings save). The
+    /// supervisor loop consumes this flag after the sidecar exits and skips
+    /// crash-window accounting + backoff, so a settings save is not confused
+    /// with a crash.
+    fn request_restart(&self) {
+        self.restart_requested.store(true, Ordering::SeqCst);
+    }
+
+    fn consume_restart_request(&self) -> bool {
+        self.restart_requested.swap(false, Ordering::SeqCst)
     }
 
     fn set_sidecar_pid(&self, pid: Option<u32>) {
@@ -968,6 +981,33 @@ async fn save_app_settings(
     let connection =
         Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
     persist_app_settings(&connection, &settings)?;
+
+    // Terminate the sidecar so the supervisor respawns it with the fresh
+    // settings. Without this the sidecar keeps its in-memory config from
+    // startup and never picks up access-control / Slack-token / repo-path
+    // changes until the app is restarted. request_restart() tells the
+    // supervisor this exit is intentional so it skips crash-loop accounting.
+    // Settings are already persisted, so if termination fails we log it but
+    // don't fail the save.
+    state.supervisor_control.request_restart();
+    match state.supervisor_control.terminate_sidecar() {
+        Ok(true) => {
+            state
+                .supervisor
+                .set("restarting to load new settings")
+                .await;
+        }
+        Ok(false) => {
+            // Sidecar isn't running yet (startup in progress or blocked on
+            // incomplete settings). It will read fresh settings on next spawn.
+            // Clear the flag so it doesn't apply to a later unrelated exit.
+            let _ = state.supervisor_control.consume_restart_request();
+        }
+        Err(err) => {
+            eprintln!("failed to terminate sidecar after settings save: {err}");
+            let _ = state.supervisor_control.consume_restart_request();
+        }
+    }
 
     Ok(SaveSettingsResponse {
         configured: is_settings_complete(&settings),
@@ -3262,6 +3302,16 @@ async fn start_sidecar_supervisor(
                     NotificationAudioTone::Failure,
                 );
             }
+        }
+
+        // If this exit was an intentional restart (e.g. after a settings
+        // save), skip crash-window accounting and backoff so the sidecar
+        // comes back up immediately and legitimate settings saves are never
+        // flagged as a crash loop.
+        if control.consume_restart_request() {
+            restart_attempt = 0;
+            status.set("restarting to load new settings").await;
+            continue;
         }
 
         let now = Instant::now();
