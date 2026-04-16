@@ -498,6 +498,24 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
     return;
   }
 
+  // Thread-level dedup: skip if this thread already has a running/paused job
+  const activeThreadJob = store.activeJobForThread(event.channelId, event.threadTs);
+  if (activeThreadJob) {
+    store.recordEvent(event.eventId, event.channelId, event.threadTs);
+    logger.info(
+      {
+        eventId: event.eventId,
+        channelId: event.channelId,
+        threadTs: event.threadTs,
+        activeJobId: activeThreadJob.id,
+        activeJobStatus: activeThreadJob.status,
+        activeJobWorkflow: activeThreadJob.workflow,
+      },
+      'skipped: thread already has an active job',
+    );
+    return;
+  }
+
   const eventClient = buildEventAwareClient(client, event);
 
   // Add :eyes: reaction to signal processing has started

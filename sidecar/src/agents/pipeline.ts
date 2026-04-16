@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import os from 'node:os';
 import path from 'node:path';
 import type { WebClient } from '@slack/web-api';
 import { getAdminUserIds } from '../access/control.js';
 import type { AgentContext, AgentFinding, AgentRole, AgentStepResult, PipelineResult } from './types.js';
 import type { WorkflowStepLogger } from '../types/contracts.js';
 import { buildPromptForRole } from './prompts.js';
-import { profileForAgentRole } from '../codex/modelProfiles.js';
+import { lightweightProfile, profileForAgentRole } from '../codex/modelProfiles.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
 import { withAgentCallContext } from '../state/runContext.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
@@ -161,6 +162,77 @@ export function formatPlanMessage(
 const APPROVE_PATTERNS = /^(yes|go|proceed|do it|go ahead|ship it|lgtm)$/i;
 const REJECT_PATTERNS = /^(no|stop|cancel|abort|nevermind|never mind)\b/i;
 
+async function isMessageDirectedAtBot(
+  message: string,
+  recentThread: string[],
+  logStep: WorkflowStepLogger,
+): Promise<boolean> {
+  const prompt = `You are a classifier for a developer bot called miniOG. miniOG just posted a plan in a Slack thread and asked for admin approval ("yes"/"go" to proceed, "no"/"stop" to cancel, or reply with feedback).
+
+A new message appeared in the thread. Decide whether this message is directed at miniOG (approving, rejecting, or giving feedback on the plan) OR is just a normal human-to-human conversation that has nothing to do with miniOG.
+
+Signals that it IS directed at miniOG:
+- References the plan, the fix, the implementation, or miniOG itself
+- Gives instructions like "also handle X" or "change the approach to Y"
+- Short affirmative/negative responses that clearly respond to the approval prompt
+
+Signals that it is NOT directed at miniOG:
+- Addresses another user by name or @mention
+- Asks for information from another human (URLs, screenshots, details)
+- Continues a human conversation about debugging or understanding the issue
+- Asks clarifying questions to the original reporter
+
+Recent thread messages (for context):
+${recentThread.map((m, i) => `[${i + 1}] ${m}`).join('\n')}
+
+New message to classify:
+"${message}"
+
+Return strict JSON:
+{
+  "directedAtBot": true | false,
+  "reasoning": "one sentence explaining why"
+}`;
+
+  try {
+    const profile = lightweightProfile(getActiveBackendId());
+    const result = await runCodex({
+      cwd: os.tmpdir(),
+      prompt,
+      model: profile.model,
+      reasoningEffort: profile.reasoningEffort,
+      timeoutMs: 15_000,
+    });
+
+    if (!result.ok || !result.parsedJson) {
+      logStep({
+        stage: 'pipeline.approval.classify.fallback',
+        message: 'Approval-intent classifier failed — defaulting to NOT directed at bot.',
+        level: 'WARN',
+      });
+      return false;
+    }
+
+    const raw = result.parsedJson as { directedAtBot?: boolean; reasoning?: string };
+    const directed = raw.directedAtBot === true;
+
+    logStep({
+      stage: 'pipeline.approval.classify.done',
+      message: `Classified thread reply as ${directed ? 'directed at bot' : 'human conversation'}: ${raw.reasoning ?? ''}`,
+      data: { directedAtBot: directed, reasoning: raw.reasoning },
+    });
+
+    return directed;
+  } catch (error) {
+    logStep({
+      stage: 'pipeline.approval.classify.error',
+      message: `Approval-intent classifier threw: ${String(error)} — defaulting to NOT directed at bot.`,
+      level: 'WARN',
+    });
+    return false;
+  }
+}
+
 export async function waitForApproval(params: {
   slack: WebClient;
   channelId: string;
@@ -240,13 +312,23 @@ export async function waitForApproval(params: {
         return { approved: false, userReply: text, approverId: reply.user };
       }
 
-      // Non-pattern text from an approver = modification feedback (treat as approval with feedback)
+      // Non-pattern text from an approver — classify whether it's directed at the bot
       if (isApprover) {
+        const recentThread = messages.slice(-6).map(m => m.text.trim());
+        const directed = await isMessageDirectedAtBot(text, recentThread, logStep);
+        if (directed) {
+          logStep({
+            stage: 'pipeline.approval.feedback',
+            message: `Core-dev member <@${reply.user}> provided feedback: "${text}"`,
+          });
+          return { approved: true, userReply: text, approverId: reply.user };
+        }
         logStep({
-          stage: 'pipeline.approval.feedback',
-          message: `Core-dev member <@${reply.user}> provided feedback: "${text}"`,
+          stage: 'pipeline.approval.ignored',
+          message: `Ignored admin message not directed at bot: "${text}"`,
+          data: { user: reply.user },
         });
-        return { approved: true, userReply: text, approverId: reply.user };
+        continue;
       }
       // Non-pattern text from non-approver — ignore silently
     }

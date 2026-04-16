@@ -47,6 +47,7 @@ export class JobStore {
       );
       CREATE INDEX IF NOT EXISTS idx_jobs_event_id ON jobs(event_id);
       CREATE INDEX IF NOT EXISTS idx_jobs_dedupe_key ON jobs(dedupe_key);
+      CREATE INDEX IF NOT EXISTS idx_jobs_channel_thread ON jobs(channel_id, thread_ts);
 
       CREATE TABLE IF NOT EXISTS job_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -803,6 +804,38 @@ export class JobStore {
     }
 
     return {
+      workflow: row.workflow,
+      status: row.status,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  activeJobForThread(
+    channelId: string,
+    threadTs: string,
+    staleMinutes = 45,
+  ): { id: string; workflow: WorkflowIntent; status: JobRecord['status']; updatedAt: string } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, workflow, status, updated_at
+         FROM jobs
+         WHERE channel_id = ?
+           AND thread_ts = ?
+           AND status IN ('RUNNING', 'PAUSED')
+           AND updated_at > datetime('now', '-' || ? || ' minutes')
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+      )
+      .get(channelId, threadTs, staleMinutes) as
+      | { id?: string; workflow?: WorkflowIntent; status?: JobRecord['status']; updated_at?: string }
+      | undefined;
+
+    if (!row?.id || !row?.workflow || !row?.status || !row?.updated_at) {
+      return undefined;
+    }
+
+    return {
+      id: row.id,
       workflow: row.workflow,
       status: row.status,
       updatedAt: row.updated_at,
