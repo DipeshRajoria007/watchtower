@@ -91,7 +91,16 @@ export const claudeCodeBackend: AgentBackend = {
   },
 
   buildArgs(request: AgentRunRequest, _outputPath: string): string[] {
-    const args = ['-p', request.prompt, '--output-format', 'json', '--dangerously-skip-permissions'];
+    const args: string[] = [];
+    if (request.resumeSessionId) {
+      args.push('--resume', request.resumeSessionId, '-p', request.prompt);
+    } else {
+      args.push('-p', request.prompt);
+    }
+    args.push('--output-format', 'json', '--dangerously-skip-permissions');
+    if (request.sessionId) {
+      args.push('--session-id', request.sessionId);
+    }
     if (request.model) {
       args.push('--model', request.model);
     }
@@ -133,6 +142,7 @@ export const claudeCodeBackend: AgentBackend = {
       const envelope = outerParsed.parsedJson;
       const costUsd = asFiniteNumber(envelope.cost_usd);
       const usage = extractClaudeUsage(envelope);
+      const sessionId = typeof envelope.session_id === 'string' ? envelope.session_id : undefined;
 
       const innerText = (envelope.result as string).trim();
       // Try to parse the inner text as the structured JSON we asked the model to produce
@@ -143,6 +153,7 @@ export const claudeCodeBackend: AgentBackend = {
           strategy: `claude_unwrap+${innerParsed.strategy}`,
           usage,
           costUsd,
+          sessionId,
         };
       }
       // Inner text is plain text (not JSON) — surface it as a summary so workflows can use it
@@ -151,6 +162,7 @@ export const claudeCodeBackend: AgentBackend = {
         strategy: 'claude_unwrap+plain_text',
         usage,
         costUsd,
+        sessionId,
       };
     }
     // Fallback: not a Claude Code wrapper — try parsing raw output directly

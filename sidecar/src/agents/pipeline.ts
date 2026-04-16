@@ -162,25 +162,29 @@ export function formatPlanMessage(
 const APPROVE_PATTERNS = /^(yes|go|proceed|do it|go ahead|ship it|lgtm)$/i;
 const REJECT_PATTERNS = /^(no|stop|cancel|abort|nevermind|never mind)\b/i;
 
-async function isMessageDirectedAtBot(
+export type ApprovalOutcome = 'approved' | 'rejected' | 'feedback';
+export type ApprovalResult = { outcome: ApprovalOutcome; userReply: string; approverId: string };
+
+type ApprovalIntent = 'approve' | 'feedback' | 'reject' | 'unrelated';
+
+async function classifyApprovalIntent(
   message: string,
   recentThread: string[],
   logStep: WorkflowStepLogger,
-): Promise<boolean> {
+): Promise<ApprovalIntent> {
   const prompt = `You are a classifier for a developer bot called miniOG. miniOG just posted a plan in a Slack thread and asked for admin approval ("yes"/"go" to proceed, "no"/"stop" to cancel, or reply with feedback).
 
-A new message appeared in the thread. Decide whether this message is directed at miniOG (approving, rejecting, or giving feedback on the plan) OR is just a normal human-to-human conversation that has nothing to do with miniOG.
+A new message appeared in the thread. Classify the message into one of four categories:
 
-Signals that it IS directed at miniOG:
-- References the plan, the fix, the implementation, or miniOG itself
-- Gives instructions like "also handle X" or "change the approach to Y"
-- Short affirmative/negative responses that clearly respond to the approval prompt
+"approve" — The message is approving the plan and telling miniOG to proceed. Examples: "looks good, go ahead", "yes do it", "approved, start coding", "go ahead but also handle X" (approval WITH extra notes).
 
-Signals that it is NOT directed at miniOG:
-- Addresses another user by name or @mention
-- Asks for information from another human (URLs, screenshots, details)
-- Continues a human conversation about debugging or understanding the issue
-- Asks clarifying questions to the original reporter
+"feedback" — The message is directed at miniOG with instructions, changes, or additional context for the plan, but does NOT explicitly approve it. Examples: "also make sure X", "change the approach to Y", "use the existing middleware instead", "don't forget to handle edge case Z". The user wants the plan revised, not executed as-is.
+
+"reject" — The message is telling miniOG to stop or cancel. Examples: "no", "stop", "don't do this", "cancel it".
+
+"unrelated" — The message is NOT directed at miniOG. It's a human-to-human conversation. Examples: messages addressing another user by @mention, asking another human for URLs/details, continuing a debugging discussion.
+
+Key distinction between "approve" and "feedback": if the message gives instructions WITHOUT saying to proceed (no "go", "yes", "do it", "start", "approved", "ship it", "looks good"), classify as "feedback". The user wants changes before approving.
 
 Recent thread messages (for context):
 ${recentThread.map((m, i) => `[${i + 1}] ${m}`).join('\n')}
@@ -190,7 +194,7 @@ New message to classify:
 
 Return strict JSON:
 {
-  "directedAtBot": true | false,
+  "intent": "approve" | "feedback" | "reject" | "unrelated",
   "reasoning": "one sentence explaining why"
 }`;
 
@@ -207,29 +211,32 @@ Return strict JSON:
     if (!result.ok || !result.parsedJson) {
       logStep({
         stage: 'pipeline.approval.classify.fallback',
-        message: 'Approval-intent classifier failed — defaulting to NOT directed at bot.',
+        message: 'Approval-intent classifier failed — defaulting to unrelated.',
         level: 'WARN',
       });
-      return false;
+      return 'unrelated';
     }
 
-    const raw = result.parsedJson as { directedAtBot?: boolean; reasoning?: string };
-    const directed = raw.directedAtBot === true;
+    const raw = result.parsedJson as { intent?: string; reasoning?: string };
+    const validIntents: ApprovalIntent[] = ['approve', 'feedback', 'reject', 'unrelated'];
+    const intent: ApprovalIntent = validIntents.includes(raw.intent as ApprovalIntent)
+      ? (raw.intent as ApprovalIntent)
+      : 'unrelated';
 
     logStep({
       stage: 'pipeline.approval.classify.done',
-      message: `Classified thread reply as ${directed ? 'directed at bot' : 'human conversation'}: ${raw.reasoning ?? ''}`,
-      data: { directedAtBot: directed, reasoning: raw.reasoning },
+      message: `Classified thread reply as "${intent}": ${raw.reasoning ?? ''}`,
+      data: { intent, reasoning: raw.reasoning },
     });
 
-    return directed;
+    return intent;
   } catch (error) {
     logStep({
       stage: 'pipeline.approval.classify.error',
-      message: `Approval-intent classifier threw: ${String(error)} — defaulting to NOT directed at bot.`,
+      message: `Approval-intent classifier threw: ${String(error)} — defaulting to unrelated.`,
       level: 'WARN',
     });
-    return false;
+    return 'unrelated';
   }
 }
 
@@ -242,7 +249,7 @@ export async function waitForApproval(params: {
   approvalPromptTs: string;
   logStep: WorkflowStepLogger;
   botUserId?: string;
-}): Promise<{ approved: boolean; userReply: string; approverId?: string }> {
+}): Promise<ApprovalResult> {
   const { slack, channelId, threadTs, approverUserIds, approvalPromptTs, logStep, botUserId } = params;
   const pollIntervalMs = 5_000;
   const notifiedUsers = new Set<string>();
@@ -288,7 +295,7 @@ export async function waitForApproval(params: {
           stage: 'pipeline.approval.approved',
           message: `Core-dev member <@${reply.user}> approved the plan: "${text}"`,
         });
-        return { approved: true, userReply: text, approverId: reply.user };
+        return { outcome: 'approved', userReply: text, approverId: reply.user };
       }
 
       if (REJECT_PATTERNS.test(text)) {
@@ -309,19 +316,33 @@ export async function waitForApproval(params: {
           stage: 'pipeline.approval.rejected',
           message: `Core-dev member <@${reply.user}> rejected the plan: "${text}"`,
         });
-        return { approved: false, userReply: text, approverId: reply.user };
+        return { outcome: 'rejected', userReply: text, approverId: reply.user };
       }
 
-      // Non-pattern text from an approver — classify whether it's directed at the bot
+      // Non-pattern text from an approver — classify intent
       if (isApprover) {
         const recentThread = messages.slice(-6).map(m => m.text.trim());
-        const directed = await isMessageDirectedAtBot(text, recentThread, logStep);
-        if (directed) {
+        const intent = await classifyApprovalIntent(text, recentThread, logStep);
+        if (intent === 'approve') {
+          logStep({
+            stage: 'pipeline.approval.approved',
+            message: `Core-dev member <@${reply.user}> approved the plan: "${text}"`,
+          });
+          return { outcome: 'approved', userReply: text, approverId: reply.user };
+        }
+        if (intent === 'feedback') {
           logStep({
             stage: 'pipeline.approval.feedback',
             message: `Core-dev member <@${reply.user}> provided feedback: "${text}"`,
           });
-          return { approved: true, userReply: text, approverId: reply.user };
+          return { outcome: 'feedback', userReply: text, approverId: reply.user };
+        }
+        if (intent === 'reject') {
+          logStep({
+            stage: 'pipeline.approval.rejected',
+            message: `Core-dev member <@${reply.user}> rejected the plan: "${text}"`,
+          });
+          return { outcome: 'rejected', userReply: text, approverId: reply.user };
         }
         logStep({
           stage: 'pipeline.approval.ignored',
@@ -335,22 +356,28 @@ export async function waitForApproval(params: {
   }
 }
 
-function buildPipelineIntroMessage(agents: AgentRole[]): string {
+function buildPipelineIntroMessage(agents: AgentRole[], customIntro?: string): string {
+  if (customIntro) return customIntro;
+
   const hasPlanner = agents.includes('planner');
   const hasCoder = agents.includes('coder');
-  const hasReviewer = agents.includes('reviewer');
-  const hasVerifier = agents.includes('verifier');
 
   if (hasPlanner) {
     return "On it \u2014 planning the approach first, then I'll code it up, get it reviewed, and verify everything works.";
   }
-  if (hasCoder && (hasReviewer || hasVerifier)) {
-    return 'Plan approved \u2014 coding it up, then review and verification.';
-  }
   if (hasCoder) {
-    return 'Plan approved \u2014 starting implementation.';
+    return 'Starting implementation.';
   }
   return `Running ${agents.join(', ')}.`;
+}
+
+export function buildApprovalMessage(feedbackRounds: number, stepCount: number): string {
+  const prefix = feedbackRounds > 0 ? `After ${feedbackRounds} revision${feedbackRounds > 1 ? 's' : ''}, plan` : 'Plan';
+  const steps =
+    stepCount > 2
+      ? `I'll work through the ${stepCount} steps, then review and verify.`
+      : "I'll code it up, then review and verify.";
+  return `${prefix} approved \u2014 ${steps}`;
 }
 
 export async function runAgentPipeline(params: {
@@ -359,8 +386,9 @@ export async function runAgentPipeline(params: {
   logStep: WorkflowStepLogger;
   store?: PipelineStore;
   jobId?: string;
+  introMessage?: string;
 }): Promise<PipelineResult> {
-  const { ctx, slack, logStep, store, jobId } = params;
+  const { ctx, slack, logStep, store, jobId, introMessage } = params;
   const {
     agents,
     maxRetryLoops,
@@ -395,7 +423,7 @@ export async function runAgentPipeline(params: {
     data: { agents, maxRetryLoops, totalTimeoutMs },
   });
 
-  const introText = buildPipelineIntroMessage(agents);
+  const introText = buildPipelineIntroMessage(agents, introMessage);
   await postSlackProgress({ slack, ctx, text: introText });
 
   // Track plan message so we can update it with strikethroughs during execution
@@ -544,7 +572,7 @@ export async function runAgentPipeline(params: {
             botUserId: ctx.config.botUserId,
           });
 
-          if (!approval.approved) {
+          if (approval.outcome === 'rejected') {
             await postSlackProgress({ slack, ctx, text: 'Got it, cancelling.' });
             aborted = true;
             break;
