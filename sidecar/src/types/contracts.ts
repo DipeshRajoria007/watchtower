@@ -160,6 +160,10 @@ export interface CodexRunRequest {
   imagePaths?: string[];
   onLog?: WorkflowStepLogger;
   signal?: AbortSignal;
+  /** Start a new Claude Code session with this ID. */
+  sessionId?: string;
+  /** Resume an existing Claude Code session (sends prompt as follow-up). */
+  resumeSessionId?: string;
 }
 
 export interface TokenUsage {
@@ -192,6 +196,8 @@ export interface CodexRunResult {
   backend: AgentBackendId;
   /** Model identifier used (request.model when set, otherwise backend default). */
   modelUsed?: string;
+  /** Session ID returned by Claude Code, usable for session resumption. */
+  sessionId?: string;
 }
 
 export interface AgentCallRecord {

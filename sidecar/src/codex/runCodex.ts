@@ -397,6 +397,7 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
       costSource,
       backend: backend.id,
       modelUsed,
+      sessionId: parsedOutput.sessionId,
     };
   } catch (error) {
     request.onLog?.({

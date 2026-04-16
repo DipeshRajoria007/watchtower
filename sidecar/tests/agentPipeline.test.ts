@@ -537,7 +537,7 @@ describe('waitForApproval', () => {
     await vi.advanceTimersByTimeAsync(6000);
     const result = await promise;
 
-    expect(result.approved).toBe(false);
+    expect(result.outcome).toBe('rejected');
     expect(result.approverId).toBe('UCOREDEV');
   });
 
@@ -548,7 +548,7 @@ describe('waitForApproval', () => {
     await vi.advanceTimersByTimeAsync(6000);
     const result = await promise;
 
-    expect(result.approved).toBe(false);
+    expect(result.outcome).toBe('rejected');
   });
 
   it('approves on bare "yes" from admin', async () => {
@@ -558,7 +558,7 @@ describe('waitForApproval', () => {
     await vi.advanceTimersByTimeAsync(6000);
     const result = await promise;
 
-    expect(result.approved).toBe(true);
+    expect(result.outcome).toBe('approved');
     expect(result.approverId).toBe('UCOREDEV');
   });
 
@@ -576,7 +576,7 @@ describe('waitForApproval', () => {
     await vi.advanceTimersByTimeAsync(12000);
     const result = await promise;
 
-    expect(result.approved).toBe(true);
+    expect(result.outcome).toBe('approved');
     expect(result.approverId).toBe('UCOREDEV');
     expect(mockSlack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining('Only admins can approve') }),

@@ -10,6 +10,7 @@ export interface ParsedBackendOutput {
   strategy?: string;
   usage?: TokenUsage;
   costUsd?: number;
+  sessionId?: string;
 }
 
 export interface AgentBackend {

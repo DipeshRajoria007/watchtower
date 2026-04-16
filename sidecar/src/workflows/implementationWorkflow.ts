@@ -15,12 +15,14 @@ import { githubAuthModeHint } from '../github/githubAuth.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { classifyRepo } from '../router/repoClassifier.js';
 import { getBackend } from '../backends/registry.js';
-import { runAgentPipeline, formatPlanMessage, waitForApproval } from '../agents/pipeline.js';
+import { runAgentPipeline, formatPlanMessage, waitForApproval, buildApprovalMessage } from '../agents/pipeline.js';
+import { profileForAgentRole } from '../codex/modelProfiles.js';
+import { buildPlannerPrompt } from '../agents/prompts.js';
 import { resolveWorkspace } from '../workspaces/workspaceManager.js';
 import { createPrFromWorkspace } from '../github/postPipelinePr.js';
 import { fetchUnresolvedReviewThreadCount } from '../github/prReviewComments.js';
 import type { PipelineStore } from '../agents/pipeline.js';
-import type { PipelineConfig } from '../agents/types.js';
+import type { AgentStepResult, PipelineConfig } from '../agents/types.js';
 import { prepareWorkflowContext, sanitizeOwnerSummary, extractReplyFromCodexResult } from './shared/workflowUtils.js';
 
 function buildOwnerPrimaryPrompt(params: {
@@ -161,7 +163,7 @@ export async function runImplementationWorkflow(params: {
       data: { isOwnerAuthor: ctx.isOwnerAuthor },
     });
 
-    // Planner runs to produce plan steps, affected files, and scope
+    // Planner runs directly via runCodex to capture sessionId for iterative feedback
     const workflowTimeoutMs = config.bugFixTimeoutMs;
     const plannerPipelineConfig: PipelineConfig = {
       agents: ['planner'],
@@ -173,27 +175,37 @@ export async function runImplementationWorkflow(params: {
       perAgentTimeoutMs: Math.floor(workflowTimeoutMs * 0.15),
     };
 
-    const plannerResult = await runAgentPipeline({
-      ctx: {
-        workflowIntent: 'IMPLEMENTATION',
-        task,
-        config,
-        repoPath: ctx.cwd,
-        githubToken: ctx.githubToken,
-        threadContext: ctx.threadContext,
-        previousSteps: [],
-        pipelineConfig: plannerPipelineConfig,
-        imagePaths: ctx.imagePaths.length > 0 ? ctx.imagePaths : undefined,
-        requestedBy: ctx.requestedBy,
-      },
-      slack,
-      logStep: logStep ?? (() => {}),
-      store,
-      jobId,
+    const plannerCtx = {
+      workflowIntent: 'IMPLEMENTATION' as const,
+      task,
+      config,
+      repoPath: ctx.cwd,
+      githubToken: ctx.githubToken,
+      threadContext: ctx.threadContext,
+      previousSteps: [] as AgentStepResult[],
+      pipelineConfig: plannerPipelineConfig,
+      imagePaths: ctx.imagePaths.length > 0 ? ctx.imagePaths : undefined,
+      requestedBy: ctx.requestedBy,
+    };
+
+    const plannerProfile = profileForAgentRole('planner', getActiveBackendId());
+    const plannerPrompt = buildPlannerPrompt(plannerCtx);
+    const plannerSchemaPath = path.resolve(process.cwd(), 'schemas/agent-planner-result.schema.json');
+
+    logStep?.({ stage: 'pipeline.agent.planner.start', message: 'Starting planner agent.' });
+
+    const plannerRunResult = await runCodex({
+      cwd: ctx.cwd,
+      prompt: plannerPrompt,
+      outputSchemaPath: plannerSchemaPath,
+      githubToken: ctx.githubToken,
+      ...plannerProfile,
+      timeoutMs: Math.floor(workflowTimeoutMs * 0.15),
+      onLog: logStep,
     });
 
-    const plannerStep = plannerResult.steps[0];
-    const plannerOutput = plannerStep?.output ?? {};
+    let plannerSessionId = plannerRunResult.sessionId;
+    let plannerOutput: Record<string, unknown> = plannerRunResult.parsedJson ?? {};
     const plannerRequiresCodeChanges = Boolean(plannerOutput.requiresCodeChanges);
 
     // Quick-action fast path: if the planner says no code changes are needed
@@ -237,7 +249,7 @@ export async function runImplementationWorkflow(params: {
               botUserId: config.botUserId,
             });
 
-            if (!approval.approved) {
+            if (approval.outcome === 'rejected') {
               await slack.chat
                 .postMessage({
                   channel: task.event.channelId,
@@ -304,9 +316,9 @@ Write your response as a ready-to-post Slack message describing what you did.
     }
 
     // Full pipeline path: code changes are needed
-    const planSteps = Array.isArray(plannerOutput.plan) ? plannerOutput.plan.map(String) : [];
-    const planAffectedFiles = Array.isArray(plannerOutput.affectedFiles) ? plannerOutput.affectedFiles.map(String) : [];
-    const planScope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : 'unknown';
+    let planSteps = Array.isArray(plannerOutput.plan) ? plannerOutput.plan.map(String) : [];
+    let planAffectedFiles = Array.isArray(plannerOutput.affectedFiles) ? plannerOutput.affectedFiles.map(String) : [];
+    let planScope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : 'unknown';
 
     // Resolve workspace for the coder agent
     let pipelineCwd = ctx.cwd;
@@ -345,6 +357,7 @@ Write your response as a ready-to-post Slack message describing what you did.
       });
     }
 
+    // Post initial plan
     let planMessageTs: string | undefined;
     if (planSteps.length > 0) {
       try {
@@ -359,25 +372,36 @@ Write your response as a ready-to-post Slack message describing what you did.
       }
     }
 
-    // Approval gate
-    if (planMessageTs) {
-      const adminUserIds = getAdminUserIds(config);
-      let approvalPromptTs: string | undefined;
-      try {
-        const promptResult = await slack.chat.postMessage({
-          channel: task.event.channelId,
-          thread_ts: task.event.threadTs,
-          text: 'Here\'s my plan. An admin needs to approve before I proceed:\n• "yes" or "go" — I\'ll start coding\n• "no" or "stop" — I\'ll cancel\n• Or reply with changes you\'d like and I\'ll adjust',
-        });
-        approvalPromptTs = promptResult.ts ?? undefined;
-      } catch {
-        // Non-fatal
-      }
+    // Iterative approval loop
+    const adminUserIds = getAdminUserIds(config);
+    const MAX_FEEDBACK_ITERATIONS = 5;
+    let feedbackRounds = 0;
+    let approved = false;
 
-      if (approvalPromptTs) {
+    if (planMessageTs) {
+      for (let iteration = 0; iteration < MAX_FEEDBACK_ITERATIONS; iteration++) {
+        const promptText =
+          iteration === 0
+            ? 'Here\'s my plan. An admin needs to approve before I proceed:\n\u2022 "yes" or "go" \u2014 I\'ll start coding\n\u2022 "no" or "stop" \u2014 I\'ll cancel\n\u2022 Or reply with changes you\'d like and I\'ll adjust'
+            : 'Here\'s the revised plan. "yes" to proceed, "no" to cancel, or reply with more changes.';
+
+        let approvalPromptTs: string | undefined;
+        try {
+          const promptResult = await slack.chat.postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: promptText,
+          });
+          approvalPromptTs = promptResult.ts ?? undefined;
+        } catch {
+          // Non-fatal
+        }
+
+        if (!approvalPromptTs) break;
+
         logStep?.({
           stage: 'implementation.approval.waiting',
-          message: 'Waiting for admin approval of plan before proceeding.',
+          message: `Waiting for admin approval of plan (iteration ${iteration + 1}).`,
         });
 
         const approval = await waitForApproval({
@@ -391,25 +415,159 @@ Write your response as a ready-to-post Slack message describing what you did.
           botUserId: config.botUserId,
         });
 
-        if (!approval.approved) {
+        if (approval.outcome === 'approved') {
+          approved = true;
+          break;
+        }
+
+        if (approval.outcome === 'rejected') {
+          // Ask if they want to revise before cancelling
+          let askReviseTs: string | undefined;
+          try {
+            const askResult = await slack.chat.postMessage({
+              channel: task.event.channelId,
+              thread_ts: task.event.threadTs,
+              text: 'Got it. Would you like to change the task or the approach? Reply with what you\'d like different, or say "cancel" to stop.',
+            });
+            askReviseTs = askResult.ts ?? undefined;
+          } catch {
+            // Non-fatal
+          }
+
+          if (!askReviseTs) {
+            // Can't post follow-up — cancel
+            return {
+              workflow: 'IMPLEMENTATION',
+              status: 'SKIPPED',
+              message: 'Plan rejected by admin.',
+              notifyDesktop: false,
+              slackPosted: true,
+            };
+          }
+
+          const followUp = await waitForApproval({
+            slack,
+            channelId: task.event.channelId,
+            threadTs: task.event.threadTs,
+            approverUserIds: adminUserIds,
+            triggerUserId: task.event.userId,
+            approvalPromptTs: askReviseTs,
+            logStep: logStep ?? (() => {}),
+            botUserId: config.botUserId,
+          });
+
+          if (followUp.outcome === 'rejected') {
+            await slack.chat
+              .postMessage({
+                channel: task.event.channelId,
+                thread_ts: task.event.threadTs,
+                text: 'Understood, cancelling.',
+              })
+              .catch(() => {});
+            return {
+              workflow: 'IMPLEMENTATION',
+              status: 'SKIPPED',
+              message: 'Plan rejected by admin after revision prompt.',
+              notifyDesktop: false,
+              slackPosted: true,
+            };
+          }
+
+          if (followUp.outcome === 'approved') {
+            approved = true;
+            break;
+          }
+
+          // followUp.outcome === 'feedback' — fall through to re-plan below
+          approval.outcome = 'feedback' as const;
+          approval.userReply = followUp.userReply;
+        }
+
+        // Feedback path: re-plan using the same session
+        if (approval.outcome === 'feedback') {
+          feedbackRounds++;
           await slack.chat
             .postMessage({
               channel: task.event.channelId,
               thread_ts: task.event.threadTs,
-              text: 'Got it, cancelling.',
+              text: 'Got your feedback. Revising the plan...',
             })
             .catch(() => {});
 
-          return {
-            workflow: 'IMPLEMENTATION',
-            status: 'SKIPPED',
-            message: 'Plan rejected by admin.',
-            notifyDesktop: false,
-            slackPosted: true,
-          };
+          logStep?.({
+            stage: 'implementation.approval.revising',
+            message: `Revising plan with feedback: "${approval.userReply}"`,
+            data: { feedbackRounds },
+          });
+
+          const feedbackPrompt = plannerSessionId
+            ? `The admin reviewed the plan and provided this feedback:\n\n"${approval.userReply}"\n\nRevise the plan to incorporate this feedback. Return the same JSON schema:\n{\n  "plan": string[],\n  "risks": string[],\n  "affectedFiles": string[],\n  "scope": "small" | "medium" | "large",\n  "requiresCodeChanges": boolean\n}`
+            : `You previously produced this plan:\n${JSON.stringify(plannerOutput, null, 2)}\n\nThe admin reviewed it and provided this feedback:\n\n"${approval.userReply}"\n\nRevise the plan to incorporate this feedback. Return the same JSON schema:\n{\n  "plan": string[],\n  "risks": string[],\n  "affectedFiles": string[],\n  "scope": "small" | "medium" | "large",\n  "requiresCodeChanges": boolean\n}`;
+
+          const revisedResult = await runCodex({
+            cwd: ctx.cwd,
+            prompt: feedbackPrompt,
+            ...(plannerSessionId ? { resumeSessionId: plannerSessionId } : {}),
+            outputSchemaPath: plannerSchemaPath,
+            githubToken: ctx.githubToken,
+            ...plannerProfile,
+            timeoutMs: Math.floor(workflowTimeoutMs * 0.15),
+            onLog: logStep,
+          });
+
+          plannerSessionId = revisedResult.sessionId ?? plannerSessionId;
+
+          if (revisedResult.ok && revisedResult.parsedJson) {
+            plannerOutput = revisedResult.parsedJson;
+            planSteps = Array.isArray(plannerOutput.plan) ? plannerOutput.plan.map(String) : planSteps;
+            planAffectedFiles = Array.isArray(plannerOutput.affectedFiles)
+              ? plannerOutput.affectedFiles.map(String)
+              : planAffectedFiles;
+            planScope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : planScope;
+          }
+
+          // Update the plan message in-place
+          if (planMessageTs) {
+            await slack.chat
+              .update({
+                channel: task.event.channelId,
+                ts: planMessageTs,
+                text: formatPlanMessage(planSteps, planAffectedFiles, planScope, undefined, pipelineCwd),
+              })
+              .catch(() => {});
+          }
+          // Loop back to post revised approval prompt
         }
       }
+
+      if (!approved) {
+        await slack.chat
+          .postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: `Reached the revision limit (${MAX_FEEDBACK_ITERATIONS}). Cancelling \u2014 feel free to start a new request.`,
+          })
+          .catch(() => {});
+        return {
+          workflow: 'IMPLEMENTATION',
+          status: 'SKIPPED',
+          message: 'Exceeded maximum feedback iterations.',
+          notifyDesktop: false,
+          slackPosted: true,
+        };
+      }
     }
+
+    // Build the plannerStep for downstream consumption
+    const plannerStep: AgentStepResult = {
+      role: 'planner',
+      status: 'passed',
+      output: plannerOutput,
+      findings: [],
+      durationMs: plannerRunResult.durationMs,
+    };
+
+    const introMsg = buildApprovalMessage(feedbackRounds, planSteps.length);
 
     // Run the execution pipeline (coder -> reviewer -> verifier)
     const fullPipelineConfig: PipelineConfig = {
@@ -430,13 +588,14 @@ Write your response as a ready-to-post Slack message describing what you did.
         repoPath: pipelineCwd,
         githubToken: ctx.githubToken,
         threadContext: ctx.threadContext,
-        previousSteps: plannerStep ? [plannerStep] : [],
+        previousSteps: [plannerStep],
         pipelineConfig: fullPipelineConfig,
         imagePaths: ctx.imagePaths.length > 0 ? ctx.imagePaths : undefined,
         requestedBy: ctx.requestedBy,
       },
       slack,
       logStep: logStep ?? (() => {}),
+      introMessage: introMsg,
       store,
       jobId,
     });
