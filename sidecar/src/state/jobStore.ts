@@ -316,6 +316,13 @@ export class JobStore {
     } catch {
       /* column already exists */
     }
+    try {
+      this.db.exec(
+        `ALTER TABLE app_settings ADD COLUMN mini_og_repo_root TEXT NOT NULL DEFAULT '/Users/dipesh/code/mini-og'`,
+      );
+    } catch {
+      /* column already exists */
+    }
   }
 
   close(): void {

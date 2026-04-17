@@ -3,10 +3,25 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { loadConfigFromDb } from '../src/config.js';
+import { loadConfigFromDb, MiniOgRepoRootViolationError } from '../src/config.js';
 
-function makeDb(): string {
+interface Fixture {
+  dbPath: string;
+  miniOgRoot: string;
+  newtonWeb: string;
+  newtonApi: string;
+}
+
+function makeFixture(): Fixture {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchtower-config-'));
+  fs.mkdirSync(path.join(dir, 'mini-og', 'newton-web'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'mini-og', 'newton-api'), { recursive: true });
+  // Resolve symlinks (macOS /tmp → /private/tmp) so the values match what
+  // `mustBeAbsoluteExistingDir` returns after realpathSync.
+  const miniOgRoot = fs.realpathSync(path.join(dir, 'mini-og'));
+  const newtonWeb = fs.realpathSync(path.join(dir, 'mini-og', 'newton-web'));
+  const newtonApi = fs.realpathSync(path.join(dir, 'mini-og', 'newton-api'));
+
   const dbPath = path.join(dir, 'watchtower.db');
   const db = new Database(dbPath);
 
@@ -30,18 +45,25 @@ function makeDb(): string {
       pm_task_timeout_ms INTEGER NOT NULL DEFAULT 600000,
       core_dev_slack_user_ids TEXT NOT NULL DEFAULT '',
       core_dev_slack_user_group TEXT NOT NULL DEFAULT '',
+      mini_og_repo_root TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     INSERT OR IGNORE INTO app_settings(id) VALUES (1);
   `);
 
+  db.prepare(`UPDATE app_settings SET mini_og_repo_root = ? WHERE id = 1`).run(miniOgRoot);
+
   db.close();
-  return dbPath;
+  return { dbPath, miniOgRoot, newtonWeb, newtonApi };
+}
+
+function makeDb(): string {
+  return makeFixture().dbPath;
 }
 
 describe('loadConfigFromDb', () => {
   it('loads config from persisted settings', () => {
-    const dbPath = makeDb();
+    const { dbPath, newtonWeb, newtonApi } = makeFixture();
     const db = new Database(dbPath);
 
     db.prepare(
@@ -66,8 +88,8 @@ describe('loadConfigFromDb', () => {
       'U1,U2',
       'UBOT',
       'C01H25RNLJH, C02BUGS, C01H25RNLJH',
-      '/Users/dipesh/code/newton-web',
-      '/Users/dipesh/code/newton-api',
+      newtonWeb,
+      newtonApi,
       2,
       720000,
       2700000,
@@ -81,7 +103,34 @@ describe('loadConfigFromDb', () => {
     expect(config.ownerSlackUserIds).toEqual(['U1', 'U2']);
     expect(config.allowedChannelsForBugFix).toEqual(['C01H25RNLJH', 'C02BUGS']);
     expect(config.bugsAndUpdatesChannelId).toBe('C01H25RNLJH');
-    expect(config.repoPaths.newtonWeb).toBe('/Users/dipesh/code/newton-web');
+    expect(config.repoPaths.newtonWeb).toBe(newtonWeb);
+  });
+
+  it('refuses config when repo paths are not under the mini-og root', () => {
+    const { dbPath } = makeFixture();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'watchtower-outside-'));
+    const outsideWeb = path.join(outside, 'newton-web');
+    const outsideApi = path.join(outside, 'newton-api');
+    fs.mkdirSync(outsideWeb, { recursive: true });
+    fs.mkdirSync(outsideApi, { recursive: true });
+
+    const db = new Database(dbPath);
+    db.prepare(
+      `
+      UPDATE app_settings
+      SET slack_bot_token = ?,
+          slack_app_token = ?,
+          owner_slack_user_ids = ?,
+          bot_user_id = ?,
+          bugs_and_updates_channel_id = ?,
+          newton_web_path = ?,
+          newton_api_path = ?
+      WHERE id = 1
+    `,
+    ).run('xoxb-valid', 'xapp-valid', 'U1', 'UBOT', 'C01H25RNLJH', outsideWeb, outsideApi);
+    db.close();
+
+    expect(() => loadConfigFromDb(dbPath)).toThrow(MiniOgRepoRootViolationError);
   });
 
   it('throws when required settings are missing', () => {
@@ -90,7 +139,7 @@ describe('loadConfigFromDb', () => {
   });
 
   it('loads access-control settings from dedicated tables when present', () => {
-    const dbPath = makeDb();
+    const { dbPath, newtonWeb, newtonApi } = makeFixture();
     const db = new Database(dbPath);
 
     db.exec(`
@@ -128,19 +177,7 @@ describe('loadConfigFromDb', () => {
           repo_classifier_threshold = ?
       WHERE id = 1
     `,
-    ).run(
-      'xoxb-valid',
-      'xapp-valid',
-      'U1,U2',
-      'UBOT',
-      'C01H25RNLJH',
-      '/Users/dipesh/code/newton-web',
-      '/Users/dipesh/code/newton-api',
-      2,
-      720000,
-      2700000,
-      0.75,
-    );
+    ).run('xoxb-valid', 'xapp-valid', 'U1,U2', 'UBOT', 'C01H25RNLJH', newtonWeb, newtonApi, 2, 720000, 2700000, 0.75);
 
     db.prepare(
       `

@@ -356,6 +356,232 @@ export async function waitForApproval(params: {
   }
 }
 
+/* -------------------------------------------------------------------------
+ * Repo-choice clarification gate
+ *
+ * Used when miniOG can't deterministically identify the target repo for an
+ * IMPLEMENTATION task. Instead of silently defaulting to newton-web (the
+ * historical behavior that caused PRs to land in the wrong repo), we ask
+ * admins in-thread "which repo?" and wait for an answer.
+ * ---------------------------------------------------------------------- */
+
+export type RepoChoiceOutcome = 'newton-web' | 'newton-api' | 'cancelled';
+export type RepoChoiceResult = { outcome: RepoChoiceOutcome; userReply: string; approverId: string };
+
+type RepoIntent = 'web' | 'api' | 'cancel' | 'unclear';
+
+const WEB_SHORTHAND = /^(web|newton-?web|frontend|fe|ui)$/i;
+const API_SHORTHAND = /^(api|newton-?api|backend|be|server)$/i;
+const CANCEL_SHORTHAND = /^(cancel|stop|abort|nevermind|never mind|skip)\b/i;
+
+async function classifyRepoChoice(
+  message: string,
+  recentThread: string[],
+  logStep: WorkflowStepLogger,
+): Promise<RepoIntent> {
+  const trimmed = message.trim();
+
+  // Cheap regex short-circuits before calling the model.
+  if (WEB_SHORTHAND.test(trimmed)) return 'web';
+  if (API_SHORTHAND.test(trimmed)) return 'api';
+  if (CANCEL_SHORTHAND.test(trimmed)) return 'cancel';
+
+  const prompt = `You are a classifier for miniOG, a developer bot. miniOG asked an admin which repo to work in for an ambiguous task. The choices are:
+- "newton-web" — the frontend repo (React/TypeScript, pages, components, UI)
+- "newton-api" — the backend repo (Python/Django, endpoints, models, serializers)
+
+Classify the admin's reply into one of four categories:
+
+"web" — the reply identifies newton-web. Examples: "web", "newton-web", "frontend", "the react one", "UI", "it's a frontend change".
+
+"api" — the reply identifies newton-api. Examples: "api", "newton-api", "backend", "the django one", "it's in python".
+
+"cancel" — the reply tells miniOG to stop / skip / abort. Examples: "cancel", "nevermind", "don't bother", "stop".
+
+"unclear" — the reply doesn't pick a repo and isn't a cancel. Examples: "not sure", a question, unrelated chat, or anything that doesn't map to web/api/cancel.
+
+Recent thread messages (for context):
+${recentThread.map((m, i) => `[${i + 1}] ${m}`).join('\n')}
+
+New message to classify:
+"${message}"
+
+Return strict JSON:
+{
+  "intent": "web" | "api" | "cancel" | "unclear",
+  "reasoning": "one sentence explaining why"
+}`;
+
+  try {
+    const profile = lightweightProfile(getActiveBackendId());
+    const result = await runCodex({
+      cwd: os.tmpdir(),
+      prompt,
+      model: profile.model,
+      reasoningEffort: profile.reasoningEffort,
+      timeoutMs: 15_000,
+    });
+
+    if (!result.ok || !result.parsedJson) {
+      logStep({
+        stage: 'pipeline.repo_choice.classify.fallback',
+        message: 'Repo-choice classifier failed — defaulting to unclear.',
+        level: 'WARN',
+      });
+      return 'unclear';
+    }
+
+    const raw = result.parsedJson as { intent?: string; reasoning?: string };
+    const valid: RepoIntent[] = ['web', 'api', 'cancel', 'unclear'];
+    const intent: RepoIntent = valid.includes(raw.intent as RepoIntent) ? (raw.intent as RepoIntent) : 'unclear';
+
+    logStep({
+      stage: 'pipeline.repo_choice.classify.done',
+      message: `Classified repo-choice reply as "${intent}": ${raw.reasoning ?? ''}`,
+      data: { intent, reasoning: raw.reasoning },
+    });
+    return intent;
+  } catch (error) {
+    logStep({
+      stage: 'pipeline.repo_choice.classify.error',
+      message: `Repo-choice classifier threw: ${String(error)} — defaulting to unclear.`,
+      level: 'WARN',
+    });
+    return 'unclear';
+  }
+}
+
+/**
+ * Wait indefinitely for an admin to tell miniOG which repo to use. Mirrors
+ * `waitForApproval`: 5-second polling loop, ignores non-admin replies, nudges
+ * non-admins who try to answer. Returns the resolved repo or 'cancelled'.
+ */
+export async function waitForRepoChoice(params: {
+  slack: WebClient;
+  channelId: string;
+  threadTs: string;
+  approverUserIds: string[];
+  promptTs: string;
+  logStep: WorkflowStepLogger;
+  botUserId?: string;
+}): Promise<RepoChoiceResult> {
+  const { slack, channelId, threadTs, approverUserIds, promptTs, logStep, botUserId } = params;
+  const pollIntervalMs = 5_000;
+  const notifiedUsers = new Set<string>();
+
+  while (true) {
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+
+    let messages: Array<{ text: string; user: string; ts: string }>;
+    try {
+      messages = await fetchThreadContext(slack, channelId, threadTs);
+    } catch {
+      continue;
+    }
+
+    const candidateReplies = messages.filter(m => m.ts > promptTs && m.user !== botUserId);
+
+    for (const reply of candidateReplies) {
+      const text = reply.text.trim();
+      const isApprover = approverUserIds.includes(reply.user);
+      if (!isApprover) {
+        // Nudge non-admins once so they know why they were ignored.
+        if (!notifiedUsers.has(reply.user)) {
+          notifiedUsers.add(reply.user);
+          slack.chat
+            .postMessage({
+              channel: channelId,
+              thread_ts: threadTs,
+              text: `<@${reply.user}> Only admins can pick the target repo. Waiting for an admin to respond.`,
+            })
+            .catch(() => {});
+        }
+        continue;
+      }
+
+      const recentThread = messages.slice(-6).map(m => m.text.trim());
+      const intent = await classifyRepoChoice(text, recentThread, logStep);
+
+      if (intent === 'web') {
+        logStep({
+          stage: 'pipeline.repo_choice.resolved',
+          message: `Admin <@${reply.user}> chose newton-web: "${text}"`,
+        });
+        return { outcome: 'newton-web', userReply: text, approverId: reply.user };
+      }
+      if (intent === 'api') {
+        logStep({
+          stage: 'pipeline.repo_choice.resolved',
+          message: `Admin <@${reply.user}> chose newton-api: "${text}"`,
+        });
+        return { outcome: 'newton-api', userReply: text, approverId: reply.user };
+      }
+      if (intent === 'cancel') {
+        logStep({
+          stage: 'pipeline.repo_choice.cancelled',
+          message: `Admin <@${reply.user}> cancelled the task: "${text}"`,
+        });
+        return { outcome: 'cancelled', userReply: text, approverId: reply.user };
+      }
+
+      // intent === 'unclear' → keep waiting, don't echo into thread noise.
+      logStep({
+        stage: 'pipeline.repo_choice.unclear',
+        message: `Admin reply did not clearly pick a repo, continuing to wait: "${text}"`,
+        data: { user: reply.user },
+      });
+    }
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * Planner-clarification gate
+ *
+ * When the planner sets `clarificationNeeded`, ask the question in-thread and
+ * accept a free-text answer from the requester OR any admin.
+ * ---------------------------------------------------------------------- */
+
+export type ClarificationResult = { answer: string; answererId: string };
+
+export async function waitForClarification(params: {
+  slack: WebClient;
+  channelId: string;
+  threadTs: string;
+  allowedUserIds: string[];
+  promptTs: string;
+  logStep: WorkflowStepLogger;
+  botUserId?: string;
+}): Promise<ClarificationResult> {
+  const { slack, channelId, threadTs, allowedUserIds, promptTs, logStep, botUserId } = params;
+  const pollIntervalMs = 5_000;
+
+  while (true) {
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+
+    let messages: Array<{ text: string; user: string; ts: string }>;
+    try {
+      messages = await fetchThreadContext(slack, channelId, threadTs);
+    } catch {
+      continue;
+    }
+
+    const candidates = messages.filter(m => m.ts > promptTs && m.user !== botUserId);
+    for (const reply of candidates) {
+      if (!allowedUserIds.includes(reply.user)) {
+        continue;
+      }
+      const answer = reply.text.trim();
+      if (!answer) continue;
+
+      logStep({
+        stage: 'pipeline.clarification.answered',
+        message: `<@${reply.user}> answered the planner's clarification: "${answer}"`,
+      });
+      return { answer, answererId: reply.user };
+    }
+  }
+}
+
 function buildPipelineIntroMessage(agents: AgentRole[], customIntro?: string): string {
   if (customIntro) return customIntro;
 

@@ -38,13 +38,21 @@ IMPORTANT: "requiresCodeChanges" rules:
 - Set to false for operational/lifecycle actions that do NOT modify source code: merge PR, close PR, deploy, run tests, restart service, check CI status, approve PR, assign reviewers.
 - The key distinction: if the user wants to CHANGE source code files → true. If the user wants to perform a git/GitHub/infrastructure action on existing code → false.
 
+CLARIFICATION (\`clarificationNeeded\`):
+- If the task is ambiguous and you CANNOT safely decide which files to change or which behavior the user wants, set \`clarificationNeeded\` to ONE specific question for the requester. Keep it short and concrete — the kind of question that unblocks planning in one exchange.
+- Prefer clarifying over guessing when the stakes are writes: wrong endpoint, wrong page, wrong repo, wrong function signature, etc.
+- Do NOT ask a clarification for things you can reasonably infer from thread context, repo layout, or common sense. Only ask when there is a real fork in the plan.
+- When \`clarificationNeeded\` is set, still fill in the other fields with your best provisional guess; the plan will be re-generated after the user answers.
+- Set to null (or omit) when no clarification is needed.
+
 Return strict JSON:
 {
-  "plan": string[],           // ordered steps for execution
-  "risks": string[],          // identified risks or concerns
-  "affectedFiles": string[],  // files likely to be touched
+  "plan": string[],                  // ordered steps for execution
+  "risks": string[],                 // identified risks or concerns
+  "affectedFiles": string[],         // files likely to be touched
   "scope": "small" | "medium" | "large",
-  "requiresCodeChanges": boolean
+  "requiresCodeChanges": boolean,
+  "clarificationNeeded": string | null  // single question for the requester, or null
 }
 `.trim();
 }
@@ -70,7 +78,11 @@ Thread context:
 ${ctx.threadContext}
 
 Requirements:
-1. Work only in repo path ${ctx.repoPath}
+1. Work EXCLUSIVELY in ${ctx.repoPath}. This is an isolated git worktree prepared for you.
+   - DO NOT \`cd\` out of this directory for ANY reason.
+   - DO NOT run git commands against any other clone or path (e.g., paths under the user's home directory).
+   - DO NOT \`git clone\` anything — the working tree you were given is the only repo you may touch.
+   - If the worktree appears to be the wrong repo for the task (files from the planner's scope are missing), return {"status":"failed","summary":"wrong-repo-assigned: …"} instead of switching directories. A supervisor will re-run the task with the correct repo.
 2. Create a NEW branch named ${ctx.requestedBy ? `${sanitizeForBranch(ctx.requestedBy)}/` : ''}<short-task-name>-${ctx.task.event.threadTs.replace('.', '-')} (the suffix ensures uniqueness — do NOT reuse or checkout an existing branch)
 3. Implement changes and write tests to verify correctness. Run the tests to make sure everything works.
    IMPORTANT: If the planner scope is "small" or "medium", do NOT include test files in the commit or PR — only commit the source code changes. Delete or git-restore any test files you created before committing. For "large" scope, include tests in the PR.

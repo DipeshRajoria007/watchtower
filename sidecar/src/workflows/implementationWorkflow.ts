@@ -15,7 +15,14 @@ import { githubAuthModeHint } from '../github/githubAuth.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { classifyRepo } from '../router/repoClassifier.js';
 import { getBackend } from '../backends/registry.js';
-import { runAgentPipeline, formatPlanMessage, waitForApproval, buildApprovalMessage } from '../agents/pipeline.js';
+import {
+  runAgentPipeline,
+  formatPlanMessage,
+  waitForApproval,
+  waitForRepoChoice,
+  waitForClarification,
+  buildApprovalMessage,
+} from '../agents/pipeline.js';
 import { profileForAgentRole } from '../codex/modelProfiles.js';
 import { buildPlannerPrompt } from '../agents/prompts.js';
 import { resolveWorkspace } from '../workspaces/workspaceManager.js';
@@ -33,7 +40,7 @@ function buildOwnerPrimaryPrompt(params: {
   threadContext: string;
   imageContext: string;
 }): string {
-  const { task, config, workspaceRoot, githubToken, threadContext, imageContext } = params;
+  const { task, workspaceRoot, githubToken, threadContext, imageContext } = params;
   return `
 ${buildMentionSystemPrompt({ task, workflow: 'IMPLEMENTATION' })}
 
@@ -42,12 +49,16 @@ You are running Watchtower implementation mode.
 The request below was sent by a configured owner Slack user.
 
 Environment:
-- Preferred workspace root: ${workspaceRoot}
-- Known repositories: ${config.repoPaths.newtonWeb} and ${config.repoPaths.newtonApi}
+- Working directory: ${workspaceRoot}
+- Known repositories: newton-web, newton-api
 - GitHub auth mode: ${githubAuthModeHint(Boolean(githubToken))}
 
+Guardrails:
+- Operate only inside the working directory above. Do NOT \`cd\` to any other path.
+- If the working directory is not the right repo for this task, return { "status": "failed", "summary": "wrong-repo-assigned: <explanation>" } instead of switching directories.
+
 Task:
-Execute the implementation request end-to-end. You may choose whichever local repos/files/commands are needed. Infer intent from thread context and execute directly.
+Execute the implementation request end-to-end within the working directory. Infer intent from thread context and execute directly.
 
 Slack thread context:
 ${threadContext}${imageContext}
@@ -72,19 +83,22 @@ function buildOwnerRelaxedPrompt(params: {
   threadContext: string;
   imageContext: string;
 }): string {
-  const { task, config, workspaceRoot, githubToken, threadContext, imageContext } = params;
+  const { task, workspaceRoot, githubToken, threadContext, imageContext } = params;
   return `
 ${buildMentionSystemPrompt({ task, workflow: 'IMPLEMENTATION' })}
 
 You are running Watchtower implementation mode in relaxed output mode.
 
 Environment:
-- Preferred workspace root: ${workspaceRoot}
-- Known repositories: ${config.repoPaths.newtonWeb} and ${config.repoPaths.newtonApi}
+- Working directory: ${workspaceRoot}
+- Known repositories: newton-web, newton-api
 - GitHub auth mode: ${githubAuthModeHint(Boolean(githubToken))}
 
+Guardrails:
+- Operate only inside the working directory above. Do NOT \`cd\` to any other path.
+
 Task:
-Execute the implementation request end-to-end. Use whichever local repos/files/commands are needed.
+Execute the implementation request end-to-end within the working directory.
 
 Slack thread context:
 ${threadContext}${imageContext}
@@ -135,6 +149,97 @@ Return strict JSON with:
 - prUrl: PR URL if one was created, else empty string
 - confidence: number between 0 and 1
 `.trim();
+}
+
+/**
+ * Pick the target repo path for owner IMPLEMENTATION tasks. Tries (in order):
+ *   1. Planner's `affectedFiles` containing an explicit repo name.
+ *   2. Explicit mention of "newton-api" / "newton-web" in user/thread text.
+ *   3. File-extension hint (`.py` → api, `.tsx/.jsx` → web).
+ *   4. Keyword classifier with high confidence.
+ *   5. **Ask admins in-thread** (via waitForRepoChoice) — no silent default.
+ *
+ * Returns the resolved repo path, or `undefined` if the admin cancelled.
+ */
+async function resolveTargetRepoPath(params: {
+  task: NormalizedTask;
+  config: AppConfig;
+  slack: WebClient;
+  logStep?: WorkflowStepLogger;
+  planAffectedFiles: string[];
+  threadMessages: Array<{ text: string }>;
+}): Promise<string | undefined> {
+  const { task, config, slack, logStep, planAffectedFiles, threadMessages } = params;
+
+  const hasWebFiles = planAffectedFiles.some(f => f.includes('newton-web'));
+  const hasApiFiles = planAffectedFiles.some(f => f.includes('newton-api'));
+
+  if (hasWebFiles && !hasApiFiles) return config.repoPaths.newtonWeb;
+  if (hasApiFiles && !hasWebFiles) return config.repoPaths.newtonApi;
+
+  const combinedText = [task.event.text, ...threadMessages.map(m => m.text)].join('\n');
+  const mentionsApi = /\bnewton[-_\s]?api\b/i.test(combinedText);
+  const mentionsWeb = /\bnewton[-_\s]?web\b/i.test(combinedText);
+  if (mentionsApi && !mentionsWeb) return config.repoPaths.newtonApi;
+  if (mentionsWeb && !mentionsApi) return config.repoPaths.newtonWeb;
+
+  if (planAffectedFiles.length > 0) {
+    const hasPy = planAffectedFiles.some(f => /\.py$/i.test(f));
+    const hasJsx = planAffectedFiles.some(f => /\.(tsx|jsx)$/i.test(f));
+    if (hasPy && !hasJsx) return config.repoPaths.newtonApi;
+    if (hasJsx && !hasPy) return config.repoPaths.newtonWeb;
+  }
+
+  const classification = classifyRepo(
+    [task.event.text, ...threadMessages.map(m => m.text)],
+    config.repoClassifierThreshold,
+  );
+  if (!classification.uncertain && classification.selectedRepo) {
+    return classification.selectedRepo === 'newton-web' ? config.repoPaths.newtonWeb : config.repoPaths.newtonApi;
+  }
+
+  // All heuristics failed — ask admins instead of silently defaulting.
+  logStep?.({
+    stage: 'implementation.workspace.clarify',
+    message: 'Target repo is ambiguous — asking admins to clarify.',
+    level: 'WARN',
+  });
+
+  const adminUserIds = getAdminUserIds(config);
+  const mentionStr = adminUserIds.map(id => `<@${id}>`).join(' ');
+  const promptText = `I can't tell whether this task is for *newton-web* or *newton-api*.${mentionStr ? ` ${mentionStr}` : ''} Reply with "web" or "api" (or "cancel" to abandon).`;
+
+  let promptTs: string | undefined;
+  try {
+    const postResult = await slack.chat.postMessage({
+      channel: task.event.channelId,
+      thread_ts: task.event.threadTs,
+      text: promptText,
+    });
+    promptTs = postResult.ts ?? undefined;
+  } catch {
+    // Slack post failed — fail closed.
+    return undefined;
+  }
+
+  if (!promptTs || adminUserIds.length === 0) {
+    return undefined;
+  }
+
+  const choice = await waitForRepoChoice({
+    slack,
+    channelId: task.event.channelId,
+    threadTs: task.event.threadTs,
+    approverUserIds: adminUserIds,
+    promptTs,
+    logStep: logStep ?? (() => {}),
+    botUserId: config.botUserId,
+  });
+
+  if (choice.outcome === 'cancelled') {
+    return undefined;
+  }
+  return choice.outcome === 'newton-web' ? config.repoPaths.newtonWeb : config.repoPaths.newtonApi;
 }
 
 export async function runImplementationWorkflow(params: {
@@ -194,7 +299,7 @@ export async function runImplementationWorkflow(params: {
 
     logStep?.({ stage: 'pipeline.agent.planner.start', message: 'Starting planner agent.' });
 
-    const plannerRunResult = await runCodex({
+    let plannerRunResult = await runCodex({
       cwd: ctx.cwd,
       prompt: plannerPrompt,
       outputSchemaPath: plannerSchemaPath,
@@ -206,6 +311,72 @@ export async function runImplementationWorkflow(params: {
 
     let plannerSessionId = plannerRunResult.sessionId;
     let plannerOutput: Record<string, unknown> = plannerRunResult.parsedJson ?? {};
+
+    // Planner-clarification loop: if the planner asks a clarifying question,
+    // surface it in Slack, wait for the requester OR an admin to answer, then
+    // re-run the planner with the answer as extra context. Up to 3 rounds.
+    const MAX_CLARIFICATION_ROUNDS = 3;
+    let clarificationRounds = 0;
+    while (
+      typeof plannerOutput.clarificationNeeded === 'string' &&
+      plannerOutput.clarificationNeeded.trim().length > 0 &&
+      clarificationRounds < MAX_CLARIFICATION_ROUNDS
+    ) {
+      clarificationRounds++;
+      const question = String(plannerOutput.clarificationNeeded).trim();
+
+      logStep?.({
+        stage: 'implementation.planner.clarification.asking',
+        message: `Planner needs clarification (round ${clarificationRounds}): ${question}`,
+        data: { question, round: clarificationRounds },
+      });
+
+      let clarificationTs: string | undefined;
+      try {
+        const posted = await slack.chat.postMessage({
+          channel: task.event.channelId,
+          thread_ts: task.event.threadTs,
+          text: `Quick question before I plan this out: ${question}`,
+        });
+        clarificationTs = posted.ts ?? undefined;
+      } catch {
+        break;
+      }
+      if (!clarificationTs) break;
+
+      const allowedAnswerers = [...new Set([task.event.userId, ...getAdminUserIds(config)])];
+      const { answer } = await waitForClarification({
+        slack,
+        channelId: task.event.channelId,
+        threadTs: task.event.threadTs,
+        allowedUserIds: allowedAnswerers,
+        promptTs: clarificationTs,
+        logStep: logStep ?? (() => {}),
+        botUserId: config.botUserId,
+      });
+
+      const followUpPrompt = plannerSessionId
+        ? `The user answered your clarifying question ("${question}") with:\n\n"${answer}"\n\nNow produce the final plan. Return the same JSON schema with \`clarificationNeeded\` set to null.`
+        : `You previously asked: "${question}"\nThe user answered: "${answer}"\n\nOriginal plan so far:\n${JSON.stringify(plannerOutput, null, 2)}\n\nNow produce the final plan. Return the same JSON schema with \`clarificationNeeded\` set to null.`;
+
+      plannerRunResult = await runCodex({
+        cwd: ctx.cwd,
+        prompt: followUpPrompt,
+        ...(plannerSessionId ? { resumeSessionId: plannerSessionId } : {}),
+        outputSchemaPath: plannerSchemaPath,
+        githubToken: ctx.githubToken,
+        ...plannerProfile,
+        timeoutMs: Math.floor(workflowTimeoutMs * 0.15),
+        onLog: logStep,
+      });
+      plannerSessionId = plannerRunResult.sessionId ?? plannerSessionId;
+      if (plannerRunResult.ok && plannerRunResult.parsedJson) {
+        plannerOutput = plannerRunResult.parsedJson;
+      } else {
+        break;
+      }
+    }
+
     const plannerRequiresCodeChanges = Boolean(plannerOutput.requiresCodeChanges);
 
     // Quick-action fast path: if the planner says no code changes are needed
@@ -323,30 +494,32 @@ Write your response as a ready-to-post Slack message describing what you did.
     // Resolve workspace for the coder agent
     let pipelineCwd = ctx.cwd;
     if (ctx.isOwnerAuthor) {
-      const hasWebFiles = planAffectedFiles.some(f => f.includes('newton-web'));
-      const hasApiFiles = planAffectedFiles.some(f => f.includes('newton-api'));
-      let targetRepoPath: string | undefined;
-
-      if (hasWebFiles && !hasApiFiles) {
-        targetRepoPath = config.repoPaths.newtonWeb;
-      } else if (hasApiFiles && !hasWebFiles) {
-        targetRepoPath = config.repoPaths.newtonApi;
-      } else {
-        const texts = [task.event.text, ...ctx.threadMessages.map(m => m.text)];
-        const classification = classifyRepo(texts, config.repoClassifierThreshold);
-        if (!classification.uncertain && classification.selectedRepo) {
-          targetRepoPath =
-            classification.selectedRepo === 'newton-web' ? config.repoPaths.newtonWeb : config.repoPaths.newtonApi;
-        }
-      }
+      const targetRepoPath = await resolveTargetRepoPath({
+        task,
+        config,
+        slack,
+        logStep,
+        planAffectedFiles,
+        threadMessages: ctx.threadMessages,
+      });
 
       if (!targetRepoPath) {
-        targetRepoPath = config.repoPaths.newtonWeb;
-        logStep?.({
-          stage: 'implementation.workspace.fallback',
-          message: 'Could not determine target repo — defaulting to newton-web.',
-          level: 'WARN',
-        });
+        // The admin replied "cancel" (or equivalent) during the clarification
+        // gate. Abandon the task cleanly — we have no repo to work in.
+        await slack.chat
+          .postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: 'Cancelled — no repo selected.',
+          })
+          .catch(() => {});
+        return {
+          workflow: 'IMPLEMENTATION',
+          status: 'SKIPPED',
+          message: 'Cancelled during repo-selection clarification.',
+          notifyDesktop: false,
+          slackPosted: true,
+        };
       }
 
       pipelineCwd = resolveWorkspace(targetRepoPath, task.event.threadTs);
