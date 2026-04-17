@@ -326,22 +326,56 @@ Write your response as a ready-to-post Slack message describing what you did.
       const hasWebFiles = planAffectedFiles.some(f => f.includes('newton-web'));
       const hasApiFiles = planAffectedFiles.some(f => f.includes('newton-api'));
       let targetRepoPath: string | undefined;
+      let resolutionSource: string | undefined;
 
       if (hasWebFiles && !hasApiFiles) {
         targetRepoPath = config.repoPaths.newtonWeb;
+        resolutionSource = 'plan-affected-files';
       } else if (hasApiFiles && !hasWebFiles) {
         targetRepoPath = config.repoPaths.newtonApi;
-      } else {
+        resolutionSource = 'plan-affected-files';
+      }
+
+      // Explicit repo mention in the user's message or thread wins over heuristics.
+      if (!targetRepoPath) {
+        const texts = [task.event.text, ...ctx.threadMessages.map(m => m.text)].join('\n');
+        const mentionsApi = /\bnewton[-_\s]?api\b/i.test(texts);
+        const mentionsWeb = /\bnewton[-_\s]?web\b/i.test(texts);
+        if (mentionsApi && !mentionsWeb) {
+          targetRepoPath = config.repoPaths.newtonApi;
+          resolutionSource = 'explicit-mention';
+        } else if (mentionsWeb && !mentionsApi) {
+          targetRepoPath = config.repoPaths.newtonWeb;
+          resolutionSource = 'explicit-mention';
+        }
+      }
+
+      // File-extension hint from planner output: .py → newton-api, .tsx/.jsx → newton-web.
+      if (!targetRepoPath && planAffectedFiles.length > 0) {
+        const hasPy = planAffectedFiles.some(f => /\.py$/i.test(f));
+        const hasJsx = planAffectedFiles.some(f => /\.(tsx|jsx)$/i.test(f));
+        if (hasPy && !hasJsx) {
+          targetRepoPath = config.repoPaths.newtonApi;
+          resolutionSource = 'file-extension';
+        } else if (hasJsx && !hasPy) {
+          targetRepoPath = config.repoPaths.newtonWeb;
+          resolutionSource = 'file-extension';
+        }
+      }
+
+      if (!targetRepoPath) {
         const texts = [task.event.text, ...ctx.threadMessages.map(m => m.text)];
         const classification = classifyRepo(texts, config.repoClassifierThreshold);
         if (!classification.uncertain && classification.selectedRepo) {
           targetRepoPath =
             classification.selectedRepo === 'newton-web' ? config.repoPaths.newtonWeb : config.repoPaths.newtonApi;
+          resolutionSource = 'keyword-classifier';
         }
       }
 
       if (!targetRepoPath) {
         targetRepoPath = config.repoPaths.newtonWeb;
+        resolutionSource = 'fallback-default';
         logStep?.({
           stage: 'implementation.workspace.fallback',
           message: 'Could not determine target repo — defaulting to newton-web.',
@@ -353,7 +387,7 @@ Write your response as a ready-to-post Slack message describing what you did.
       logStep?.({
         stage: 'implementation.workspace.resolved',
         message: 'Resolved implementation workspace to isolated worktree.',
-        data: { targetRepoPath, pipelineCwd },
+        data: { targetRepoPath, pipelineCwd, resolutionSource },
       });
     }
 
@@ -624,6 +658,7 @@ Write your response as a ready-to-post Slack message describing what you did.
           requestedBy: ctx.requestedBy,
           channelId: task.event.channelId,
           workflow: 'IMPLEMENTATION',
+          expectedFiles: planAffectedFiles,
           onLog: msg =>
             logStep?.({
               stage: 'implementation.pr.progress',
@@ -632,20 +667,53 @@ Write your response as a ready-to-post Slack message describing what you did.
         })) ?? '';
     }
 
-    const prBlock = prUrl ? `\n${prUrl}` : '';
+    // If the pipeline aborted after a PR was already pushed, surface the
+    // half-completed state instead of reporting SUCCESS. The PR is live on
+    // GitHub but flagged as problematic — make sure the user knows.
+    const pipelineAborted = fullResult.finalStatus === 'aborted';
+    const halfCompletedAbort = pipelineAborted && Boolean(prUrl);
+
+    let messageText: string;
+    if (halfCompletedAbort) {
+      const criticalFindings = fullResult.aggregatedFindings.filter(f => f.severity === 'critical');
+      const findingBullets = criticalFindings
+        .slice(0, 3)
+        .map(f => `• ${f.message}`)
+        .join('\n');
+      messageText = [
+        `⚠️ Pipeline aborted after the PR was already pushed — the PR is live but flagged as problematic.`,
+        '',
+        summary,
+        prUrl,
+        findingBullets ? `\nReviewer findings:\n${findingBullets}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+    } else {
+      const prBlock = prUrl ? `\n${prUrl}` : '';
+      messageText = `${summary}${prBlock}`.trim();
+    }
 
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
-      text: `${summary}${prBlock}`.trim(),
+      text: messageText,
     });
 
-    const workflowStatus = fullResult.finalStatus === 'passed' || Boolean(prUrl) ? 'SUCCESS' : 'FAILED';
+    let workflowStatus: 'SUCCESS' | 'FAILED';
+    if (halfCompletedAbort) {
+      workflowStatus = 'FAILED';
+    } else if (fullResult.finalStatus === 'passed' || Boolean(prUrl)) {
+      workflowStatus = 'SUCCESS';
+    } else {
+      workflowStatus = 'FAILED';
+    }
 
     return {
       workflow: 'IMPLEMENTATION',
       status: workflowStatus,
-      message: summary,
+      message: halfCompletedAbort ? `Pipeline aborted after PR push: ${summary}` : summary,
       notifyDesktop: false,
       slackPosted: true,
       result: { prUrl },

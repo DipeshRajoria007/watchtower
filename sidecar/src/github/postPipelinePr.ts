@@ -39,6 +39,61 @@ async function hasCommitsAheadOfBase(cwd: string, baseBranch: string): Promise<b
   }
 }
 
+/** Returns { commitCount, changedFiles } for HEAD vs origin/<baseBranch>. */
+async function scopeAheadOfBase(
+  cwd: string,
+  baseBranch: string,
+): Promise<{ commitCount: number; changedFiles: string[] }> {
+  try {
+    const countStr = await git(cwd, ['rev-list', '--count', `origin/${baseBranch}..HEAD`]);
+    const filesStr = await git(cwd, ['diff', '--name-only', `origin/${baseBranch}..HEAD`]);
+    const commitCount = Number(countStr) || 0;
+    const changedFiles = filesStr.length > 0 ? filesStr.split('\n').filter(Boolean) : [];
+    return { commitCount, changedFiles };
+  } catch {
+    return { commitCount: 0, changedFiles: [] };
+  }
+}
+
+/**
+ * Sanity-check the branch before push. Fails if:
+ * - commit count exceeds maxCommits, OR
+ * - any changed file does not match one of the planner's expected paths (when provided).
+ *
+ * Returns { ok: true } on pass, { ok: false, reason } on fail.
+ */
+export function validatePushScope(params: {
+  commitCount: number;
+  changedFiles: string[];
+  expectedFiles?: string[];
+  maxCommits: number;
+}): { ok: true } | { ok: false; reason: string } {
+  const { commitCount, changedFiles, expectedFiles, maxCommits } = params;
+
+  if (commitCount > maxCommits) {
+    return {
+      ok: false,
+      reason: `branch has ${commitCount} commits ahead of base (max allowed: ${maxCommits}). Worktree likely started from a branch with unmerged commits.`,
+    };
+  }
+
+  if (expectedFiles && expectedFiles.length > 0) {
+    const normalizedExpected = expectedFiles.map(f => f.replace(/^\.?\//, ''));
+    const unexpected = changedFiles.filter(f => {
+      const norm = f.replace(/^\.?\//, '');
+      return !normalizedExpected.some(exp => norm === exp || norm.endsWith(`/${exp}`) || exp.endsWith(`/${norm}`));
+    });
+    if (unexpected.length > 0) {
+      return {
+        ok: false,
+        reason: `branch touches ${unexpected.length} file(s) outside the planner's scope: ${unexpected.slice(0, 5).join(', ')}${unexpected.length > 5 ? ', …' : ''}`,
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
 /** Check if a PR already exists for the current branch. */
 async function existingPrUrl(cwd: string): Promise<string | undefined> {
   try {
@@ -68,6 +123,8 @@ async function existingPrUrl(cwd: string): Promise<string | undefined> {
  *
  * Returns the PR URL if successful, or undefined if no changes or on failure.
  */
+const DEFAULT_MAX_COMMITS = 10;
+
 export async function createPrFromWorkspace(params: {
   repoPath: string;
   threadTs: string;
@@ -75,9 +132,12 @@ export async function createPrFromWorkspace(params: {
   requestedBy?: string;
   channelId?: string;
   workflow?: string;
+  expectedFiles?: string[];
+  maxCommits?: number;
   onLog?: (msg: string) => void;
 }): Promise<string | undefined> {
-  const { repoPath, threadTs, summary, requestedBy, channelId, workflow, onLog } = params;
+  const { repoPath, threadTs, summary, requestedBy, channelId, workflow, expectedFiles, onLog } = params;
+  const maxCommits = params.maxCommits ?? DEFAULT_MAX_COMMITS;
 
   try {
     const baseBranch = await getDefaultBranch(repoPath);
@@ -117,6 +177,26 @@ export async function createPrFromWorkspace(params: {
       const commitTitle = summary.length > 72 ? `${summary.slice(0, 69)}...` : summary;
       await git(repoPath, ['commit', '-m', commitTitle]);
       onLog?.('Committed changes.');
+    }
+
+    // Pre-push sanity check: abort if the branch carries unrelated commits
+    // or touches files outside the planner's stated scope. This guards against
+    // worktrees that accidentally started from a feature branch.
+    const scope = await scopeAheadOfBase(repoPath, baseBranch);
+    const validation = validatePushScope({
+      commitCount: scope.commitCount,
+      changedFiles: scope.changedFiles,
+      expectedFiles,
+      maxCommits,
+    });
+    if (!validation.ok) {
+      const msg = `Refusing to push: ${validation.reason}`;
+      logger.warn(
+        { repoPath, branch: branchName, commitCount: scope.commitCount, changedFiles: scope.changedFiles },
+        'pre-push validation failed',
+      );
+      onLog?.(msg);
+      return undefined;
     }
 
     // Push the branch
