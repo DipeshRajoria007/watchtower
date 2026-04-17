@@ -106,6 +106,70 @@ describe('loadConfigFromDb', () => {
     expect(config.repoPaths.newtonWeb).toBe(newtonWeb);
   });
 
+  it('self-migrates the mini_og_repo_root column when the DB predates it', () => {
+    // Pre-v0.5.9 schema: no mini_og_repo_root column at all. Before the fix,
+    // loadConfigFromDb would crash with "no such column". The loader must now
+    // ALTER TABLE ADD COLUMN on the fly.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchtower-oldschema-'));
+    fs.mkdirSync(path.join(dir, 'mini-og', 'newton-web'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'mini-og', 'newton-api'), { recursive: true });
+    const miniOgRoot = fs.realpathSync(path.join(dir, 'mini-og'));
+    const newtonWeb = fs.realpathSync(path.join(dir, 'mini-og', 'newton-web'));
+    const newtonApi = fs.realpathSync(path.join(dir, 'mini-og', 'newton-api'));
+
+    const dbPath = path.join(dir, 'watchtower.db');
+    const db = new Database(dbPath);
+    // NOTE: no mini_og_repo_root column — this is the pre-v0.5.9 state. All
+    // other columns referenced by the SELECT must exist, since the COALESCE
+    // wrappers guard against NULL but not missing columns.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        slack_bot_token TEXT NOT NULL DEFAULT '',
+        slack_app_token TEXT NOT NULL DEFAULT '',
+        owner_slack_user_ids TEXT NOT NULL DEFAULT '',
+        bot_user_id TEXT NOT NULL DEFAULT '',
+        bugs_and_updates_channel_id TEXT NOT NULL DEFAULT 'C01H25RNLJH',
+        newton_web_path TEXT NOT NULL DEFAULT '',
+        newton_api_path TEXT NOT NULL DEFAULT '',
+        max_concurrent_jobs INTEGER NOT NULL DEFAULT 2,
+        pr_review_timeout_ms INTEGER NOT NULL DEFAULT 720000,
+        bug_fix_timeout_ms INTEGER NOT NULL DEFAULT 2700000,
+        repo_classifier_threshold REAL NOT NULL DEFAULT 0.75,
+        multi_agent_enabled INTEGER NOT NULL DEFAULT 0,
+        agent_backend TEXT NOT NULL DEFAULT 'codex',
+        pm_slack_user_ids TEXT NOT NULL DEFAULT '',
+        pm_task_timeout_ms INTEGER NOT NULL DEFAULT 600000,
+        core_dev_slack_user_ids TEXT NOT NULL DEFAULT '',
+        core_dev_slack_user_group TEXT NOT NULL DEFAULT ''
+      );
+      INSERT OR IGNORE INTO app_settings(id) VALUES (1);
+    `);
+    db.prepare(
+      `UPDATE app_settings SET slack_bot_token=?, slack_app_token=?, owner_slack_user_ids=?, bot_user_id=?, bugs_and_updates_channel_id=?, newton_web_path=?, newton_api_path=? WHERE id=1`,
+    ).run('xoxb-valid', 'xapp-valid', 'U1', 'UBOT', 'C01H25RNLJH', newtonWeb, newtonApi);
+    db.close();
+
+    // Loader must self-migrate rather than throw "no such column". It may still
+    // throw a downstream error (MiniOgRepoRootViolationError) because the
+    // default root won't match these tmp paths — that's fine; we only care
+    // that the self-migration ran and the column now exists.
+    let thrown: unknown;
+    try {
+      loadConfigFromDb(dbPath);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(String(thrown ?? '')).not.toMatch(/no such column/i);
+
+    const db2 = new Database(dbPath);
+    const cols = (db2.prepare(`PRAGMA table_info(app_settings)`).all() as Array<{ name: string }>).map(c => c.name);
+    db2.close();
+    expect(cols).toContain('mini_og_repo_root');
+
+    void miniOgRoot;
+  });
+
   it('refuses config when repo paths are not under the mini-og root', () => {
     const { dbPath } = makeFixture();
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'watchtower-outside-'));
