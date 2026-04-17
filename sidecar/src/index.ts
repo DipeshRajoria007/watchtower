@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
-import type { WebClient } from '@slack/web-api';
+import { WebClient } from '@slack/web-api';
 import { getAdminUserIds, getConfiguredAccessControl, setResolvedGroupMembers } from './access/control.js';
-import { loadConfigFromDb, readAgentBackend } from './config.js';
+import { loadConfigFromDb, readAgentBackend, readSettingsForAlert, MiniOgRepoRootViolationError } from './config.js';
 import { setActiveBackend } from './codex/runCodex.js';
 import { diagnoseFailure } from './learning/failureDoctor.js';
 import { applyLearning } from './learning/selfLearning.js';
@@ -34,7 +34,29 @@ loadPolicies();
 loadWorkflowTemplates();
 
 const dbPath = process.env.WATCHTOWER_DB_PATH ?? path.resolve(process.cwd(), 'watchtower.db');
-const config = loadConfigFromDb(dbPath);
+
+let config: ReturnType<typeof loadConfigFromDb>;
+try {
+  config = loadConfigFromDb(dbPath);
+} catch (error) {
+  if (error instanceof MiniOgRepoRootViolationError) {
+    const alertSettings = readSettingsForAlert(dbPath);
+    if (alertSettings) {
+      const mentions = alertSettings.adminUserIds.map(id => `<@${id}>`).join(' ');
+      const header = `${mentions ? mentions + ' ' : ''}miniOG refuses to start — repo paths must live under \`${error.miniOgRepoRoot}\`.`;
+      const detail = error.offending.map(o => `• \`${o.label}\`: \`${o.path}\``).join('\n');
+      const text = `${header}\n${detail}\n\nMove the clones (or update settings) so every repo path is a subdirectory of the mini-og root, then restart miniOG.`;
+      const alertClient = new WebClient(alertSettings.slackBotToken);
+      alertClient.chat
+        .postMessage({ channel: alertSettings.channelId, text })
+        .catch(postError =>
+          logger.warn({ error: String(postError) }, 'failed to post mini-og-root violation alert to Slack'),
+        );
+    }
+    logger.error({ err: String(error) }, 'mini-og repo-root validation failed — refusing to start');
+  }
+  throw error;
+}
 setActiveBackend(config.agentBackend);
 const store = new JobStore(dbPath);
 

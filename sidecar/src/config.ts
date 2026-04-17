@@ -27,6 +27,7 @@ const settingsSchema = z.object({
   pm_task_timeout_ms: z.number().int().positive().default(600000),
   core_dev_slack_user_ids: z.string().default(''),
   core_dev_slack_user_group: z.string().default(''),
+  mini_og_repo_root: z.string().default('/Users/dipesh/code/mini-og'),
 });
 
 type SettingsRow = z.infer<typeof settingsSchema>;
@@ -41,6 +42,36 @@ function mustBeAbsoluteExistingDir(p: string, label: string): string {
     throw new Error(`${label} must point to an existing directory: ${real}`);
   }
   return real;
+}
+
+/**
+ * Typed error thrown when repo paths are not under the mini-og root. Carries
+ * the violating paths so the Slack-startup layer can surface them to admins.
+ */
+export class MiniOgRepoRootViolationError extends Error {
+  constructor(
+    public readonly miniOgRepoRoot: string,
+    public readonly offending: Array<{ label: string; path: string }>,
+  ) {
+    const lines = offending.map(o => `  - ${o.label}: ${o.path}`).join('\n');
+    super(
+      `Configured repo paths must live under miniOgRepoRoot (${miniOgRepoRoot}). Offending paths:\n${lines}\n\nUpdate settings so every repo path is a subdirectory of ${miniOgRepoRoot}.`,
+    );
+    this.name = 'MiniOgRepoRootViolationError';
+  }
+}
+
+/**
+ * Returns true if `childPath` is `rootPath` or any subdirectory of it.
+ * Uses path separators to prevent partial-prefix matches like /foo/bar-baz
+ * being treated as inside /foo/bar.
+ */
+export function isPathUnder(rootPath: string, childPath: string): boolean {
+  const normalizedRoot = path.resolve(rootPath);
+  const normalizedChild = path.resolve(childPath);
+  if (normalizedChild === normalizedRoot) return true;
+  const withSep = normalizedRoot.endsWith(path.sep) ? normalizedRoot : normalizedRoot + path.sep;
+  return normalizedChild.startsWith(withSep);
 }
 
 function parseOwnerIds(raw: string): string[] {
@@ -145,7 +176,8 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
           COALESCE(pm_slack_user_ids, '') AS pm_slack_user_ids,
           COALESCE(pm_task_timeout_ms, 600000) AS pm_task_timeout_ms,
           COALESCE(core_dev_slack_user_ids, '') AS core_dev_slack_user_ids,
-          COALESCE(core_dev_slack_user_group, '') AS core_dev_slack_user_group
+          COALESCE(core_dev_slack_user_group, '') AS core_dev_slack_user_group,
+          COALESCE(mini_og_repo_root, '/Users/dipesh/code/mini-og') AS mini_og_repo_root
          FROM app_settings
          WHERE id = 1
          LIMIT 1`,
@@ -164,6 +196,57 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
     return mapSettingsToConfig(parsed.data, loadAccessControlSettings(db));
   } finally {
     db.close();
+  }
+}
+
+/**
+ * Minimal settings snapshot used for emergency admin alerts before (or
+ * instead of) a full config load. Only reads fields we need to post a Slack
+ * message; performs no path validation.
+ */
+export interface RawAlertSettings {
+  slackBotToken: string;
+  channelId: string;
+  adminUserIds: string[];
+}
+
+export function readSettingsForAlert(dbPath: string): RawAlertSettings | undefined {
+  try {
+    const db = new Database(dbPath);
+    try {
+      const row = db
+        .prepare(
+          `SELECT
+            COALESCE(slack_bot_token, '') AS slack_bot_token,
+            COALESCE(bugs_and_updates_channel_id, '') AS channel_id,
+            COALESCE(owner_slack_user_ids, '') AS owner_slack_user_ids,
+            COALESCE(core_dev_slack_user_ids, '') AS core_dev_slack_user_ids
+           FROM app_settings WHERE id = 1 LIMIT 1`,
+        )
+        .get() as
+        | {
+            slack_bot_token?: string;
+            channel_id?: string;
+            owner_slack_user_ids?: string;
+            core_dev_slack_user_ids?: string;
+          }
+        | undefined;
+      if (!row) return undefined;
+      const token = (row.slack_bot_token ?? '').trim();
+      const channel = (row.channel_id ?? '').split(',')[0]?.trim() ?? '';
+      if (!token || !channel) return undefined;
+      const adminUserIds = [
+        ...new Set([
+          ...parseOwnerIds(row.owner_slack_user_ids ?? ''),
+          ...parseOwnerIds(row.core_dev_slack_user_ids ?? ''),
+        ]),
+      ];
+      return { slackBotToken: token, channelId: channel, adminUserIds };
+    } finally {
+      db.close();
+    }
+  } catch {
+    return undefined;
   }
 }
 
@@ -200,6 +283,18 @@ function mapSettingsToConfig(settings: SettingsRow, accessControlSettings?: Acce
 
   const newtonWeb = mustBeAbsoluteExistingDir(settings.newton_web_path, 'newton_web_path');
   const newtonApi = mustBeAbsoluteExistingDir(settings.newton_api_path, 'newton_api_path');
+  const miniOgRepoRoot = mustBeAbsoluteExistingDir(settings.mini_og_repo_root, 'mini_og_repo_root');
+
+  const offending: Array<{ label: string; path: string }> = [];
+  if (!isPathUnder(miniOgRepoRoot, newtonWeb)) {
+    offending.push({ label: 'newton_web_path', path: newtonWeb });
+  }
+  if (!isPathUnder(miniOgRepoRoot, newtonApi)) {
+    offending.push({ label: 'newton_api_path', path: newtonApi });
+  }
+  if (offending.length > 0) {
+    throw new MiniOgRepoRootViolationError(miniOgRepoRoot, offending);
+  }
   const accessControl =
     accessControlSettings !== undefined
       ? toResolvedAccessControlConfig(accessControlSettings, ownerSlackUserIds)
@@ -225,6 +320,7 @@ function mapSettingsToConfig(settings: SettingsRow, accessControlSettings?: Acce
       newtonWeb,
       newtonApi,
     },
+    miniOgRepoRoot,
     unknownTaskPolicy: 'desktop_only',
     uncertainRepoPolicy: 'desktop_only',
     unmappedPrRepoPolicy: 'desktop_only',

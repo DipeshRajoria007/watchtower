@@ -20,6 +20,10 @@
     },
     "requiresCodeChanges": {
       "type": "boolean"
+    },
+    "clarificationNeeded": {
+      "type": ["string", "null"],
+      "description": "If the task is ambiguous and cannot be safely planned, set this to a single clarifying question for the requester. When set, the other fields may be provisional; the planner will re-run after the user answers."
     }
   },
   "additionalProperties": false

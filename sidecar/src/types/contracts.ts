@@ -66,6 +66,16 @@ export interface AppConfig {
     newtonWeb: string;
     newtonApi: string;
   };
+  /**
+   * Absolute directory that miniOG's working clones must live under. Enforced
+   * at config load: if `repoPaths.newtonWeb` or `repoPaths.newtonApi` is not
+   * under this root, config load fails and implementation work is refused.
+   * Keeps the coder agent away from the user's personal clones (which may
+   * have arbitrary feature branches checked out). Optional at the type level
+   * only so existing test fixtures compile; production AppConfig values
+   * always set it via `mapSettingsToConfig`.
+   */
+  miniOgRepoRoot?: string;
   unknownTaskPolicy: 'desktop_only';
   uncertainRepoPolicy: 'desktop_only';
   unmappedPrRepoPolicy: 'desktop_only';
