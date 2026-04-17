@@ -157,6 +157,18 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
   const db = new Database(dbPath);
 
   try {
+    // Ensure the mini_og_repo_root column exists before SELECTing it. JobStore
+    // normally runs schema migrations, but it boots AFTER loadConfigFromDb, so
+    // on first launch of a version that adds the column we'd otherwise hit a
+    // "no such column" error and crash-loop. Idempotent.
+    try {
+      db.exec(
+        `ALTER TABLE app_settings ADD COLUMN mini_og_repo_root TEXT NOT NULL DEFAULT '/Users/dipesh/code/mini-og'`,
+      );
+    } catch {
+      /* column already exists */
+    }
+
     const row = db
       .prepare(
         `SELECT
