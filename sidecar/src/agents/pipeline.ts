@@ -366,7 +366,7 @@ export async function waitForApproval(params: {
  * admins in-thread "which repo?" and wait for an answer.
  * ---------------------------------------------------------------------- */
 
-export type RepoChoiceOutcome = 'newton-web' | 'newton-api' | 'cancelled';
+export type RepoChoiceOutcome = 'newton-web' | 'newton-api' | 'cancelled' | 'timeout';
 export type RepoChoiceResult = { outcome: RepoChoiceOutcome; userReply: string; approverId: string };
 
 type RepoIntent = 'web' | 'api' | 'cancel' | 'unclear';
@@ -465,12 +465,51 @@ export async function waitForRepoChoice(params: {
   promptTs: string;
   logStep: WorkflowStepLogger;
   botUserId?: string;
+  idleTimeoutMs?: number;
+  nudgeAfterMs?: number;
+  nudgeText?: string;
+  signal?: AbortSignal;
 }): Promise<RepoChoiceResult> {
-  const { slack, channelId, threadTs, approverUserIds, promptTs, logStep, botUserId } = params;
+  const {
+    slack,
+    channelId,
+    threadTs,
+    approverUserIds,
+    promptTs,
+    logStep,
+    botUserId,
+    idleTimeoutMs = 6 * 60 * 60 * 1000,
+    nudgeAfterMs = 30 * 60 * 1000,
+    nudgeText,
+    signal,
+  } = params;
   const pollIntervalMs = 5_000;
   const notifiedUsers = new Set<string>();
+  const startedAt = Date.now();
+  let nudged = false;
 
   while (true) {
+    if (signal?.aborted) {
+      return { outcome: 'cancelled', userReply: '', approverId: '' };
+    }
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= idleTimeoutMs) {
+      logStep({
+        stage: 'pipeline.repo_choice.timeout',
+        message: `No admin reply within ${Math.round(idleTimeoutMs / 60_000)} min — routing to desktop.`,
+        level: 'WARN',
+      });
+      return { outcome: 'timeout', userReply: '', approverId: '' };
+    }
+    if (!nudged && elapsed >= nudgeAfterMs && nudgeText) {
+      try {
+        await slack.chat.postMessage({ channel: channelId, thread_ts: threadTs, text: nudgeText });
+      } catch {
+        // best-effort
+      }
+      nudged = true;
+    }
+
     await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
 
     let messages: Array<{ text: string; user: string; ts: string }>;

@@ -13,15 +13,9 @@ import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint } from '../github/githubAuth.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
-import { classifyRepo } from '../router/repoClassifier.js';
 import { getBackend } from '../backends/registry.js';
-import {
-  runAgentPipeline,
-  formatPlanMessage,
-  waitForApproval,
-  waitForRepoChoice,
-  buildApprovalMessage,
-} from '../agents/pipeline.js';
+import { runAgentPipeline, formatPlanMessage, waitForApproval, buildApprovalMessage } from '../agents/pipeline.js';
+import { resolveRepoOrAsk } from './shared/repoResolver.js';
 import { waitForClarificationWithIdle, detectClarificationLoop } from './shared/clarificationGuards.js';
 import type { ClarificationRound } from './shared/clarificationGuards.js';
 import { profileForAgentRole } from '../codex/modelProfiles.js';
@@ -150,97 +144,6 @@ Return strict JSON with:
 - prUrl: PR URL if one was created, else empty string
 - confidence: number between 0 and 1
 `.trim();
-}
-
-/**
- * Pick the target repo path for owner IMPLEMENTATION tasks. Tries (in order):
- *   1. Planner's `affectedFiles` containing an explicit repo name.
- *   2. Explicit mention of "newton-api" / "newton-web" in user/thread text.
- *   3. File-extension hint (`.py` → api, `.tsx/.jsx` → web).
- *   4. Keyword classifier with high confidence.
- *   5. **Ask admins in-thread** (via waitForRepoChoice) — no silent default.
- *
- * Returns the resolved repo path, or `undefined` if the admin cancelled.
- */
-async function resolveTargetRepoPath(params: {
-  task: NormalizedTask;
-  config: AppConfig;
-  slack: WebClient;
-  logStep?: WorkflowStepLogger;
-  planAffectedFiles: string[];
-  threadMessages: Array<{ text: string }>;
-}): Promise<string | undefined> {
-  const { task, config, slack, logStep, planAffectedFiles, threadMessages } = params;
-
-  const hasWebFiles = planAffectedFiles.some(f => f.includes('newton-web'));
-  const hasApiFiles = planAffectedFiles.some(f => f.includes('newton-api'));
-
-  if (hasWebFiles && !hasApiFiles) return config.repoPaths.newtonWeb;
-  if (hasApiFiles && !hasWebFiles) return config.repoPaths.newtonApi;
-
-  const combinedText = [task.event.text, ...threadMessages.map(m => m.text)].join('\n');
-  const mentionsApi = /\bnewton[-_\s]?api\b/i.test(combinedText);
-  const mentionsWeb = /\bnewton[-_\s]?web\b/i.test(combinedText);
-  if (mentionsApi && !mentionsWeb) return config.repoPaths.newtonApi;
-  if (mentionsWeb && !mentionsApi) return config.repoPaths.newtonWeb;
-
-  if (planAffectedFiles.length > 0) {
-    const hasPy = planAffectedFiles.some(f => /\.py$/i.test(f));
-    const hasJsx = planAffectedFiles.some(f => /\.(tsx|jsx)$/i.test(f));
-    if (hasPy && !hasJsx) return config.repoPaths.newtonApi;
-    if (hasJsx && !hasPy) return config.repoPaths.newtonWeb;
-  }
-
-  const classification = classifyRepo(
-    [task.event.text, ...threadMessages.map(m => m.text)],
-    config.repoClassifierThreshold,
-  );
-  if (!classification.uncertain && classification.selectedRepo) {
-    return classification.selectedRepo === 'newton-web' ? config.repoPaths.newtonWeb : config.repoPaths.newtonApi;
-  }
-
-  // All heuristics failed — ask admins instead of silently defaulting.
-  logStep?.({
-    stage: 'implementation.workspace.clarify',
-    message: 'Target repo is ambiguous — asking admins to clarify.',
-    level: 'WARN',
-  });
-
-  const adminUserIds = getAdminUserIds(config);
-  const mentionStr = adminUserIds.map(id => `<@${id}>`).join(' ');
-  const promptText = `I can't tell whether this task is for *newton-web* or *newton-api*.${mentionStr ? ` ${mentionStr}` : ''} Reply with "web" or "api" (or "cancel" to abandon).`;
-
-  let promptTs: string | undefined;
-  try {
-    const postResult = await slack.chat.postMessage({
-      channel: task.event.channelId,
-      thread_ts: task.event.threadTs,
-      text: promptText,
-    });
-    promptTs = postResult.ts ?? undefined;
-  } catch {
-    // Slack post failed — fail closed.
-    return undefined;
-  }
-
-  if (!promptTs || adminUserIds.length === 0) {
-    return undefined;
-  }
-
-  const choice = await waitForRepoChoice({
-    slack,
-    channelId: task.event.channelId,
-    threadTs: task.event.threadTs,
-    approverUserIds: adminUserIds,
-    promptTs,
-    logStep: logStep ?? (() => {}),
-    botUserId: config.botUserId,
-  });
-
-  if (choice.outcome === 'cancelled') {
-    return undefined;
-  }
-  return choice.outcome === 'newton-web' ? config.repoPaths.newtonWeb : config.repoPaths.newtonApi;
 }
 
 export async function runImplementationWorkflow(params: {
@@ -544,10 +447,14 @@ Write your response as a ready-to-post Slack message describing what you did.
     let planAffectedFiles = Array.isArray(plannerOutput.affectedFiles) ? plannerOutput.affectedFiles.map(String) : [];
     let planScope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : 'unknown';
 
-    // Resolve workspace for the coder agent
+    // Resolve workspace for the coder agent. Single entry point:
+    // resolveRepoOrAsk cascades through file hints → text mentions → extension
+    // heuristics → classifier → admin clarification (with 6h idle timeout).
+    // On timeout or no admins, falls through to desktop_only. On admin cancel
+    // we abandon cleanly.
     let pipelineCwd = ctx.cwd;
     if (ctx.isOwnerAuthor) {
-      const targetRepoPath = await resolveTargetRepoPath({
+      const resolution = await resolveRepoOrAsk({
         task,
         config,
         slack,
@@ -556,9 +463,7 @@ Write your response as a ready-to-post Slack message describing what you did.
         threadMessages: ctx.threadMessages,
       });
 
-      if (!targetRepoPath) {
-        // The admin replied "cancel" (or equivalent) during the clarification
-        // gate. Abandon the task cleanly — we have no repo to work in.
+      if (resolution.outcome === 'cancelled') {
         await slack.chat
           .postMessage({
             channel: task.event.channelId,
@@ -568,18 +473,35 @@ Write your response as a ready-to-post Slack message describing what you did.
           .catch(() => {});
         return {
           workflow: 'IMPLEMENTATION',
-          status: 'SKIPPED',
+          status: 'CANCELLED',
           message: 'Cancelled during repo-selection clarification.',
           notifyDesktop: false,
           slackPosted: true,
         };
       }
 
-      pipelineCwd = resolveWorkspace(targetRepoPath, task.event.threadTs);
+      if (resolution.outcome === 'desktop_only') {
+        await slack.chat
+          .postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: `I couldn't pin down which repo this is for (${resolution.reason}) — handing this over to the desktop queue for a human to pick up.`,
+          })
+          .catch(() => {});
+        return {
+          workflow: 'IMPLEMENTATION',
+          status: 'PAUSED',
+          message: `Routed to desktop (${resolution.reason}).`,
+          notifyDesktop: true,
+          slackPosted: true,
+        };
+      }
+
+      pipelineCwd = resolveWorkspace(resolution.path, task.event.threadTs);
       logStep?.({
         stage: 'implementation.workspace.resolved',
         message: 'Resolved implementation workspace to isolated worktree.',
-        data: { targetRepoPath, pipelineCwd },
+        data: { targetRepoPath: resolution.path, repoName: resolution.name, source: resolution.source, pipelineCwd },
       });
     }
 
