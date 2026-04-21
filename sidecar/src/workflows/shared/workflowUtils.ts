@@ -5,11 +5,11 @@ import type { AppConfig, NormalizedTask, WorkflowStepLogger } from '../../types/
 import { fetchThreadContext } from '../../slack/threadContext.js';
 import { downloadSlackFiles } from '../../slack/imageDownloader.js';
 import type { SlackFileAttachment } from '../../slack/imageDownloader.js';
-import { classifyRepo } from '../../router/repoClassifier.js';
 import { getBackend } from '../../backends/registry.js';
 import { getActiveBackendId } from '../../codex/runCodex.js';
 import { resolveGithubTokenForCodex } from '../../github/githubAuth.js';
 import { resolveWorkspace } from '../../workspaces/workspaceManager.js';
+import { resolveRepoOrAsk } from './repoResolver.js';
 
 export interface ThreadMessage {
   text: string;
@@ -29,6 +29,14 @@ export interface WorkflowContext {
   imagePaths: string[];
   imageContext: string;
   githubToken?: string;
+  /**
+   * Set when repo resolution could not produce a concrete repo and the
+   * caller should route the task to the desktop queue (or fail closed)
+   * instead of silently picking a default. Populated by
+   * `prepareWorkflowContext` when the repo-resolution helper returns
+   * `desktop_only` or `cancelled`.
+   */
+  desktopOnly?: { reason: string; cancelled: boolean };
 }
 
 export function formatThreadContext(
@@ -246,33 +254,32 @@ export async function prepareWorkflowContext(params: {
   // Resolve working directory
   let cwd: string;
   let repoName: string | undefined;
+  let desktopOnly: { reason: string; cancelled: boolean } | undefined;
 
   if (!resolveRepo) {
     cwd = os.tmpdir();
   } else if (isOwnerAuthor) {
     cwd = resolveOwnerWorkspaceRoot(config);
   } else {
-    const texts = [task.event.text, ...threadMessages.map(m => m.text)];
-    const classification = classifyRepo(texts, config.repoClassifierThreshold);
-
-    logStep?.({
-      stage: 'workflow.repo.classified',
-      message: 'Classified repository for execution.',
-      data: {
-        selectedRepo: classification.selectedRepo,
-        confidence: classification.confidence,
-        uncertain: classification.uncertain,
-      },
+    const resolution = await resolveRepoOrAsk({
+      task,
+      config,
+      slack,
+      logStep,
+      threadMessages,
     });
-
-    if (classification.uncertain || !classification.selectedRepo) {
-      repoName = 'newton-web';
-      cwd = resolveWorkspace(config.repoPaths.newtonWeb, task.event.threadTs);
+    if (resolution.outcome === 'resolved') {
+      repoName = resolution.name;
+      cwd = resolveWorkspace(resolution.path, task.event.threadTs);
     } else {
-      repoName = classification.selectedRepo;
-      const baseRepoPath =
-        classification.selectedRepo === 'newton-web' ? config.repoPaths.newtonWeb : config.repoPaths.newtonApi;
-      cwd = resolveWorkspace(baseRepoPath, task.event.threadTs);
+      // Either no admin reply within the idle window, or the admin cancelled.
+      // Don't silently default — honor AppConfig.uncertainRepoPolicy by
+      // flagging the context so the calling workflow can route to desktop.
+      cwd = os.tmpdir();
+      desktopOnly = {
+        reason: resolution.outcome === 'cancelled' ? 'admin cancelled' : resolution.reason,
+        cancelled: resolution.outcome === 'cancelled',
+      };
     }
   }
 
@@ -331,5 +338,6 @@ export async function prepareWorkflowContext(params: {
     imagePaths,
     imageContext,
     githubToken,
+    desktopOnly,
   };
 }
