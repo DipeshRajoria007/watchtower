@@ -20,10 +20,10 @@ import {
   formatPlanMessage,
   waitForApproval,
   waitForRepoChoice,
-  waitForClarification,
   buildApprovalMessage,
 } from '../agents/pipeline.js';
-import { waitForClarificationWithIdle } from './shared/clarificationGuards.js';
+import { waitForClarificationWithIdle, detectClarificationLoop } from './shared/clarificationGuards.js';
+import type { ClarificationRound } from './shared/clarificationGuards.js';
 import { profileForAgentRole } from '../codex/modelProfiles.js';
 import { buildPlannerPrompt } from '../agents/prompts.js';
 import { resolveWorkspace } from '../workspaces/workspaceManager.js';
@@ -313,23 +313,43 @@ export async function runImplementationWorkflow(params: {
     let plannerSessionId = plannerRunResult.sessionId;
     let plannerOutput: Record<string, unknown> = plannerRunResult.parsedJson ?? {};
 
-    // Planner-clarification loop: if the planner asks a clarifying question,
-    // surface it in Slack, wait for the requester OR an admin to answer, then
-    // re-run the planner with the answer as extra context. Up to 3 rounds.
-    const MAX_CLARIFICATION_ROUNDS = 3;
-    let clarificationRounds = 0;
+    // Planner-clarification loop: unbounded — keeps asking until the planner
+    // produces a concrete plan (no clarificationNeeded), the user goes silent
+    // (idle timeout → PAUSED), the user cancels, or we detect a repetition
+    // loop (same question twice, or unhelpful short answers back-to-back).
+    const clarificationHistory: ClarificationRound[] = [];
+    let clarificationRound = 0;
     while (
       typeof plannerOutput.clarificationNeeded === 'string' &&
-      plannerOutput.clarificationNeeded.trim().length > 0 &&
-      clarificationRounds < MAX_CLARIFICATION_ROUNDS
+      plannerOutput.clarificationNeeded.trim().length > 0
     ) {
-      clarificationRounds++;
+      clarificationRound++;
       const question = String(plannerOutput.clarificationNeeded).trim();
+
+      const loopCheck = detectClarificationLoop(clarificationHistory, question);
+      if (loopCheck.looping) {
+        logStep?.({
+          stage: 'implementation.planner.clarification.loop_detected',
+          message: `Repetition detected after ${clarificationRound - 1} rounds: ${loopCheck.reason} Proceeding with best-guess plan.`,
+          level: 'WARN',
+          data: { reason: loopCheck.reason, rounds: clarificationRound - 1 },
+        });
+        try {
+          await slack.chat.postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: "I've asked this a couple of times — let me proceed with my best guess and flag my assumptions. Reply here if I got it wrong.",
+          });
+        } catch {
+          // best-effort
+        }
+        break;
+      }
 
       logStep?.({
         stage: 'implementation.planner.clarification.asking',
-        message: `Planner needs clarification (round ${clarificationRounds}): ${question}`,
-        data: { question, round: clarificationRounds },
+        message: `Planner needs clarification (round ${clarificationRound}): ${question}`,
+        data: { question, round: clarificationRound },
       });
 
       let clarificationTs: string | undefined;
@@ -346,7 +366,7 @@ export async function runImplementationWorkflow(params: {
       if (!clarificationTs) break;
 
       const allowedAnswerers = [...new Set([task.event.userId, ...getAdminUserIds(config)])];
-      const { answer } = await waitForClarification({
+      const outcome = await waitForClarificationWithIdle({
         slack,
         channelId: task.event.channelId,
         threadTs: task.event.threadTs,
@@ -354,7 +374,39 @@ export async function runImplementationWorkflow(params: {
         promptTs: clarificationTs,
         logStep: logStep ?? (() => {}),
         botUserId: config.botUserId,
+        nudgeText: "Still waiting on that clarification to build the plan. Reply here or say 'cancel' to stop.",
       });
+
+      if (outcome.outcome === 'cancelled') {
+        try {
+          await slack.chat.postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: 'Got it, cancelling.',
+          });
+        } catch {
+          // best-effort
+        }
+        return {
+          workflow: 'IMPLEMENTATION',
+          status: 'CANCELLED',
+          message: 'User cancelled during planner clarification.',
+          notifyDesktop: false,
+          slackPosted: true,
+        };
+      }
+      if (outcome.outcome === 'timeout') {
+        return {
+          workflow: 'IMPLEMENTATION',
+          status: 'PAUSED',
+          message: 'No reply within the idle window — paused. Reply in the thread to resume.',
+          notifyDesktop: false,
+          slackPosted: true,
+        };
+      }
+
+      const answer = outcome.answer;
+      clarificationHistory.push({ question, answer });
 
       const followUpPrompt = plannerSessionId
         ? `The user answered your clarifying question ("${question}") with:\n\n"${answer}"\n\nNow produce the final plan. Return the same JSON schema with \`clarificationNeeded\` set to null.`
