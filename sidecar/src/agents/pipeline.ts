@@ -10,6 +10,7 @@ import { lightweightProfile, profileForAgentRole } from '../codex/modelProfiles.
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
 import { withAgentCallContext } from '../state/runContext.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
+import { currentHead, checkCoderProducedChanges } from '../workspaces/gitState.js';
 
 export type PipelineStore = {
   createPipelineRun(input: {
@@ -658,6 +659,10 @@ export async function runAgentPipeline(params: {
   let planAffectedFiles: string[] = [];
   let planScope = 'unknown';
 
+  // Captured just-in-time before the first coder run; reused to diff against
+  // the worktree afterwards so a hallucinated coder JSON can't pass the guard.
+  let coderBaseSha: string | undefined;
+
   for (let i = 0; i < agents.length; i++) {
     if (totalTimeoutMs) {
       const elapsed = Date.now() - pipelineStart;
@@ -696,6 +701,14 @@ export async function runAgentPipeline(params: {
     const schemaFile = SCHEMA_MAP[role];
     const schemaPath = schemaFile ? path.resolve(process.cwd(), `schemas/${schemaFile}`) : undefined;
 
+    if (role === 'coder' && coderBaseSha === undefined) {
+      try {
+        coderBaseSha = await currentHead(ctx.repoPath);
+      } catch {
+        coderBaseSha = undefined;
+      }
+    }
+
     const result = await withAgentCallContext({ pipelineRunId, role }, () =>
       runCodex({
         cwd: ctx.repoPath,
@@ -713,28 +726,45 @@ export async function runAgentPipeline(params: {
     const findings = extractFindings(output);
     let status = result.ok ? determineStepStatus(output, findings) : 'failed';
 
-    // Validate coder actually produced changes — if it "passed" but has no
-    // branch, no PR, and no files changed, mark it as failed so we don't
-    // waste time running reviewer/verifier on nothing.
-    if (role === 'coder' && status === 'passed') {
-      const hasBranch = Boolean(output.branch);
-      const hasPr = Boolean(output.prUrl);
-      const hasFiles = Array.isArray(output.filesChanged) && output.filesChanged.length > 0;
-      const hasSummary = typeof output.summary === 'string' && output.summary.length > 20;
-      if (!hasBranch && !hasPr && !hasFiles && !hasSummary) {
-        status = 'failed';
-        findings.push({
-          severity: 'critical',
-          category: 'coder-empty-output',
-          message:
-            'Coder agent produced no branch, PR, file changes, or meaningful summary. Likely ran without repository access.',
-          suggestion: 'Ensure the coder runs in a valid git worktree with repository access.',
+    // Ground-truth check: self-reported JSON can be hallucinated. The coder
+    // only "passed" if the worktree actually has new commits, uncommitted
+    // changes, or a moved HEAD since we captured the base SHA.
+    if (role === 'coder' && status === 'passed' && coderBaseSha) {
+      try {
+        const changes = await checkCoderProducedChanges({
+          repoPath: ctx.repoPath,
+          baseSha: coderBaseSha,
         });
+        if (!changes.producedChanges) {
+          status = 'failed';
+          findings.push({
+            severity: 'critical',
+            category: 'coder-empty-output',
+            message:
+              'Coder reported success but the worktree has no new commits, no uncommitted changes, and HEAD has not moved. Likely a hallucinated response with no actual tool use.',
+            suggestion:
+              'Gather missing context (error text, failing request, explicit file scope) and re-run with concrete targets.',
+          });
+          logStep({
+            stage: 'pipeline.agent.coder.empty_output',
+            message: 'Coder passed but git state shows no changes — marking as failed.',
+            level: 'ERROR',
+            data: {
+              baseSha: coderBaseSha,
+              filesChanged: changes.filesChanged.length,
+              newCommits: changes.newCommits,
+              hasUncommitted: changes.hasUncommitted,
+              headMoved: changes.headMoved,
+            },
+          });
+        } else {
+          output.filesChanged = changes.filesChanged;
+        }
+      } catch (err) {
         logStep({
-          stage: 'pipeline.agent.coder.empty_output',
-          message: 'Coder passed but produced no tangible output — marking as failed.',
-          level: 'ERROR',
-          data: { hasBranch, hasPr, hasFiles, hasSummary },
+          stage: 'pipeline.agent.coder.empty_output_check_failed',
+          message: `Could not verify coder output against git state: ${err instanceof Error ? err.message : String(err)}`,
+          level: 'WARN',
         });
       }
     }
@@ -871,7 +901,41 @@ export async function runAgentPipeline(params: {
         const coderRetryDuration = Date.now() - coderStart;
         const coderOutput = coderRetryResult.parsedJson ?? {};
         const coderFindings = extractFindings(coderOutput);
-        const coderStatus = coderRetryResult.ok ? determineStepStatus(coderOutput, coderFindings) : 'failed';
+        let coderStatus = coderRetryResult.ok ? determineStepStatus(coderOutput, coderFindings) : 'failed';
+
+        if (coderStatus === 'passed' && coderBaseSha) {
+          try {
+            const changes = await checkCoderProducedChanges({
+              repoPath: ctx.repoPath,
+              baseSha: coderBaseSha,
+            });
+            if (!changes.producedChanges) {
+              coderStatus = 'failed';
+              coderFindings.push({
+                severity: 'critical',
+                category: 'coder-empty-output',
+                message:
+                  'Coder retry reported success but the worktree still shows no changes. Retrying will not help — new context is needed.',
+                suggestion:
+                  'Gather missing context (error text, failing request, explicit file scope) and re-run with concrete targets.',
+              });
+              logStep({
+                stage: 'pipeline.agent.coder.empty_output',
+                message: 'Coder retry passed but git state shows no changes — marking as failed.',
+                level: 'ERROR',
+                data: { retryLoops },
+              });
+            } else {
+              coderOutput.filesChanged = changes.filesChanged;
+            }
+          } catch (err) {
+            logStep({
+              stage: 'pipeline.agent.coder.empty_output_check_failed',
+              message: `Could not verify coder retry output against git state: ${err instanceof Error ? err.message : String(err)}`,
+              level: 'WARN',
+            });
+          }
+        }
 
         steps.push({
           role: 'coder',

@@ -3,41 +3,9 @@ import { promisify } from 'node:util';
 import { createPullRequest } from './createPr.js';
 import { logger } from '../logging/logger.js';
 import { sanitizeForBranch, buildSlackThreadLink } from '../workflows/shared/workflowUtils.js';
+import { git, hasUncommittedChanges, getDefaultBranch, hasCommitsAheadOfBase } from '../workspaces/gitState.js';
 
 const execFileAsync = promisify(execFile);
-
-async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', args, {
-    cwd,
-    timeout: 30_000,
-    maxBuffer: 5 * 1024 * 1024,
-  });
-  return stdout.trim();
-}
-
-async function hasUncommittedChanges(cwd: string): Promise<boolean> {
-  const status = await git(cwd, ['status', '--porcelain']);
-  return status.length > 0;
-}
-
-async function getDefaultBranch(cwd: string): Promise<string> {
-  try {
-    const ref = await git(cwd, ['symbolic-ref', 'refs/remotes/origin/HEAD', '--short']);
-    return ref.replace('origin/', '');
-  } catch {
-    return 'main';
-  }
-}
-
-/** Check if the current branch has commits ahead of the base branch. */
-async function hasCommitsAheadOfBase(cwd: string, baseBranch: string): Promise<boolean> {
-  try {
-    const count = await git(cwd, ['rev-list', '--count', `origin/${baseBranch}..HEAD`]);
-    return Number(count) > 0;
-  } catch {
-    return false;
-  }
-}
 
 /** Check if a PR already exists for the current branch. */
 async function existingPrUrl(cwd: string): Promise<string | undefined> {

@@ -3,12 +3,30 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runAgentPipeline, waitForApproval } from '../src/agents/pipeline.js';
 import { runCodex } from '../src/codex/runCodex.js';
 import { fetchThreadContext } from '../src/slack/threadContext.js';
+import { checkCoderProducedChanges } from '../src/workspaces/gitState.js';
 import type { AgentContext, PipelineConfig } from '../src/agents/types.js';
 import type { AppConfig, NormalizedTask } from '../src/types/contracts.js';
 
 vi.mock('../src/codex/runCodex.js', () => ({
   runCodex: vi.fn(),
   getActiveBackendId: vi.fn().mockReturnValue('codex'),
+}));
+
+vi.mock('../src/workspaces/gitState.js', () => ({
+  currentHead: vi.fn().mockResolvedValue('deadbeef'),
+  checkCoderProducedChanges: vi.fn().mockResolvedValue({
+    producedChanges: true,
+    filesChanged: ['a.ts'],
+    newCommits: 1,
+    hasUncommitted: false,
+    headMoved: true,
+  }),
+  git: vi.fn(),
+  hasUncommittedChanges: vi.fn().mockResolvedValue(false),
+  getDefaultBranch: vi.fn().mockResolvedValue('main'),
+  hasCommitsAheadOfBase: vi.fn().mockResolvedValue(false),
+  diffFilesVsBase: vi.fn().mockResolvedValue([]),
+  currentBranch: vi.fn().mockResolvedValue('main'),
 }));
 
 const config: AppConfig = {
@@ -492,6 +510,243 @@ describe('agentPipeline', () => {
     expect(result.finalStatus).toBe('aborted');
     // Security agent should not have run
     expect(result.steps.length).toBeLessThan(3);
+  });
+
+  it('flags coder as failed when git state shows no changes (main loop)', async () => {
+    vi.mocked(checkCoderProducedChanges).mockResolvedValueOnce({
+      producedChanges: false,
+      filesChanged: [],
+      newCommits: 0,
+      hasUncommitted: false,
+      headMoved: false,
+    });
+
+    const ctx = makeContext({
+      pipelineConfig: makePipelineConfig({
+        agents: ['planner', 'coder', 'reviewer'],
+        maxRetryLoops: 0,
+        abortOnCriticalFinding: false,
+      }),
+    });
+
+    vi.mocked(runCodex)
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: { plan: ['fix'], risks: [], affectedFiles: [], scope: 'small', requiresCodeChanges: true },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: {
+          filesChanged: ['hallucinated.ts'],
+          summary: 'I totally wrote code, trust me bro (this is long enough to pass the old guard).',
+          testsAdded: [],
+          branch: 'codex/hallucination',
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: { approved: true, findings: [], blockers: [] },
+      });
+
+    const result = await runAgentPipeline({ ctx, slack: slack as any, logStep });
+
+    const coderStep = result.steps.find(s => s.role === 'coder');
+    expect(coderStep?.status).toBe('failed');
+    expect(coderStep?.findings.some(f => f.category === 'coder-empty-output')).toBe(true);
+    expect(result.finalStatus).toBe('failed');
+  });
+
+  it('aborts pipeline when coder empty-output fires with abortOnCriticalFinding enabled', async () => {
+    vi.mocked(checkCoderProducedChanges).mockResolvedValueOnce({
+      producedChanges: false,
+      filesChanged: [],
+      newCommits: 0,
+      hasUncommitted: false,
+      headMoved: false,
+    });
+
+    const ctx = makeContext({
+      pipelineConfig: makePipelineConfig({
+        agents: ['planner', 'coder', 'reviewer'],
+        maxRetryLoops: 0,
+        abortOnCriticalFinding: true,
+      }),
+    });
+
+    vi.mocked(runCodex)
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: { plan: ['fix'], risks: [], affectedFiles: [], scope: 'small', requiresCodeChanges: true },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: { filesChanged: ['x.ts'], summary: 'hallucinated fix', testsAdded: [], branch: 'codex/x' },
+      });
+
+    const result = await runAgentPipeline({ ctx, slack: slack as any, logStep });
+
+    expect(result.finalStatus).toBe('aborted');
+    const coderStep = result.steps.find(s => s.role === 'coder');
+    expect(coderStep?.findings.some(f => f.category === 'coder-empty-output')).toBe(true);
+  });
+
+  it('overwrites filesChanged with git truth when coder does produce changes', async () => {
+    vi.mocked(checkCoderProducedChanges).mockResolvedValueOnce({
+      producedChanges: true,
+      filesChanged: ['actually-touched.ts'],
+      newCommits: 1,
+      hasUncommitted: false,
+      headMoved: true,
+    });
+
+    const ctx = makeContext({
+      pipelineConfig: makePipelineConfig({ agents: ['planner', 'coder', 'reviewer'], maxRetryLoops: 0 }),
+    });
+
+    vi.mocked(runCodex)
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: { plan: ['fix'], risks: [], affectedFiles: [], scope: 'small', requiresCodeChanges: true },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: { filesChanged: ['lied-about.ts'], summary: 'Fixed', testsAdded: [], branch: 'codex/fix' },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: { approved: true, findings: [], blockers: [] },
+      });
+
+    const result = await runAgentPipeline({ ctx, slack: slack as any, logStep });
+
+    const coderStep = result.steps.find(s => s.role === 'coder');
+    expect(coderStep?.status).toBe('passed');
+    expect(coderStep?.output.filesChanged).toEqual(['actually-touched.ts']);
+  });
+
+  it('flags coder as failed on retry when git state still shows no changes', async () => {
+    vi.mocked(checkCoderProducedChanges)
+      .mockResolvedValueOnce({
+        producedChanges: true,
+        filesChanged: ['a.ts'],
+        newCommits: 1,
+        hasUncommitted: false,
+        headMoved: true,
+      })
+      .mockResolvedValueOnce({
+        producedChanges: false,
+        filesChanged: [],
+        newCommits: 0,
+        hasUncommitted: false,
+        headMoved: false,
+      });
+
+    const ctx = makeContext({
+      pipelineConfig: makePipelineConfig({ agents: ['planner', 'coder', 'reviewer'], maxRetryLoops: 1 }),
+    });
+
+    vi.mocked(runCodex)
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: { plan: ['fix'], risks: [], affectedFiles: [], scope: 'small', requiresCodeChanges: true },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: { filesChanged: ['a.ts'], summary: 'Real fix', testsAdded: [], branch: 'codex/fix' },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: {
+          approved: false,
+          findings: [{ severity: 'high', category: 'logic', message: 'Missing case' }],
+          blockers: ['Missing case'],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: {
+          filesChanged: ['a.ts'],
+          summary: 'Retry said it fixed but did not',
+          testsAdded: [],
+          branch: 'codex/fix',
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: { approved: true, findings: [], blockers: [] },
+      });
+
+    const result = await runAgentPipeline({ ctx, slack: slack as any, logStep });
+
+    const coderSteps = result.steps.filter(s => s.role === 'coder');
+    expect(coderSteps).toHaveLength(2);
+    expect(coderSteps[1].status).toBe('failed');
+    expect(coderSteps[1].findings.some(f => f.category === 'coder-empty-output')).toBe(true);
   });
 });
 
