@@ -37,6 +37,15 @@ describe('classifyWorkflowIntent', () => {
     expect(result.intent).toBe('INFORMATIONAL');
   });
 
+  it('returns INVESTIGATION when the classifier picks it for a vague bug report', async () => {
+    mockClassification('INVESTIGATION');
+    const result = await classifyWorkflowIntent({
+      userMessage: 'check what is happening with the placement dashboard, something is off',
+      hasPrUrl: false,
+    });
+    expect(result.intent).toBe('INVESTIGATION');
+  });
+
   it('returns CONVERSATIONAL for greetings', async () => {
     mockClassification('CONVERSATIONAL');
     const result = await classifyWorkflowIntent({ userMessage: 'hey, how are you?', hasPrUrl: false });

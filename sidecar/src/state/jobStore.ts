@@ -14,6 +14,7 @@ import type {
   LaunchpadTarget,
   WorkflowIntent,
 } from '../types/contracts.js';
+import { createInvestigationStore, type InvestigationStore } from './investigationStore.js';
 
 function normalizeStoredPersonalityMode(_mode: unknown): PersonalityMode {
   return 'normal';
@@ -21,11 +22,19 @@ function normalizeStoredPersonalityMode(_mode: unknown): PersonalityMode {
 
 export class JobStore {
   private db: Database.Database;
+  private _investigationStore?: InvestigationStore;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.migrate();
+  }
+
+  investigationStore(): InvestigationStore {
+    if (!this._investigationStore) {
+      this._investigationStore = createInvestigationStore(this.db);
+    }
+    return this._investigationStore;
   }
 
   private migrate(): void {
@@ -293,6 +302,19 @@ export class JobStore {
       CREATE INDEX IF NOT EXISTS idx_agent_calls_job_id ON agent_calls(job_id);
       CREATE INDEX IF NOT EXISTS idx_agent_calls_created_at ON agent_calls(created_at);
       CREATE INDEX IF NOT EXISTS idx_agent_calls_pipeline_run ON agent_calls(pipeline_run_id);
+
+      CREATE TABLE IF NOT EXISTS investigation_findings (
+        thread_ts TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL,
+        job_id TEXT NOT NULL,
+        repo_name TEXT,
+        repo_path TEXT,
+        summary TEXT,
+        findings_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_investigation_findings_channel ON investigation_findings(channel_id, thread_ts);
     `);
 
     // Add PM config columns to app_settings if missing

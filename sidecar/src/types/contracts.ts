@@ -6,6 +6,7 @@ export type WorkflowIntent =
   | 'PR_REVIEW'
   | 'OWNER_AUTOPILOT'
   | 'IMPLEMENTATION'
+  | 'INVESTIGATION'
   | 'INFORMATIONAL'
   | 'CONVERSATIONAL'
   | 'NONE'
