@@ -512,7 +512,7 @@ describe('agentPipeline', () => {
     expect(result.steps.length).toBeLessThan(3);
   });
 
-  it('flags coder as failed when git state shows no changes (main loop)', async () => {
+  it('short-circuits to needs-input when coder produces no diff', async () => {
     vi.mocked(checkCoderProducedChanges).mockResolvedValueOnce({
       producedChanges: false,
       filesChanged: [],
@@ -524,8 +524,8 @@ describe('agentPipeline', () => {
     const ctx = makeContext({
       pipelineConfig: makePipelineConfig({
         agents: ['planner', 'coder', 'reviewer'],
-        maxRetryLoops: 0,
-        abortOnCriticalFinding: false,
+        maxRetryLoops: 2,
+        abortOnCriticalFinding: true,
       }),
     });
 
@@ -537,7 +537,13 @@ describe('agentPipeline', () => {
         stdout: '',
         stderr: '',
         lastMessage: '',
-        parsedJson: { plan: ['fix'], risks: [], affectedFiles: [], scope: 'small', requiresCodeChanges: true },
+        parsedJson: {
+          plan: ['investigate then fix'],
+          risks: [],
+          affectedFiles: ['src/foo.ts'],
+          scope: 'small',
+          requiresCodeChanges: true,
+        },
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -548,30 +554,22 @@ describe('agentPipeline', () => {
         lastMessage: '',
         parsedJson: {
           filesChanged: ['hallucinated.ts'],
-          summary: 'I totally wrote code, trust me bro (this is long enough to pass the old guard).',
+          summary: 'I totally wrote code (hallucinated to pass old guard).',
           testsAdded: [],
-          branch: 'codex/hallucination',
+          branch: 'codex/ghost',
         },
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        exitCode: 0,
-        timedOut: false,
-        stdout: '',
-        stderr: '',
-        lastMessage: '',
-        parsedJson: { approved: true, findings: [], blockers: [] },
       });
 
     const result = await runAgentPipeline({ ctx, slack: slack as any, logStep });
 
-    const coderStep = result.steps.find(s => s.role === 'coder');
-    expect(coderStep?.status).toBe('failed');
-    expect(coderStep?.findings.some(f => f.category === 'coder-empty-output')).toBe(true);
-    expect(result.finalStatus).toBe('failed');
+    expect(result.finalStatus).toBe('needs-input');
+    expect(result.needsInputQuestion).toBeDefined();
+    expect(result.needsInputQuestion).toContain('error text');
+    // Reviewer should NOT have run — feedback loop short-circuited
+    expect(result.steps.map(s => s.role)).toEqual(['planner', 'coder']);
   });
 
-  it('aborts pipeline when coder empty-output fires with abortOnCriticalFinding enabled', async () => {
+  it('coder empty-output always takes the needs-input path (abortOnCriticalFinding irrelevant)', async () => {
     vi.mocked(checkCoderProducedChanges).mockResolvedValueOnce({
       producedChanges: false,
       filesChanged: [],
@@ -610,8 +608,9 @@ describe('agentPipeline', () => {
 
     const result = await runAgentPipeline({ ctx, slack: slack as any, logStep });
 
-    expect(result.finalStatus).toBe('aborted');
+    expect(result.finalStatus).toBe('needs-input');
     const coderStep = result.steps.find(s => s.role === 'coder');
+    expect(coderStep?.status).toBe('failed');
     expect(coderStep?.findings.some(f => f.category === 'coder-empty-output')).toBe(true);
   });
 
@@ -747,6 +746,8 @@ describe('agentPipeline', () => {
     expect(coderSteps).toHaveLength(2);
     expect(coderSteps[1].status).toBe('failed');
     expect(coderSteps[1].findings.some(f => f.category === 'coder-empty-output')).toBe(true);
+    expect(result.finalStatus).toBe('needs-input');
+    expect(result.needsInputQuestion).toBeDefined();
   });
 });
 
