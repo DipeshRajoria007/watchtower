@@ -15,18 +15,20 @@ You have NO access to any codebase. Classify based purely on the user's message 
 
 Available workflows:
 - PR_REVIEW: The user wants a code review of a GitHub pull request. Signals: they link a PR URL, ask to "review" code changes, request feedback on a pull request, or paste a GitHub PR link with an implicit request to look at it.
-- IMPLEMENTATION: The user wants something built, changed, fixed, added, removed, or modified. Keywords like "I want to", "add", "implement", "fix", "block", "create", "change", "update", "remove", "build", "make", "write", "refactor", "migrate", "set up", "configure", "enable", "disable" all indicate implementation intent — even if the feature already exists somewhere.
+- IMPLEMENTATION: The user wants something built, changed, fixed, added, removed, or modified, and has given enough signal to act: they used a concrete code-change verb ("fix", "add", "implement", "change", "update", "remove", "build", "make", "write", "refactor", "migrate", "set up", "configure", "enable", "disable") AND the message contains at least one anchor — a specific error message, stack trace, failing endpoint/payload, file path, function name, or a clear reproduction step.
+- INVESTIGATION: The user wants miniOG to diagnose or look into a problem without committing to a fix yet. Signals: verbs like "check", "look into", "investigate", "debug", "why is X broken", "what's wrong with Y", "something's off with Z"; or a bug report whose only evidence is a screenshot/screen recording/URL with no console error, no reproduction steps, and no imperative code-change verb. Vague "fix it" requests without any technical anchor (no error text, no file scope, no failing request) are INVESTIGATION, not IMPLEMENTATION — miniOG should first look, report findings, then ask whether to fix.
 - INFORMATIONAL: The user is asking a question, wants an explanation, or wants to understand something. Keywords like "how does", "what is", "explain", "describe", "list", "show me", "where is", "why does", "check status", "tell me about", "can you explain".
 - CONVERSATIONAL: Greetings, banter, presence checks, casual chat, thanks. Keywords like "hi", "hello", "thanks", "how are you", "you there", "good morning", "what's up".
 
 Classification rules:
 - If the message contains a GitHub PR URL (github.com/.../pull/...) AND the user's intent is to get that PR reviewed → PR_REVIEW
 - If the message contains a GitHub PR URL but the user is asking to CREATE, FIX, or MERGE a PR → IMPLEMENTATION
-- If there is no GitHub PR URL and the user asks to build/change/fix something → IMPLEMENTATION
 - If the user asks a question or wants to understand something → INFORMATIONAL
 - If the user is just chatting, greeting, or thanking → CONVERSATIONAL
-- If the user says they want something done, that is ALWAYS IMPLEMENTATION regardless of whether it might already exist. The user's explicit request takes absolute priority.
-- When in doubt between IMPLEMENTATION and INFORMATIONAL, prefer IMPLEMENTATION (safer to run the full pipeline than skip a real request).`;
+- If the user wants something fixed/built/changed AND supplies a concrete anchor (error text, stack trace, file path, function name, failing request, reproduction step) → IMPLEMENTATION.
+- If the user wants something "checked", "investigated", "debugged", or reports a bug with only a screenshot/URL/video and no technical anchor → INVESTIGATION.
+- When in doubt between IMPLEMENTATION and INVESTIGATION, prefer INVESTIGATION — confirming a diagnosis is cheap, shipping a bad fix is expensive.
+- When in doubt between INVESTIGATION and INFORMATIONAL, prefer INVESTIGATION if the user is reporting a problem with observed behaviour; prefer INFORMATIONAL if the user is just asking how something works.`;
 
 const OWNER_MENTION_ADDENDUM = `
 IMPORTANT — INDIRECT MENTION CONTEXT:
@@ -92,8 +94,8 @@ export async function classifyWorkflowIntent(params: {
     const prompt = isIndirectMention ? `${CLASSIFY_PROMPT_BASE}\n${OWNER_MENTION_ADDENDUM}` : CLASSIFY_PROMPT_BASE;
 
     const returnFormat = isIndirectMention
-      ? `\nReturn strict JSON:\n{\n  "intent": "PR_REVIEW" | "IMPLEMENTATION" | "INFORMATIONAL" | "CONVERSATIONAL" | "NONE",\n  "confidence": number between 0 and 1,\n  "reasoning": "one sentence explaining why"\n}`
-      : `\nReturn strict JSON:\n{\n  "intent": "PR_REVIEW" | "IMPLEMENTATION" | "INFORMATIONAL" | "CONVERSATIONAL",\n  "confidence": number between 0 and 1,\n  "reasoning": "one sentence explaining why"\n}`;
+      ? `\nReturn strict JSON:\n{\n  "intent": "PR_REVIEW" | "IMPLEMENTATION" | "INVESTIGATION" | "INFORMATIONAL" | "CONVERSATIONAL" | "NONE",\n  "confidence": number between 0 and 1,\n  "reasoning": "one sentence explaining why"\n}`
+      : `\nReturn strict JSON:\n{\n  "intent": "PR_REVIEW" | "IMPLEMENTATION" | "INVESTIGATION" | "INFORMATIONAL" | "CONVERSATIONAL",\n  "confidence": number between 0 and 1,\n  "reasoning": "one sentence explaining why"\n}`;
 
     const fullPrompt = `${prompt}${returnFormat}\n\n${buildClassifyUserPrompt({ userMessage, threadContext, hasPrUrl, mentionType })}`;
     const profile = lightweightProfile(getActiveBackendId());
@@ -122,8 +124,8 @@ export async function classifyWorkflowIntent(params: {
 
     const raw = result.parsedJson;
     const validIntents: WorkflowIntent[] = isIndirectMention
-      ? ['PR_REVIEW', 'IMPLEMENTATION', 'INFORMATIONAL', 'CONVERSATIONAL', 'NONE']
-      : ['PR_REVIEW', 'IMPLEMENTATION', 'INFORMATIONAL', 'CONVERSATIONAL'];
+      ? ['PR_REVIEW', 'IMPLEMENTATION', 'INVESTIGATION', 'INFORMATIONAL', 'CONVERSATIONAL', 'NONE']
+      : ['PR_REVIEW', 'IMPLEMENTATION', 'INVESTIGATION', 'INFORMATIONAL', 'CONVERSATIONAL'];
 
     const fallbackIntent = isIndirectMention ? 'NONE' : 'IMPLEMENTATION';
     const intent = validIntents.includes(raw.intent as WorkflowIntent)

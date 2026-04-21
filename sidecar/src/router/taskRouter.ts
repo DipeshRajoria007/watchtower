@@ -13,6 +13,7 @@ import type { JobStore } from '../state/jobStore.js';
 import { runDevAssistWorkflow } from '../workflows/devAssistWorkflow.js';
 import { runDeployWorkflow } from '../workflows/deployWorkflow.js';
 import { runImplementationWorkflow } from '../workflows/implementationWorkflow.js';
+import { runInvestigationWorkflow } from '../workflows/investigationWorkflow.js';
 import { runInformationalWorkflow } from '../workflows/informationalWorkflow.js';
 import { runConversationalWorkflow } from '../workflows/conversationalWorkflow.js';
 import { runPrReviewWorkflow } from '../workflows/prReviewWorkflow.js';
@@ -179,7 +180,29 @@ export async function routeTask(params: {
   }
 
   if (resolvedIntent === 'IMPLEMENTATION' || resolvedIntent === 'OWNER_AUTOPILOT') {
-    return runImplementationWorkflow({ task: routedTask, config, slack, store, jobId, logStep, signal });
+    return runImplementationWorkflow({
+      task: routedTask,
+      config,
+      slack,
+      store,
+      investigationStore: store?.investigationStore(),
+      jobId,
+      logStep,
+      signal,
+    });
+  }
+
+  if (resolvedIntent === 'INVESTIGATION') {
+    return runInvestigationWorkflow({
+      task: routedTask,
+      config,
+      slack,
+      store,
+      investigationStore: store?.investigationStore(),
+      jobId,
+      logStep,
+      signal,
+    });
   }
 
   if (resolvedIntent === 'INFORMATIONAL') {

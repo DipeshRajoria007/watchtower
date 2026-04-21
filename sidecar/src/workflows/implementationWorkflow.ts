@@ -25,6 +25,7 @@ import { createPrFromWorkspace } from '../github/postPipelinePr.js';
 import { fetchUnresolvedReviewThreadCount } from '../github/prReviewComments.js';
 import type { PipelineStore } from '../agents/pipeline.js';
 import type { AgentStepResult, PipelineConfig } from '../agents/types.js';
+import type { InvestigationStore } from '../state/investigationStore.js';
 import { prepareWorkflowContext, sanitizeOwnerSummary, extractReplyFromCodexResult } from './shared/workflowUtils.js';
 
 function buildOwnerPrimaryPrompt(params: {
@@ -151,11 +152,12 @@ export async function runImplementationWorkflow(params: {
   config: AppConfig;
   slack: WebClient;
   store?: PipelineStore;
+  investigationStore?: InvestigationStore;
   jobId?: string;
   logStep?: WorkflowStepLogger;
   signal?: AbortSignal;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, store, jobId, logStep, signal } = params;
+  const { task, config, slack, store, investigationStore, jobId, logStep, signal } = params;
 
   logStep?.({
     stage: 'implementation.start',
@@ -163,6 +165,31 @@ export async function runImplementationWorkflow(params: {
   });
 
   const ctx = await prepareWorkflowContext({ task, config, slack, logStep });
+
+  // Thread-scoped investigation findings: if a prior INVESTIGATION ran in
+  // this same thread, seed the planner with its diagnosis so vague follow-up
+  // messages like "yes fix it" land on a concrete plan instead of re-asking.
+  const priorFindings = investigationStore?.getForThread(task.event.threadTs);
+  if (priorFindings) {
+    const seed = [
+      '',
+      '=== PRIOR INVESTIGATION FINDINGS FOR THIS THREAD ===',
+      `(from job ${priorFindings.jobId}, saved ${priorFindings.createdAt})`,
+      priorFindings.summary ? `Summary: ${priorFindings.summary}` : '',
+      `Full findings (JSON): ${priorFindings.findingsJson}`,
+      '=== END PRIOR FINDINGS ===',
+      '',
+      'Use these findings as your primary context. The user has already seen them and is now asking you to act — produce a concrete file-level plan. Only ask for clarification if the findings leave a genuine gap.',
+    ]
+      .filter(Boolean)
+      .join('\n');
+    ctx.threadContext = `${ctx.threadContext}${seed}`;
+    logStep?.({
+      stage: 'implementation.investigation_seed',
+      message: 'Seeded planner context with prior investigation findings for this thread.',
+      data: { investigationJobId: priorFindings.jobId, savedAt: priorFindings.createdAt },
+    });
+  }
 
   // --- Multi-agent pipeline path ---
   if (config.multiAgentEnabled) {
