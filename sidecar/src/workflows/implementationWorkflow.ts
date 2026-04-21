@@ -23,6 +23,7 @@ import {
   waitForClarification,
   buildApprovalMessage,
 } from '../agents/pipeline.js';
+import { waitForClarificationWithIdle } from './shared/clarificationGuards.js';
 import { profileForAgentRole } from '../codex/modelProfiles.js';
 import { buildPlannerPrompt } from '../agents/prompts.js';
 import { resolveWorkspace } from '../workspaces/workspaceManager.js';
@@ -753,25 +754,134 @@ Write your response as a ready-to-post Slack message describing what you did.
       perAgentTimeoutMs: Math.floor(workflowTimeoutMs / 3),
     };
 
-    const fullResult = await runAgentPipeline({
-      ctx: {
-        workflowIntent: 'IMPLEMENTATION',
-        task,
-        config,
-        repoPath: pipelineCwd,
-        githubToken: ctx.githubToken,
-        threadContext: ctx.threadContext,
-        previousSteps: [plannerStep],
-        pipelineConfig: fullPipelineConfig,
-        imagePaths: ctx.imagePaths.length > 0 ? ctx.imagePaths : undefined,
-        requestedBy: ctx.requestedBy,
-      },
+    const buildPipelineCtx = (threadContextOverride: string) => ({
+      workflowIntent: 'IMPLEMENTATION' as const,
+      task,
+      config,
+      repoPath: pipelineCwd,
+      githubToken: ctx.githubToken,
+      threadContext: threadContextOverride,
+      previousSteps: [plannerStep],
+      pipelineConfig: fullPipelineConfig,
+      imagePaths: ctx.imagePaths.length > 0 ? ctx.imagePaths : undefined,
+      requestedBy: ctx.requestedBy,
+    });
+
+    let currentThreadContext = ctx.threadContext;
+    let fullResult = await runAgentPipeline({
+      ctx: buildPipelineCtx(currentThreadContext),
       slack,
       logStep: logStep ?? (() => {}),
       introMessage: introMsg,
       store,
       jobId,
     });
+
+    const MAX_NEEDS_INPUT_RESUMES = 3;
+    let needsInputResumes = 0;
+    while (fullResult.finalStatus === 'needs-input' && needsInputResumes < MAX_NEEDS_INPUT_RESUMES) {
+      needsInputResumes++;
+      const question = fullResult.needsInputQuestion ?? 'I need more information to proceed — could you share details?';
+
+      const askResp = await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: question,
+      });
+      const promptTs = askResp.ts;
+
+      const adminUserIds = getAdminUserIds(config);
+      const allowedIds = Array.from(new Set([task.event.userId, ...adminUserIds, ...config.coreDevSlackUserIds]));
+
+      if (!promptTs) {
+        logStep?.({
+          stage: 'implementation.needs_input.post_failed',
+          message: 'Could not post the needs-input question to Slack — treating as paused.',
+          level: 'WARN',
+        });
+        return {
+          workflow: 'IMPLEMENTATION',
+          status: 'PAUSED',
+          message: 'Paused pending more information (Slack post failed).',
+          notifyDesktop: false,
+          slackPosted: false,
+        };
+      }
+
+      const clarification = await waitForClarificationWithIdle({
+        slack,
+        channelId: task.event.channelId,
+        threadTs: task.event.threadTs,
+        allowedUserIds: allowedIds,
+        promptTs,
+        logStep: logStep ?? (() => {}),
+        botUserId: config.botUserId,
+        nudgeText:
+          "Still waiting on more info for the fix — reply here with the error text, failing request, or file scope. Say 'cancel' to stop.",
+      });
+
+      if (clarification.outcome === 'cancelled') {
+        await slack.chat.postMessage({
+          channel: task.event.channelId,
+          thread_ts: task.event.threadTs,
+          text: 'Got it, cancelling.',
+        });
+        return {
+          workflow: 'IMPLEMENTATION',
+          status: 'CANCELLED',
+          message: 'User cancelled after needs-input prompt.',
+          notifyDesktop: false,
+          slackPosted: true,
+        };
+      }
+
+      if (clarification.outcome === 'timeout') {
+        return {
+          workflow: 'IMPLEMENTATION',
+          status: 'PAUSED',
+          message: 'No reply within the idle window — paused. Reply in the thread to resume.',
+          notifyDesktop: false,
+          slackPosted: true,
+        };
+      }
+
+      currentThreadContext =
+        `${currentThreadContext}\n\n<@${clarification.answererId}> follow-up answer: ${clarification.answer}`.trim();
+
+      logStep?.({
+        stage: 'implementation.needs_input.resuming',
+        message: `Resuming pipeline with follow-up context (attempt ${needsInputResumes}/${MAX_NEEDS_INPUT_RESUMES}).`,
+      });
+
+      fullResult = await runAgentPipeline({
+        ctx: buildPipelineCtx(currentThreadContext),
+        slack,
+        logStep: logStep ?? (() => {}),
+        introMessage: 'Picking back up with the new info you shared.',
+        store,
+        jobId,
+      });
+    }
+
+    if (fullResult.finalStatus === 'needs-input') {
+      logStep?.({
+        stage: 'implementation.needs_input.exhausted',
+        message: `Hit resume cap (${MAX_NEEDS_INPUT_RESUMES}) without enough info — pausing.`,
+        level: 'WARN',
+      });
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: "I've asked a few times but still don't have enough to write a targeted fix — pausing. Reply with concrete details and I'll resume.",
+      });
+      return {
+        workflow: 'IMPLEMENTATION',
+        status: 'PAUSED',
+        message: 'Exhausted clarification attempts without enough info to proceed.',
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
 
     const coderStep = fullResult.steps.find(s => s.role === 'coder');
     const rawCoderSummary = coderStep?.output?.summary ? sanitizeOwnerSummary(String(coderStep.output.summary)) : '';

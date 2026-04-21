@@ -604,7 +604,33 @@ export function buildApprovalMessage(feedbackRounds: number, stepCount: number):
     stepCount > 2
       ? `I'll work through the ${stepCount} steps, then review and verify.`
       : "I'll code it up, then review and verify.";
+
   return `${prefix} approved \u2014 ${steps}`;
+}
+export function buildCoderFollowUpQuestion(
+  ctx: AgentContext,
+  planSteps: string[],
+  planAffectedFiles: string[],
+): string {
+  const firstStep = planSteps[0]?.trim();
+  const filePreview = planAffectedFiles.slice(0, 3).join(', ');
+
+  const lines = ["I couldn't pin down a concrete change from the info I have, so I haven't touched any files."];
+  if (firstStep) {
+    lines.push(`The plan opened with: _${firstStep}_`);
+  }
+  if (filePreview) {
+    lines.push(`Suspected files: \`${filePreview}\`${planAffectedFiles.length > 3 ? ' …' : ''}`);
+  }
+  lines.push(
+    'To move forward I need one of:',
+    '• the exact error text (from the browser console or server logs),',
+    '• the failing network request (URL + payload + response),',
+    '• or the specific file/function you think is broken.',
+    'Reply in this thread with any of the above and I\'ll pick it up from there — or say "cancel" to stop.',
+  );
+  void ctx;
+  return lines.join('\n');
 }
 
 export async function runAgentPipeline(params: {
@@ -628,6 +654,8 @@ export async function runAgentPipeline(params: {
   const steps: AgentStepResult[] = [];
   let retryLoops = 0;
   let aborted = false;
+  let pendingNeedsInput = false;
+  let needsInputQuestion: string | undefined;
 
   const pipelineRunId = randomUUID();
   if (store && jobId) {
@@ -757,6 +785,8 @@ export async function runAgentPipeline(params: {
               headMoved: changes.headMoved,
             },
           });
+          pendingNeedsInput = true;
+          needsInputQuestion = buildCoderFollowUpQuestion(ctx, planSteps, planAffectedFiles);
         } else {
           output.filesChanged = changes.filesChanged;
         }
@@ -848,6 +878,17 @@ export async function runAgentPipeline(params: {
       });
     }
 
+    // Short-circuit: coder produced no diff → don't retry, ask user for more info
+    if (pendingNeedsInput) {
+      logStep({
+        stage: 'pipeline.needs_input',
+        message: 'Coder produced no diff — pausing for user input instead of retrying.',
+        level: 'WARN',
+        data: { question: needsInputQuestion },
+      });
+      break;
+    }
+
     // Abort on critical security/reviewer finding
     if (abortOnCriticalFinding && hasCriticalFinding(findings)) {
       logStep({
@@ -925,6 +966,8 @@ export async function runAgentPipeline(params: {
                 level: 'ERROR',
                 data: { retryLoops },
               });
+              pendingNeedsInput = true;
+              needsInputQuestion = buildCoderFollowUpQuestion(ctx, planSteps, planAffectedFiles);
             } else {
               coderOutput.filesChanged = changes.filesChanged;
             }
@@ -945,6 +988,16 @@ export async function runAgentPipeline(params: {
           durationMs: coderRetryDuration,
         });
 
+        if (pendingNeedsInput) {
+          logStep({
+            stage: 'pipeline.needs_input',
+            message: 'Coder retry produced no diff — pausing for user input instead of looping further.',
+            level: 'WARN',
+            data: { question: needsInputQuestion, retryLoops },
+          });
+          break;
+        }
+
         // Re-run reviewer
         i--; // Will increment back to reviewer on next iteration
         continue;
@@ -962,7 +1015,13 @@ export async function runAgentPipeline(params: {
     latestByRole.set(step.role, step);
   }
   const hasFailedStep = Array.from(latestByRole.values()).some(s => s.status === 'failed');
-  const finalStatus = aborted ? 'aborted' : hasFailedStep ? 'failed' : 'passed';
+  const finalStatus: PipelineResult['finalStatus'] = pendingNeedsInput
+    ? 'needs-input'
+    : aborted
+      ? 'aborted'
+      : hasFailedStep
+        ? 'failed'
+        : 'passed';
 
   logStep({
     stage: 'pipeline.finish',
@@ -975,9 +1034,11 @@ export async function runAgentPipeline(params: {
   const finishText =
     finalStatus === 'passed'
       ? `Done in ${durationSec}s. Preparing the summary.`
-      : finalStatus === 'aborted'
-        ? `Finished in ${durationSec}s. Review flagged some concerns — see the summary below.`
-        : `Finished in ${durationSec}s with some issues flagged — details below.`;
+      : finalStatus === 'needs-input'
+        ? `Paused after ${durationSec}s — I need a bit more info before I can code a fix.`
+        : finalStatus === 'aborted'
+          ? `Finished in ${durationSec}s. Review flagged some concerns — see the summary below.`
+          : `Finished in ${durationSec}s with some issues flagged — details below.`;
   await postSlackProgress({ slack, ctx, text: finishText });
 
   if (store && jobId) {
@@ -999,5 +1060,6 @@ export async function runAgentPipeline(params: {
     totalDurationMs,
     retryLoops,
     aggregatedFindings,
+    needsInputQuestion,
   };
 }

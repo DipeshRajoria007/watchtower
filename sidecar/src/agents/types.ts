@@ -47,8 +47,9 @@ export interface PipelineConfig {
 
 export interface PipelineResult {
   steps: AgentStepResult[];
-  finalStatus: 'passed' | 'failed' | 'aborted';
+  finalStatus: 'passed' | 'failed' | 'aborted' | 'needs-input';
   totalDurationMs: number;
   retryLoops: number;
   aggregatedFindings: AgentFinding[];
+  needsInputQuestion?: string;
 }
