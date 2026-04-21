@@ -29,6 +29,65 @@ describe('failureDoctor', () => {
     expect(diagnosis?.errorKind).toBe('NATIVE_MODULE_ABI_MISMATCH');
   });
 
+  it('surfaces verifier suggestions for pipeline critical findings', () => {
+    const diagnosis = diagnoseFailure({
+      workflow: 'IMPLEMENTATION',
+      message: 'Pipeline finished with status: aborted.',
+      logs: [
+        {
+          stage: 'pipeline.abort',
+          level: 'ERROR',
+          message: 'Pipeline aborted due to critical finding from verifier.',
+          data: {
+            role: 'verifier',
+            criticalFindings: [
+              {
+                severity: 'critical',
+                category: 'process-failure',
+                message: 'No planner output was provided.',
+                suggestion: 'Ask the user for the console error and the failing network request.',
+              },
+              {
+                severity: 'critical',
+                category: 'missing-requirements',
+                message: 'No acceptance criteria.',
+                suggestion: 'Run the planner agent with debugging context before implementation.',
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(diagnosis?.errorKind).toBe('PIPELINE_CRITICAL_FINDING');
+    expect(diagnosis?.summary).toContain('verifier');
+    expect(diagnosis?.actions).toEqual([
+      'Ask the user for the console error and the failing network request.',
+      'Run the planner agent with debugging context before implementation.',
+    ]);
+  });
+
+  it('falls back to generic actions when critical findings have no suggestions', () => {
+    const diagnosis = diagnoseFailure({
+      workflow: 'IMPLEMENTATION',
+      message: 'Pipeline finished with status: aborted.',
+      logs: [
+        {
+          stage: 'pipeline.abort',
+          level: 'ERROR',
+          message: 'Pipeline aborted due to critical finding from reviewer.',
+          data: {
+            role: 'reviewer',
+            criticalFindings: [{ severity: 'critical', message: 'Bad code' }],
+          },
+        },
+      ],
+    });
+
+    expect(diagnosis?.errorKind).toBe('PIPELINE_CRITICAL_FINDING');
+    expect(diagnosis?.actions[0]).toMatch(/Review the critical findings/);
+  });
+
   it('returns undefined for unrecognized failures', () => {
     const diagnosis = diagnoseFailure({
       workflow: 'PR_REVIEW',

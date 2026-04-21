@@ -114,14 +114,39 @@ export function diagnoseFailure(input: {
   }
 
   if (haystack.includes('pipeline.abort') && haystack.includes('critical finding')) {
+    // Mine the abort log entry for the verifier/reviewer's own `suggestion`
+    // strings and surface those instead of the generic boilerplate. The
+    // suggestions are the part users can actually act on.
+    const abortLogs = input.logs.filter(entry => entry.stage === 'pipeline.abort');
+    const verifierSuggestions: string[] = [];
+    let abortingRole: string | undefined;
+    for (const entry of abortLogs) {
+      const data = entry.data as { role?: string; criticalFindings?: Array<Record<string, unknown>> } | undefined;
+      if (!data) continue;
+      if (!abortingRole && typeof data.role === 'string') abortingRole = data.role;
+      const findings = Array.isArray(data.criticalFindings) ? data.criticalFindings : [];
+      for (const f of findings) {
+        const suggestion = typeof f.suggestion === 'string' ? f.suggestion.trim() : '';
+        if (suggestion) verifierSuggestions.push(suggestion);
+      }
+    }
+
+    const uniqueSuggestions = Array.from(new Set(verifierSuggestions));
+    const actions =
+      uniqueSuggestions.length > 0
+        ? uniqueSuggestions
+        : [
+            'Review the critical findings in the pipeline results.',
+            'Fix the identified issues before re-running the task.',
+            'Set abortOnCriticalFinding to false if the finding is a false positive.',
+          ];
+
     return {
       errorKind: 'PIPELINE_CRITICAL_FINDING',
-      summary: 'The pipeline was aborted because an agent found a critical issue.',
-      actions: [
-        'Review the critical findings in the pipeline results.',
-        'Fix the identified issues before re-running the task.',
-        'Set abortOnCriticalFinding to false if the finding is a false positive.',
-      ],
+      summary: abortingRole
+        ? `The pipeline was aborted because the ${abortingRole} agent found a critical issue.`
+        : 'The pipeline was aborted because an agent found a critical issue.',
+      actions,
     };
   }
 
