@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildLegacyAccessControlConfig,
   evaluateAccess,
+  formatAdminMention,
   resolveRequiredAccessLevel,
   setResolvedGroupMembers,
   toResolvedAccessControlConfig,
@@ -235,5 +236,93 @@ describe('access control evaluator', () => {
     expect(accessControl.groups.admin.allowedChannelIds).toBe('C-BUGS,C-OPS');
     expect(accessControl.groups.admin.allowIm).toBe(true);
     expect(accessControl.groups.admin.resolvedUserIds).toEqual(['UOWNER1', 'UCOREDEV1']);
+  });
+});
+
+describe('formatAdminMention', () => {
+  function baseConfig(overrides?: Partial<AppConfig>): AppConfig {
+    return {
+      platformPolicy: 'macos_only',
+      bundleTargets: ['app', 'dmg'],
+      ownerSlackUserIds: ['UOWNER1'],
+      coreDevSlackUserIds: ['UOWNER1', 'UCORE2', 'UCORE3'],
+      coreDevSlackUserGroup: '',
+      botUserId: 'UBOT',
+      slackBotToken: 'x',
+      slackAppToken: 'x',
+      bugsAndUpdatesChannelId: 'C-B',
+      allowedChannelsForBugFix: ['C-B'],
+      repoPaths: { newtonWeb: '/a', newtonApi: '/b' },
+      unknownTaskPolicy: 'desktop_only',
+      uncertainRepoPolicy: 'desktop_only',
+      unmappedPrRepoPolicy: 'desktop_only',
+      maxConcurrentJobs: 2,
+      repoClassifierThreshold: 0.75,
+      allowedPrOrg: 'Newton-School',
+      multiAgentEnabled: false,
+      agentBackend: 'codex',
+      prReviewTimeoutMs: 120_000,
+      bugFixTimeoutMs: 120_000,
+      pmTaskTimeoutMs: 120_000,
+      ...overrides,
+    };
+  }
+
+  it('pings the core-dev subteam once when a group handle is set', () => {
+    const config = baseConfig({ coreDevSlackUserGroup: 'S02HXP05ZNJ' });
+    expect(formatAdminMention(config)).toBe('<!subteam^S02HXP05ZNJ>');
+  });
+
+  it('prefers the access-control admin group handle when present', () => {
+    const config = baseConfig({
+      coreDevSlackUserGroup: 'S02HXP05ZNJ',
+      accessControl: toResolvedAccessControlConfig(
+        {
+          mode: 'enforce',
+          groups: {
+            viewer: {
+              slackUserGroupHandle: '',
+              manualUserIds: '',
+              allowedChannelIds: '',
+              allowIm: false,
+              allowMpim: false,
+            },
+            reviewer: {
+              slackUserGroupHandle: '',
+              manualUserIds: '',
+              allowedChannelIds: '',
+              allowIm: false,
+              allowMpim: false,
+            },
+            builder: {
+              slackUserGroupHandle: '',
+              manualUserIds: '',
+              allowedChannelIds: '',
+              allowIm: false,
+              allowMpim: false,
+            },
+            admin: {
+              slackUserGroupHandle: 'SADMIN99',
+              manualUserIds: 'UOWNER1,UCORE2',
+              allowedChannelIds: '',
+              allowIm: true,
+              allowMpim: false,
+            },
+          },
+        },
+        ['UOWNER1'],
+      ),
+    });
+    expect(formatAdminMention(config)).toBe('<!subteam^SADMIN99>');
+  });
+
+  it('falls back to owner mentions when no group handle is set', () => {
+    const config = baseConfig({ ownerSlackUserIds: ['UOWNER1', 'UOWNER2'] });
+    expect(formatAdminMention(config)).toBe('<@UOWNER1> <@UOWNER2>');
+  });
+
+  it('returns empty string when there is nothing to mention', () => {
+    const config = baseConfig({ ownerSlackUserIds: [], coreDevSlackUserIds: [] });
+    expect(formatAdminMention(config)).toBe('');
   });
 });
