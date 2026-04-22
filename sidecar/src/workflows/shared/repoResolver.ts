@@ -1,7 +1,7 @@
 import type { WebClient } from '@slack/web-api';
 import type { AppConfig, NormalizedTask, WorkflowStepLogger } from '../../types/contracts.js';
 import { classifyRepo } from '../../router/repoClassifier.js';
-import { getAdminUserIds } from '../../access/control.js';
+import { formatAdminMention, getAdminUserIds } from '../../access/control.js';
 import { waitForRepoChoice } from '../../agents/pipeline.js';
 
 export type RepoName = 'newton-web' | 'newton-api';
@@ -104,7 +104,9 @@ export async function resolveRepoOrAsk(params: {
     level: 'WARN',
   });
 
-  const mentionStr = adminUserIds.map(id => `<@${id}>`).join(' ');
+  // Use the core-dev subteam handle when available so we ping the group once
+  // instead of unrolling every admin into a wall of individual `<@U…>` tags.
+  const mentionStr = formatAdminMention(config);
   const promptText = `I can't tell whether this task is for *newton-web* or *newton-api*.${mentionStr ? ` ${mentionStr}` : ''} Reply with "web" or "api" (or "cancel" to abandon).`;
 
   let promptTs: string | undefined;

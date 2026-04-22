@@ -150,6 +150,28 @@ export function getAdminUserIds(config: AppConfig): string[] {
   return uniqueList([...config.ownerSlackUserIds, ...(config.coreDevSlackUserIds ?? [])]);
 }
 
+/**
+ * Build a concise Slack mention string for an admin-approval prompt.
+ * Prefers the core-dev Slack user group handle (a single `<!subteam^…>`
+ * mention that pings the whole group) over tagging every individual admin,
+ * which turns the thread into a wall of twenty `<@U…>` pings. Falls back to
+ * tagging owners directly when the group handle isn't configured, and to
+ * an empty string if nothing is available.
+ */
+export function formatAdminMention(config: AppConfig): string {
+  const group =
+    (config.accessControl?.groups.admin.slackUserGroupHandle ?? '').trim() ||
+    (config.coreDevSlackUserGroup ?? '').trim();
+  if (group) {
+    return `<!subteam^${group}>`;
+  }
+  const owners = (config.ownerSlackUserIds ?? []).filter(Boolean);
+  if (owners.length > 0) {
+    return owners.map(id => `<@${id}>`).join(' ');
+  }
+  return '';
+}
+
 export function getConfiguredAccessControl(config: AppConfig): AccessControlConfig {
   return (
     config.accessControl ??
