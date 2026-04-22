@@ -376,6 +376,9 @@ describe('prReviewWorkflow', () => {
       event: 'COMMENT',
       attemptedComments: 0,
       commentsPosted: 0,
+      droppedOutsideDiff: 0,
+      fileLevelAttempted: 0,
+      fileLevelPosted: 0,
       submissionMode: 'summary_only',
       fallbackReason: 'missing_location',
     };
@@ -386,7 +389,8 @@ describe('prReviewWorkflow', () => {
       reviewResult,
     );
 
-    expect(summary).toContain('1 findings identified; review summary posted, but no inline comments were attached');
+    expect(summary).toContain('1 findings identified; review summary posted, no inline comments attached');
+    expect(summary).toContain('1 without an anchor');
     expect(summary).not.toContain('comments posted on PR');
   });
 
@@ -413,6 +417,9 @@ describe('prReviewWorkflow', () => {
       event: 'COMMENT',
       attemptedComments: 1,
       commentsPosted: 1,
+      droppedOutsideDiff: 0,
+      fileLevelAttempted: 0,
+      fileLevelPosted: 0,
       submissionMode: 'inline',
     };
 
@@ -422,7 +429,50 @@ describe('prReviewWorkflow', () => {
       reviewResult,
     );
 
-    expect(summary).toContain('2 findings identified; 1 inline comments posted, 1 could not be attached');
+    expect(summary).toContain('2 findings identified; 1 inline posted');
+    expect(summary).toContain('1 without an anchor dropped');
+  });
+
+  it('formats Slack completion with inline + file-level + outside-diff counters', () => {
+    const outputs = [
+      normalizePrReviewAgentOutput('reviewer', {
+        ok: true,
+        exitCode: 0,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        lastMessage: '',
+        parsedJson: {
+          findings: [
+            { severity: 'high', category: 'logic', message: 'Inline A', file: 'src/a.ts', line: 5 },
+            { severity: 'medium', category: 'logic', message: 'Inline B', file: 'src/b.ts', line: 12 },
+            { severity: 'medium', category: 'convention', message: 'File-level', file: 'src/c.ts' },
+            { severity: 'low', category: 'perf', message: 'Off-diff', file: 'src/a.ts', line: 999 },
+          ],
+          summaryNotes: [],
+        },
+      }),
+    ];
+    const reviewResult: SubmitPrReviewResult = {
+      submitted: true,
+      event: 'REQUEST_CHANGES',
+      attemptedComments: 2,
+      commentsPosted: 2,
+      droppedOutsideDiff: 1,
+      fileLevelAttempted: 1,
+      fileLevelPosted: 1,
+      submissionMode: 'inline',
+    };
+
+    const summary = formatSlackReviewSummary(
+      outputs,
+      'https://github.com/Newton-School/newton-web/pull/8088',
+      reviewResult,
+    );
+
+    expect(summary).toContain('4 findings identified');
+    expect(summary).toContain('2 inline + 1 file-level posted');
+    expect(summary).toContain('1 outside the PR diff dropped');
   });
 
   it('builds GitHub summary text for summary-only findings and notes', () => {
