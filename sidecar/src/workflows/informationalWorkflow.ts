@@ -1,10 +1,33 @@
 import type { WebClient } from '@slack/web-api';
-import type { AppConfig, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
+import type {
+  AppConfig,
+  CodexRunResult,
+  NormalizedTask,
+  WorkflowResult,
+  WorkflowStepLogger,
+} from '../types/contracts.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
 import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint } from '../github/githubAuth.js';
 import { prepareWorkflowContext, extractReplyFromCodexResult } from './shared/workflowUtils.js';
+
+type RepoName = 'newton-web' | 'newton-api';
+type Target = { repo: RepoName; cwd: string };
+
+type PromptContext = {
+  threadContext: string;
+  imageContext: string;
+  githubToken?: string;
+};
+
+type PerRepoOutcome =
+  | { repo: RepoName; kind: 'answer'; text: string }
+  | { repo: RepoName; kind: 'not_applicable'; reason: string }
+  | { repo: RepoName; kind: 'failure'; reason: string };
+
+const NOT_APPLICABLE_PREFIX = 'NOT_APPLICABLE:';
+const FALLBACK_MESSAGE = 'I could not find a clear answer. Try rephrasing your question.';
 
 export async function runInformationalWorkflow(params: {
   task: NormalizedTask;
@@ -20,50 +43,42 @@ export async function runInformationalWorkflow(params: {
     message: 'Running informational workflow.',
   });
 
-  const ctx = await prepareWorkflowContext({ task, config, slack, logStep });
+  // Informational queries search both Newton repos in parallel — skip the
+  // repo-clarify gate that prepareWorkflowContext would otherwise fire.
+  const ctx = await prepareWorkflowContext({ task, config, slack, logStep, resolveRepo: false });
 
-  const prompt = `
-${buildMentionSystemPrompt({ task, workflow: 'INFORMATIONAL' })}
-
-Context:
-- You are miniOG, a developer assistant bot in a Slack workspace.
-- The user @mentioned you in a Slack thread asking a question about the codebase.
-- Your response will be posted DIRECTLY into that Slack thread as-is. No transformation, no wrapping — what you write is exactly what the user sees.
-- You have READ-ONLY access to the codebase at: ${ctx.cwd}
-- GitHub auth mode: ${githubAuthModeHint(Boolean(ctx.githubToken))}
-
-Instructions:
-- Answer the user's question thoroughly but concisely.
-- You can read files, search code, and explain things. Do NOT modify any files, create branches, or make commits.
-- Write your response as a ready-to-post Slack message.
-- Use Slack markdown for formatting (*bold*, _italic_, \`code\`, \`\`\`code blocks\`\`\`, bullet lists).
-- If you reference code, quote the relevant parts inline.
-
-Slack thread context:
-${ctx.threadContext}${ctx.imageContext}
-`.trim();
-
-  const result = await runCodex({
-    cwd: ctx.cwd,
-    prompt,
+  const promptCtx: PromptContext = {
+    threadContext: ctx.threadContext,
+    imageContext: ctx.imageContext,
     githubToken: ctx.githubToken,
-    imagePaths: ctx.imagePaths.length > 0 ? ctx.imagePaths : undefined,
-    ...highReasoningProfile(getActiveBackendId()),
-    // timeoutMs: 120_000,
-    onLog: logStep,
-    signal,
-  });
+  };
 
-  logStep?.({
-    stage: 'informational.codex.done',
-    message: 'Informational codex execution finished.',
-    level: result.ok ? 'INFO' : 'WARN',
-    data: { ok: result.ok, exitCode: result.exitCode },
-  });
+  const targets: Target[] = [];
+  if (config.repoPaths.newtonWeb) targets.push({ repo: 'newton-web', cwd: config.repoPaths.newtonWeb });
+  if (config.repoPaths.newtonApi) targets.push({ repo: 'newton-api', cwd: config.repoPaths.newtonApi });
 
-  // Don't use sanitizeOwnerSummary here — it strips bullet-pointed lines (- item)
-  // which destroys informational replies that list files, components, etc.
-  const reply = extractReplyFromCodexResult(result) || 'I could not find a clear answer. Try rephrasing your question.';
+  let reply: string;
+  let ok: boolean;
+
+  if (targets.length === 0) {
+    const single = await runSingleUnscoped({ ctx, task, promptCtx, logStep, signal });
+    reply = single.reply;
+    ok = single.ok;
+  } else {
+    const outcomes = await runFanout({ targets, task, promptCtx, logStep, signal });
+    const synth = synthesizeInformationalReplies(outcomes);
+    reply = synth.reply;
+    ok = synth.ok;
+
+    logStep?.({
+      stage: 'informational.synthesize.done',
+      message: 'Combined per-repo findings into a single reply.',
+      data: {
+        includedRepos: outcomes.filter(o => o.kind === 'answer').map(o => o.repo),
+        replyLength: reply.length,
+      },
+    });
+  }
 
   await slack.chat.postMessage({
     channel: task.event.channelId,
@@ -78,9 +93,197 @@ ${ctx.threadContext}${ctx.imageContext}
 
   return {
     workflow: 'INFORMATIONAL',
-    status: result.ok ? 'SUCCESS' : 'FAILED',
+    status: ok ? 'SUCCESS' : 'FAILED',
     message: reply,
     notifyDesktop: false,
     slackPosted: true,
   };
+}
+
+async function runSingleUnscoped(params: {
+  ctx: { cwd: string; imagePaths: string[] } & PromptContext;
+  task: NormalizedTask;
+  promptCtx: PromptContext;
+  logStep?: WorkflowStepLogger;
+  signal?: AbortSignal;
+}): Promise<{ reply: string; ok: boolean }> {
+  const { ctx, task, promptCtx, logStep, signal } = params;
+
+  const prompt = buildUnscopedPrompt({ cwd: ctx.cwd, task, promptCtx });
+
+  const result = await runCodex({
+    cwd: ctx.cwd,
+    prompt,
+    githubToken: ctx.githubToken,
+    imagePaths: ctx.imagePaths.length > 0 ? ctx.imagePaths : undefined,
+    ...highReasoningProfile(getActiveBackendId()),
+    onLog: logStep,
+    signal,
+  });
+
+  logStep?.({
+    stage: 'informational.codex.done',
+    message: 'Informational codex execution finished.',
+    level: result.ok ? 'INFO' : 'WARN',
+    data: { ok: result.ok, exitCode: result.exitCode },
+  });
+
+  const reply = extractReplyFromCodexResult(result) || FALLBACK_MESSAGE;
+  return { reply, ok: result.ok };
+}
+
+async function runFanout(params: {
+  targets: Target[];
+  task: NormalizedTask;
+  promptCtx: PromptContext;
+  logStep?: WorkflowStepLogger;
+  signal?: AbortSignal;
+}): Promise<PerRepoOutcome[]> {
+  const { targets, task, promptCtx, logStep, signal } = params;
+
+  logStep?.({
+    stage: 'informational.fanout.start',
+    message: `Searching ${targets.length} repo(s) in parallel.`,
+    data: { targets: targets.map(t => t.repo) },
+  });
+
+  const settled = await Promise.allSettled(
+    targets.map(target =>
+      runCodex({
+        cwd: target.cwd,
+        prompt: buildScopedPrompt({ target, task, promptCtx }),
+        githubToken: promptCtx.githubToken,
+        ...highReasoningProfile(getActiveBackendId()),
+        onLog: logStep,
+        signal,
+      }),
+    ),
+  );
+
+  return settled.map((settledResult, i) => {
+    const target = targets[i];
+    const outcome = classifyPerRepoOutcome(target, settledResult);
+    logStep?.({
+      stage: `informational.fanout.${shortRepo(target.repo)}.done`,
+      message: `Finished searching ${target.repo}.`,
+      level: outcome.kind === 'failure' ? 'WARN' : 'INFO',
+      data: {
+        ok: outcome.kind === 'answer',
+        kind: outcome.kind,
+        exitCode: settledResult.status === 'fulfilled' ? settledResult.value.exitCode : undefined,
+      },
+    });
+    return outcome;
+  });
+}
+
+function classifyPerRepoOutcome(target: Target, settled: PromiseSettledResult<CodexRunResult>): PerRepoOutcome {
+  if (settled.status === 'rejected') {
+    return { repo: target.repo, kind: 'failure', reason: String(settled.reason) };
+  }
+  const result = settled.value;
+  if (!result.ok) {
+    return { repo: target.repo, kind: 'failure', reason: `exit ${result.exitCode}` };
+  }
+  const text = (extractReplyFromCodexResult(result) || '').trim();
+  if (!text) {
+    return { repo: target.repo, kind: 'failure', reason: 'empty response' };
+  }
+  if (text.startsWith(NOT_APPLICABLE_PREFIX)) {
+    const reason = text.slice(NOT_APPLICABLE_PREFIX.length).trim() || 'not applicable';
+    return { repo: target.repo, kind: 'not_applicable', reason };
+  }
+  return { repo: target.repo, kind: 'answer', text };
+}
+
+export function synthesizeInformationalReplies(outcomes: PerRepoOutcome[]): { reply: string; ok: boolean } {
+  const answers = outcomes.filter((o): o is Extract<PerRepoOutcome, { kind: 'answer' }> => o.kind === 'answer');
+
+  if (answers.length === 0) {
+    return { reply: FALLBACK_MESSAGE, ok: false };
+  }
+
+  if (answers.length === 1) {
+    const only = answers[0];
+    const otherFailed = outcomes.find(
+      (o): o is Extract<PerRepoOutcome, { kind: 'failure' }> => o.repo !== only.repo && o.kind === 'failure',
+    );
+    if (otherFailed) {
+      const note = `_Could not search ${otherFailed.repo} (${otherFailed.reason}). Results below cover ${only.repo} only._`;
+      return { reply: `${note}\n\n${only.text}`, ok: true };
+    }
+    return { reply: only.text, ok: true };
+  }
+
+  const sections: string[] = [];
+  for (const repo of ['newton-web', 'newton-api'] as RepoName[]) {
+    const ans = answers.find(a => a.repo === repo);
+    if (!ans) continue;
+    sections.push(`*${repoLabel(repo)}:*\n${ans.text}`);
+  }
+  return { reply: sections.join('\n\n'), ok: true };
+}
+
+function buildUnscopedPrompt(params: { cwd: string; task: NormalizedTask; promptCtx: PromptContext }): string {
+  const { cwd, task, promptCtx } = params;
+  return `
+${buildMentionSystemPrompt({ task, workflow: 'INFORMATIONAL' })}
+
+Context:
+- You are miniOG, a developer assistant bot in a Slack workspace.
+- The user @mentioned you in a Slack thread asking a question about the codebase.
+- Your response will be posted DIRECTLY into that Slack thread as-is. No transformation, no wrapping — what you write is exactly what the user sees.
+- You have READ-ONLY access to the codebase at: ${cwd}
+- GitHub auth mode: ${githubAuthModeHint(Boolean(promptCtx.githubToken))}
+
+Instructions:
+- Answer the user's question thoroughly but concisely.
+- You can read files, search code, and explain things. Do NOT modify any files, create branches, or make commits.
+- Write your response as a ready-to-post Slack message.
+- Use Slack markdown for formatting (*bold*, _italic_, \`code\`, \`\`\`code blocks\`\`\`, bullet lists).
+- If you reference code, quote the relevant parts inline.
+
+Slack thread context:
+${promptCtx.threadContext}${promptCtx.imageContext}
+`.trim();
+}
+
+function buildScopedPrompt(params: { target: Target; task: NormalizedTask; promptCtx: PromptContext }): string {
+  const { target, task, promptCtx } = params;
+  return `
+${buildMentionSystemPrompt({ task, workflow: 'INFORMATIONAL' })}
+
+Context:
+- You are miniOG, a developer assistant bot in a Slack workspace.
+- The user @mentioned you in a Slack thread asking a question about the Newton codebase.
+- Your response may be combined with a sibling agent's answer from the other Newton repo before reaching the user.
+- You have READ-ONLY access to ONE repo at: ${target.cwd}
+- GitHub auth mode: ${githubAuthModeHint(Boolean(promptCtx.githubToken))}
+
+Scope for this run:
+- You are searching ONLY the ${target.repo} repository at ${target.cwd}.
+- A sibling agent is covering the other Newton repo in parallel — do not speculate about it or reference it.
+- If the user's question has no meaningful connection to this repo, respond with exactly:
+    ${NOT_APPLICABLE_PREFIX} <one short reason>
+  and nothing else. Do not guess.
+- Otherwise, return findings grounded in THIS repo's code (file paths, function names, code quotes).
+
+Instructions:
+- Answer the user's question thoroughly but concisely.
+- You can read files, search code, and explain things. Do NOT modify any files, create branches, or make commits.
+- Use Slack markdown for formatting (*bold*, _italic_, \`code\`, \`\`\`code blocks\`\`\`, bullet lists).
+- Do NOT add a header like "Frontend:" or "Backend:" — the caller adds section headers if needed.
+- If you reference code, quote the relevant parts inline.
+
+Slack thread context:
+${promptCtx.threadContext}${promptCtx.imageContext}
+`.trim();
+}
+
+function shortRepo(repo: RepoName): 'web' | 'api' {
+  return repo === 'newton-web' ? 'web' : 'api';
+}
+
+function repoLabel(repo: RepoName): string {
+  return repo === 'newton-web' ? 'Frontend (newton-web)' : 'Backend (newton-api)';
 }

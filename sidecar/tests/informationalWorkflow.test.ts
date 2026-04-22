@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { runInformationalWorkflow } from '../src/workflows/informationalWorkflow.js';
 import { runCodex } from '../src/codex/runCodex.js';
 import type { WebClient } from '@slack/web-api';
+import type { CodexRunResult } from '../src/types/contracts.js';
 
 vi.mock('../src/codex/runCodex.js', () => ({
   runCodex: vi.fn(),
@@ -40,7 +41,31 @@ function makeSlack() {
   } as unknown as WebClient;
 }
 
-const config = {
+function codexOk(lastMessage: string): CodexRunResult {
+  return {
+    ok: true,
+    exitCode: 0,
+    timedOut: false,
+    stdout: '',
+    stderr: '',
+    lastMessage,
+    parsedJson: undefined,
+  };
+}
+
+function codexFail(): CodexRunResult {
+  return {
+    ok: false,
+    exitCode: 1,
+    timedOut: false,
+    stdout: '',
+    stderr: 'error',
+    lastMessage: '',
+    parsedJson: undefined,
+  };
+}
+
+const baseConfig = {
   platformPolicy: 'macos_only' as const,
   bundleTargets: ['app', 'dmg'] as const,
   ownerSlackUserIds: ['UOWNER1'],
@@ -61,160 +86,154 @@ const config = {
   multiAgentEnabled: false,
 };
 
+function makeTask(overrides: Partial<{ channelId: string; threadTs: string; text: string; eventId: string }> = {}) {
+  return {
+    event: {
+      eventId: overrides.eventId ?? 'Ev1',
+      channelId: overrides.channelId ?? 'C1',
+      threadTs: overrides.threadTs ?? '1.1',
+      eventTs: overrides.threadTs ?? '1.1',
+      userId: 'U1',
+      text: overrides.text ?? '<@UBOT1> how does auth work?',
+      rawEvent: {},
+    },
+    mentionDetected: true,
+    mentionType: 'bot' as const,
+    isOwnerAuthor: false,
+    isCoreDevAuthor: false,
+    intent: 'INFORMATIONAL' as const,
+  };
+}
+
 describe('informationalWorkflow', () => {
   beforeEach(() => {
     vi.mocked(runCodex).mockReset();
   });
 
-  it('calls codex and returns sanitized answer', async () => {
-    vi.mocked(runCodex).mockResolvedValueOnce({
-      ok: true,
-      exitCode: 0,
-      timedOut: false,
-      stdout: '',
-      stderr: '',
-      lastMessage:
-        'The auth flow uses JWT tokens stored in cookies. Login hits /api/auth/login which validates credentials and returns a session token.',
-      parsedJson: undefined,
-    });
+  it('fans out to both repos and combines answers with section headers', async () => {
+    vi.mocked(runCodex)
+      .mockResolvedValueOnce(codexOk('Frontend uses JWT tokens stored in cookies.'))
+      .mockResolvedValueOnce(codexOk('Backend validates the token via /api/auth/verify.'));
 
     const slack = makeSlack();
-    const result = await runInformationalWorkflow({
-      task: {
-        event: {
-          eventId: 'Ev1',
-          channelId: 'C1',
-          threadTs: '1.1',
-          eventTs: '1.1',
-          userId: 'U1',
-          text: '<@UBOT1> how does the auth flow work?',
-          rawEvent: {},
-        },
-        mentionDetected: true,
-        mentionType: 'bot',
-        isOwnerAuthor: false,
-        isCoreDevAuthor: false,
-        intent: 'INFORMATIONAL',
-      },
-      config,
-      slack,
-    });
+    const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
 
+    expect(runCodex).toHaveBeenCalledTimes(2);
     expect(result.status).toBe('SUCCESS');
-    expect(result.workflow).toBe('INFORMATIONAL');
-    expect(result.message).toContain('auth flow');
-    expect(runCodex).toHaveBeenCalledTimes(1);
+    expect(result.message).toContain('*Frontend (newton-web):*');
+    expect(result.message).toContain('*Backend (newton-api):*');
+    expect(result.message).toContain('JWT tokens');
+    expect(result.message).toContain('/api/auth/verify');
   });
 
-  it('returns FAILED when codex fails', async () => {
-    vi.mocked(runCodex).mockResolvedValueOnce({
-      ok: false,
-      exitCode: 1,
-      timedOut: false,
-      stdout: '',
-      stderr: 'error',
-      lastMessage: '',
-      parsedJson: undefined,
-    });
+  it('drops a section when one side returns NOT_APPLICABLE', async () => {
+    vi.mocked(runCodex)
+      .mockResolvedValueOnce(codexOk('The event is tracked in src/analytics/track.ts.'))
+      .mockResolvedValueOnce(codexOk('NOT_APPLICABLE: no backend involvement for this event'));
 
     const slack = makeSlack();
-    const result = await runInformationalWorkflow({
-      task: {
-        event: {
-          eventId: 'Ev2',
-          channelId: 'C1',
-          threadTs: '1.1',
-          eventTs: '1.1',
-          userId: 'U1',
-          text: '<@UBOT1> what files handle login?',
-          rawEvent: {},
-        },
-        mentionDetected: true,
-        mentionType: 'bot',
-        isOwnerAuthor: false,
-        isCoreDevAuthor: false,
-        intent: 'INFORMATIONAL',
-      },
-      config,
-      slack,
-    });
+    const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.message).toContain('src/analytics/track.ts');
+    expect(result.message).not.toContain('Backend');
+    expect(result.message).not.toContain('Frontend');
+    expect(result.message).not.toContain('NOT_APPLICABLE');
+  });
+
+  it('still posts one side with an inconclusive note when the other fails', async () => {
+    vi.mocked(runCodex)
+      .mockResolvedValueOnce(codexOk('Here is the frontend answer.'))
+      .mockRejectedValueOnce(new Error('boom'));
+
+    const slack = makeSlack();
+    const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.message).toContain('Could not search newton-api');
+    expect(result.message).toContain('Here is the frontend answer.');
+  });
+
+  it('returns FAILED with fallback when both sides fail', async () => {
+    vi.mocked(runCodex).mockResolvedValueOnce(codexFail()).mockResolvedValueOnce(codexFail());
+
+    const slack = makeSlack();
+    const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
 
     expect(result.status).toBe('FAILED');
-    expect(result.message).toBeTruthy();
-  });
-
-  it('returns fallback message when codex returns empty', async () => {
-    vi.mocked(runCodex).mockResolvedValueOnce({
-      ok: true,
-      exitCode: 0,
-      timedOut: false,
-      stdout: '',
-      stderr: '',
-      lastMessage: '',
-      parsedJson: undefined,
-    });
-
-    const slack = makeSlack();
-    const result = await runInformationalWorkflow({
-      task: {
-        event: {
-          eventId: 'Ev3',
-          channelId: 'C1',
-          threadTs: '1.1',
-          eventTs: '1.1',
-          userId: 'U1',
-          text: '<@UBOT1> explain the pipeline',
-          rawEvent: {},
-        },
-        mentionDetected: true,
-        mentionType: 'bot',
-        isOwnerAuthor: false,
-        isCoreDevAuthor: false,
-        intent: 'INFORMATIONAL',
-      },
-      config,
-      slack,
-    });
-
-    expect(result.status).toBe('SUCCESS');
     expect(result.message).toContain('could not find a clear answer');
   });
 
-  it('posts answer to correct Slack thread', async () => {
-    vi.mocked(runCodex).mockResolvedValueOnce({
-      ok: true,
-      exitCode: 0,
-      timedOut: false,
-      stdout: '',
-      stderr: '',
-      lastMessage: 'Answer here',
-      parsedJson: undefined,
-    });
+  it('returns FAILED when both sides return NOT_APPLICABLE', async () => {
+    vi.mocked(runCodex)
+      .mockResolvedValueOnce(codexOk('NOT_APPLICABLE: unrelated to frontend'))
+      .mockResolvedValueOnce(codexOk('NOT_APPLICABLE: unrelated to backend'));
+
+    const slack = makeSlack();
+    const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+
+    expect(result.status).toBe('FAILED');
+    expect(result.message).toContain('could not find a clear answer');
+  });
+
+  it('runs single scoped codex when only one repo path is configured', async () => {
+    vi.mocked(runCodex).mockResolvedValueOnce(codexOk('Single-repo answer.'));
+
+    const slack = makeSlack();
+    const config = { ...baseConfig, repoPaths: { newtonWeb: '/code/newton-web', newtonApi: '' } };
+    const result = await runInformationalWorkflow({ task: makeTask(), config, slack });
+
+    expect(runCodex).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('SUCCESS');
+    expect(result.message).toBe('Single-repo answer.');
+    expect(result.message).not.toContain('Frontend');
+    expect(result.message).not.toContain('Backend');
+  });
+
+  it('falls back to a single unscoped codex run when no repo paths are configured', async () => {
+    vi.mocked(runCodex).mockResolvedValueOnce(codexOk('Generic answer.'));
+
+    const slack = makeSlack();
+    const config = { ...baseConfig, repoPaths: { newtonWeb: '', newtonApi: '' } };
+    const result = await runInformationalWorkflow({ task: makeTask(), config, slack });
+
+    expect(runCodex).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('SUCCESS');
+    expect(result.message).toBe('Generic answer.');
+  });
+
+  it('posts the reply to the correct Slack thread', async () => {
+    vi.mocked(runCodex).mockResolvedValueOnce(codexOk('Frontend bit.')).mockResolvedValueOnce(codexOk('Backend bit.'));
 
     const slack = makeSlack();
     await runInformationalWorkflow({
-      task: {
-        event: {
-          eventId: 'Ev4',
-          channelId: 'C_TARGET',
-          threadTs: '999.888',
-          eventTs: '999.888',
-          userId: 'U1',
-          text: '<@UBOT1> where is the config?',
-          rawEvent: {},
-        },
-        mentionDetected: true,
-        mentionType: 'bot',
-        isOwnerAuthor: false,
-        isCoreDevAuthor: false,
-        intent: 'INFORMATIONAL',
-      },
-      config,
+      task: makeTask({ channelId: 'C_TARGET', threadTs: '999.888', eventId: 'Ev4' }),
+      config: baseConfig,
       slack,
     });
 
     expect(slack.chat.postMessage as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
       expect.objectContaining({ channel: 'C_TARGET', thread_ts: '999.888' }),
     );
+  });
+
+  it('sends scoped prompts to each repo with its own cwd', async () => {
+    vi.mocked(runCodex)
+      .mockResolvedValueOnce(codexOk('Frontend answer.'))
+      .mockResolvedValueOnce(codexOk('Backend answer.'));
+
+    const slack = makeSlack();
+    await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+
+    const calls = vi.mocked(runCodex).mock.calls;
+    expect(calls).toHaveLength(2);
+    const webCall = calls.find(c => c[0].cwd === '/code/newton-web');
+    const apiCall = calls.find(c => c[0].cwd === '/code/newton-api');
+    expect(webCall).toBeDefined();
+    expect(apiCall).toBeDefined();
+    expect(webCall?.[0].prompt).toContain('newton-web');
+    expect(webCall?.[0].prompt).toContain('NOT_APPLICABLE');
+    expect(apiCall?.[0].prompt).toContain('newton-api');
+    expect(apiCall?.[0].prompt).toContain('NOT_APPLICABLE');
   });
 });
