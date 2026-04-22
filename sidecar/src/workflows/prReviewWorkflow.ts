@@ -362,15 +362,28 @@ export function formatSlackReviewSummary(
     return `*PR Review Complete* - ${totalFindings} findings identified, but GitHub review submission was skipped${breakdown} ${verdict}\n${prUrl}`;
   }
 
-  if (reviewResult.commentsPosted === 0) {
-    return `*PR Review Complete* - ${totalFindings} findings identified; review summary posted, but no inline comments were attached${breakdown} ${verdict}\n${prUrl}`;
+  const placedParts: string[] = [];
+  if (reviewResult.commentsPosted > 0) placedParts.push(`${reviewResult.commentsPosted} inline`);
+  if (reviewResult.fileLevelPosted > 0) placedParts.push(`${reviewResult.fileLevelPosted} file-level`);
+  const totalPlaced = reviewResult.commentsPosted + reviewResult.fileLevelPosted;
+
+  const dropReasons: string[] = [];
+  if (reviewResult.droppedOutsideDiff > 0) {
+    dropReasons.push(`${reviewResult.droppedOutsideDiff} outside the PR diff`);
+  }
+  const unplaced = totalFindings - totalPlaced - reviewResult.droppedOutsideDiff;
+  if (unplaced > 0) {
+    dropReasons.push(`${unplaced} without an anchor`);
   }
 
-  if (reviewResult.commentsPosted < totalFindings) {
-    return `*PR Review Complete* - ${totalFindings} findings identified; ${reviewResult.commentsPosted} inline comments posted, ${totalFindings - reviewResult.commentsPosted} could not be attached${breakdown} ${verdict}\n${prUrl}`;
+  if (totalPlaced === 0) {
+    const reason = dropReasons.length > 0 ? ` — ${dropReasons.join(', ')}` : '';
+    return `*PR Review Complete* - ${totalFindings} findings identified; review summary posted, no inline comments attached${reason}${breakdown} ${verdict}\n${prUrl}`;
   }
 
-  return `*PR Review Complete* - ${reviewResult.commentsPosted} inline comments posted on PR${breakdown} ${verdict}\n${prUrl}`;
+  const placed = placedParts.join(' + ') + ' posted';
+  const droppedClause = dropReasons.length > 0 ? `; ${dropReasons.join(', ')} dropped` : '';
+  return `*PR Review Complete* - ${totalFindings} findings identified; ${placed}${droppedClause}${breakdown} ${verdict}\n${prUrl}`;
 }
 
 const NO_NEW_CHANGES_TEXT =
@@ -744,14 +757,19 @@ export async function runPrReviewWorkflow(params: {
         repo: prContext.repo,
         pullNumber: prContext.number,
         commitId: prHeadSha,
-        findingsByRole: normalizedOutputs.map(output => ({ role: output.role, findings: output.attachableFindings })),
+        // Pass the raw findings list — submitPrReview splits them into inline
+        // (file+line inside a hunk), file-level (file in diff, no line), and
+        // dropped (outside the diff). Pre-validation against prDiff prevents
+        // GitHub from 422-ing the whole batch when a single entry is off-hunk.
+        findingsByRole: normalizedOutputs.map(output => ({ role: output.role, findings: output.findings })),
         summary: buildGithubReviewSummary(normalizedOutputs),
         githubToken,
+        prDiff: diff,
       });
 
       logStep?.({
         stage: 'pr_review.github_review.submitted',
-        message: `GitHub PR review submitted: ${reviewResult.event} (${reviewResult.commentsPosted}/${reviewResult.attemptedComments} inline comments posted, mode=${reviewResult.submissionMode}).`,
+        message: `GitHub PR review submitted: ${reviewResult.event} (${reviewResult.commentsPosted}/${reviewResult.attemptedComments} inline, ${reviewResult.fileLevelPosted}/${reviewResult.fileLevelAttempted} file-level, ${reviewResult.droppedOutsideDiff} dropped outside diff, mode=${reviewResult.submissionMode}).`,
         data: {
           ...reviewResult,
           totalFindings: allFindings.length,

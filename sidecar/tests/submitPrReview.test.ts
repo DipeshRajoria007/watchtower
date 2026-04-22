@@ -99,8 +99,10 @@ describe('submitPrReview', () => {
     expect(result.submissionMode).toBe('summary_only');
   });
 
-  it('excludes findings without file/line from inline comments', async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response('{}', { status: 200 }));
+  it('excludes findings without file/line from inline comments and posts file-only as file-level', async () => {
+    vi.mocked(globalThis.fetch)
+      .mockResolvedValueOnce(new Response('{}', { status: 200 })) // review
+      .mockResolvedValueOnce(new Response('{}', { status: 201 })); // file-level for src/b.ts
 
     const result = await submitPrReview({
       owner: 'Newton-School',
@@ -111,9 +113,9 @@ describe('submitPrReview', () => {
         {
           role: 'reviewer',
           findings: [
-            baseFinding('medium', 'src/a.ts', 10),
-            baseFinding('medium'), // no file/line
-            baseFinding('low', 'src/b.ts', 0), // line 0 excluded
+            baseFinding('medium', 'src/a.ts', 10), // inline
+            baseFinding('medium'), // no file → skip entirely
+            baseFinding('low', 'src/b.ts', 0), // file-only → file-level
           ],
         },
       ],
@@ -124,13 +126,17 @@ describe('submitPrReview', () => {
     const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string);
     expect(result.attemptedComments).toBe(1);
     expect(result.commentsPosted).toBe(1);
+    expect(result.fileLevelAttempted).toBe(1);
+    expect(result.fileLevelPosted).toBe(1);
     expect(result.submissionMode).toBe('inline');
     expect(body.comments).toHaveLength(1);
     expect(body.comments[0].path).toBe('src/a.ts');
   });
 
-  it('returns summary_only with missing_location fallback when findings are not line-attachable', async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response('{}', { status: 200 }));
+  it('posts file-only findings as file-level comments after the review', async () => {
+    vi.mocked(globalThis.fetch)
+      .mockResolvedValueOnce(new Response('{}', { status: 200 })) // review POST
+      .mockResolvedValueOnce(new Response('{}', { status: 201 })); // file-level comment POST
 
     const result = await submitPrReview({
       owner: 'Newton-School',
@@ -138,18 +144,48 @@ describe('submitPrReview', () => {
       pullNumber: 123,
       commitId: 'abc123',
       findingsByRole: [{ role: 'reviewer', findings: [baseFinding('medium'), baseFinding('low', 'src/a.ts', 0)] }],
-      summary: 'Summary only',
+      summary: 'Summary + file-level',
       githubToken: 'ghp_test',
     });
 
     expect(result.submitted).toBe(true);
     expect(result.attemptedComments).toBe(0);
     expect(result.commentsPosted).toBe(0);
+    expect(result.fileLevelAttempted).toBe(1);
+    expect(result.fileLevelPosted).toBe(1);
+    expect(result.submissionMode).toBe('summary_only');
+    expect(result.fallbackReason).toBeUndefined();
+
+    // First call: review POST with empty inline comments.
+    const reviewBody = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string);
+    expect(reviewBody.comments).toHaveLength(0);
+
+    // Second call: the file-level subject_type='file' comment.
+    const fileLevelBody = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[1][1]?.body as string);
+    expect(fileLevelBody.path).toBe('src/a.ts');
+    expect(fileLevelBody.subject_type).toBe('file');
+    expect(fileLevelBody.line).toBeUndefined();
+  });
+
+  it('returns summary_only with missing_location fallback when no finding has any file', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const result = await submitPrReview({
+      owner: 'Newton-School',
+      repo: 'newton-web',
+      pullNumber: 123,
+      commitId: 'abc123',
+      findingsByRole: [{ role: 'reviewer', findings: [baseFinding('medium'), baseFinding('low')] }],
+      summary: 'No locations anywhere',
+      githubToken: 'ghp_test',
+    });
+
+    expect(result.submitted).toBe(true);
+    expect(result.attemptedComments).toBe(0);
+    expect(result.commentsPosted).toBe(0);
+    expect(result.fileLevelAttempted).toBe(0);
     expect(result.submissionMode).toBe('summary_only');
     expect(result.fallbackReason).toBe('missing_location');
-
-    const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string);
-    expect(body.comments).toHaveLength(0);
   });
 
   it('returns submitted false when no GitHub token', async () => {
@@ -212,5 +248,119 @@ describe('submitPrReview', () => {
 
     expect(result.submitted).toBe(false);
     expect(result.submissionMode).toBe('skipped');
+  });
+
+  describe('with prDiff pre-validation', () => {
+    const DIFF = `diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,2 +1,3 @@
+ context
++added line
+ keep
+diff --git a/src/b.ts b/src/b.ts
+--- a/src/b.ts
++++ b/src/b.ts
+@@ -5,2 +5,3 @@
+ x
++y
+ z
+`;
+
+    it('drops inline comments whose lines are outside the diff hunks and keeps the valid ones', async () => {
+      vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+      const result = await submitPrReview({
+        owner: 'Newton-School',
+        repo: 'newton-web',
+        pullNumber: 123,
+        commitId: 'abc123',
+        findingsByRole: [
+          {
+            role: 'reviewer',
+            findings: [
+              baseFinding('high', 'src/a.ts', 2), // in hunk 1 → keep
+              baseFinding('high', 'src/a.ts', 50), // outside diff → drop
+              baseFinding('medium', 'src/b.ts', 6), // in hunk → keep
+              baseFinding('low', 'src/c.ts', 1), // file not in diff → drop
+            ],
+          },
+        ],
+        summary: 'Mixed validity',
+        githubToken: 'ghp_test',
+        prDiff: DIFF,
+      });
+
+      expect(result.submitted).toBe(true);
+      expect(result.attemptedComments).toBe(2);
+      expect(result.commentsPosted).toBe(2);
+      expect(result.droppedOutsideDiff).toBe(2);
+      expect(result.submissionMode).toBe('inline');
+
+      const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string);
+      expect(body.comments).toHaveLength(2);
+      expect(body.comments.map((c: { path: string }) => c.path).sort()).toEqual(['src/a.ts', 'src/b.ts']);
+    });
+
+    it('posts file-level comments only when the file is in the diff', async () => {
+      vi.mocked(globalThis.fetch)
+        .mockResolvedValueOnce(new Response('{}', { status: 200 })) // review
+        .mockResolvedValueOnce(new Response('{}', { status: 201 })); // file-level for src/a.ts
+
+      const result = await submitPrReview({
+        owner: 'Newton-School',
+        repo: 'newton-web',
+        pullNumber: 123,
+        commitId: 'abc123',
+        findingsByRole: [
+          {
+            role: 'reviewer',
+            findings: [
+              baseFinding('medium', 'src/a.ts'), // file-only, file in diff → post file-level
+              baseFinding('medium', 'src/missing.ts'), // file-only, file NOT in diff → drop entirely
+            ],
+          },
+        ],
+        summary: 'file-level fan-out',
+        githubToken: 'ghp_test',
+        prDiff: DIFF,
+      });
+
+      expect(result.attemptedComments).toBe(0);
+      expect(result.fileLevelAttempted).toBe(1);
+      expect(result.fileLevelPosted).toBe(1);
+      expect(result.submissionMode).toBe('summary_only');
+
+      // Second fetch is the file-level POST.
+      expect(vi.mocked(globalThis.fetch).mock.calls).toHaveLength(2);
+      const fileLevelUrl = vi.mocked(globalThis.fetch).mock.calls[1][0];
+      expect(String(fileLevelUrl)).toContain('/pulls/123/comments');
+      const fileLevelBody = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[1][1]?.body as string);
+      expect(fileLevelBody.path).toBe('src/a.ts');
+      expect(fileLevelBody.subject_type).toBe('file');
+    });
+
+    it('still falls back to summary-only if GitHub 422s despite pre-validation (diff drift)', async () => {
+      vi.mocked(globalThis.fetch)
+        .mockResolvedValueOnce(new Response('Validation Failed', { status: 422 })) // first review POST with comments
+        .mockResolvedValueOnce(new Response('{}', { status: 200 })); // retry without comments
+
+      const result = await submitPrReview({
+        owner: 'Newton-School',
+        repo: 'newton-web',
+        pullNumber: 123,
+        commitId: 'abc123',
+        findingsByRole: [{ role: 'reviewer', findings: [baseFinding('high', 'src/a.ts', 2)] }],
+        summary: 'Diff drift',
+        githubToken: 'ghp_test',
+        prDiff: DIFF,
+      });
+
+      expect(result.submitted).toBe(true);
+      expect(result.attemptedComments).toBe(1);
+      expect(result.commentsPosted).toBe(0);
+      expect(result.submissionMode).toBe('summary_only');
+      expect(result.fallbackReason).toBe('github_rejected_comments');
+    });
   });
 });
