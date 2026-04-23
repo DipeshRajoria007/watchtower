@@ -11,8 +11,9 @@ import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint } from '../github/githubAuth.js';
 import { prepareWorkflowContext, extractReplyFromCodexResult } from './shared/workflowUtils.js';
+import { resolveWatchtowerPath, buildLiveStateSnapshot } from './shared/selfInquiryContext.js';
 
-type RepoName = 'newton-web' | 'newton-api';
+type RepoName = 'newton-web' | 'newton-api' | 'miniog-self';
 type Target = { repo: RepoName; cwd: string };
 
 type PromptContext = {
@@ -57,6 +58,19 @@ export async function runInformationalWorkflow(params: {
   if (config.repoPaths.newtonWeb) targets.push({ repo: 'newton-web', cwd: config.repoPaths.newtonWeb });
   if (config.repoPaths.newtonApi) targets.push({ repo: 'newton-api', cwd: config.repoPaths.newtonApi });
 
+  const selfPath = await resolveWatchtowerPath(config);
+  if (selfPath) {
+    targets.push({ repo: 'miniog-self', cwd: selfPath });
+  } else {
+    logStep?.({
+      stage: 'informational.self.skipped',
+      level: 'WARN',
+      message: 'Watchtower self-inquiry target not resolved; bot-about-itself questions will fall through.',
+    });
+  }
+
+  const selfSnapshot = selfPath ? await buildLiveStateSnapshot(config) : undefined;
+
   let reply: string;
   let ok: boolean;
 
@@ -65,7 +79,7 @@ export async function runInformationalWorkflow(params: {
     reply = single.reply;
     ok = single.ok;
   } else {
-    const outcomes = await runFanout({ targets, task, promptCtx, logStep, signal });
+    const outcomes = await runFanout({ targets, task, promptCtx, selfSnapshot, logStep, signal });
     const synth = synthesizeInformationalReplies(outcomes);
     reply = synth.reply;
     ok = synth.ok;
@@ -136,10 +150,11 @@ async function runFanout(params: {
   targets: Target[];
   task: NormalizedTask;
   promptCtx: PromptContext;
+  selfSnapshot?: string;
   logStep?: WorkflowStepLogger;
   signal?: AbortSignal;
 }): Promise<PerRepoOutcome[]> {
-  const { targets, task, promptCtx, logStep, signal } = params;
+  const { targets, task, promptCtx, selfSnapshot, logStep, signal } = params;
 
   logStep?.({
     stage: 'informational.fanout.start',
@@ -151,7 +166,10 @@ async function runFanout(params: {
     targets.map(target =>
       runCodex({
         cwd: target.cwd,
-        prompt: buildScopedPrompt({ target, task, promptCtx }),
+        prompt:
+          target.repo === 'miniog-self'
+            ? buildSelfInquiryPrompt({ target, task, promptCtx, snapshot: selfSnapshot ?? '' })
+            : buildScopedPrompt({ target, task, promptCtx }),
         githubToken: promptCtx.githubToken,
         ...highReasoningProfile(getActiveBackendId()),
         onLog: logStep,
@@ -200,6 +218,14 @@ export function synthesizeInformationalReplies(outcomes: PerRepoOutcome[]): { re
   const answers = outcomes.filter((o): o is Extract<PerRepoOutcome, { kind: 'answer' }> => o.kind === 'answer');
 
   if (answers.length === 0) {
+    const allNotApplicable = outcomes.length > 0 && outcomes.every(o => o.kind === 'not_applicable');
+    if (allNotApplicable) {
+      const scope = outcomes.map(o => repoLabel(o.repo)).join(', ');
+      return {
+        reply: `That question doesn't seem to map to anything I can search (${scope}). Try rephrasing or pointing me at a specific area.`,
+        ok: false,
+      };
+    }
     return { reply: FALLBACK_MESSAGE, ok: false };
   }
 
@@ -216,7 +242,7 @@ export function synthesizeInformationalReplies(outcomes: PerRepoOutcome[]): { re
   }
 
   const sections: string[] = [];
-  for (const repo of ['newton-web', 'newton-api'] as RepoName[]) {
+  for (const repo of ['newton-web', 'newton-api', 'miniog-self'] as RepoName[]) {
     const ans = answers.find(a => a.repo === repo);
     if (!ans) continue;
     sections.push(`*${repoLabel(repo)}:*\n${ans.text}`);
@@ -280,10 +306,54 @@ ${promptCtx.threadContext}${promptCtx.imageContext}
 `.trim();
 }
 
-function shortRepo(repo: RepoName): 'web' | 'api' {
-  return repo === 'newton-web' ? 'web' : 'api';
+function shortRepo(repo: RepoName): 'web' | 'api' | 'self' {
+  if (repo === 'newton-web') return 'web';
+  if (repo === 'newton-api') return 'api';
+  return 'self';
 }
 
 function repoLabel(repo: RepoName): string {
-  return repo === 'newton-web' ? 'Frontend (newton-web)' : 'Backend (newton-api)';
+  if (repo === 'newton-web') return 'Frontend (newton-web)';
+  if (repo === 'newton-api') return 'Backend (newton-api)';
+  return 'Bot internals (miniOG)';
+}
+
+function buildSelfInquiryPrompt(params: {
+  target: Target;
+  task: NormalizedTask;
+  promptCtx: PromptContext;
+  snapshot: string;
+}): string {
+  const { target, task, promptCtx, snapshot } = params;
+  return `
+${buildMentionSystemPrompt({ task, workflow: 'INFORMATIONAL' })}
+
+Context:
+- You are miniOG, a developer assistant bot in a Slack workspace.
+- The user @mentioned you in a Slack thread asking a question that may be about miniOG / Watchtower **itself** — its capabilities, configuration, MCP integrations, supported backends, permission model, behavior, or runtime state.
+- Sibling agents are searching the Newton product repos in parallel — you are responsible only for questions about the bot itself.
+- You have READ-ONLY access to the watchtower source at: ${target.cwd}
+- GitHub auth mode: ${githubAuthModeHint(Boolean(promptCtx.githubToken))}
+
+Scope for this run:
+- If the user's question is NOT about miniOG/Watchtower itself (e.g. it asks about the Newton product code, a PR, or business logic), respond with exactly:
+    ${NOT_APPLICABLE_PREFIX} <one short reason>
+  and nothing else. Do not guess.
+- Otherwise, answer authoritatively using:
+    1. The live state snapshot below (runtime facts not derivable from source).
+    2. The watchtower source at ${target.cwd} (read code, configs, package.json, README, AGENTS.md, etc.).
+- Cross-check the snapshot against the source when it matters (e.g. for "is X MCP configured", confirm against \`~/.claude.json\` and the codebase before claiming).
+- Do NOT add a header like "Bot internals:" — the caller adds section headers if needed.
+
+${snapshot}
+
+Instructions:
+- Answer the user's question thoroughly but concisely.
+- You can read files, search code, and explain things. Do NOT modify any files, create branches, or make commits.
+- Use Slack markdown for formatting (*bold*, _italic_, \`code\`, \`\`\`code blocks\`\`\`, bullet lists).
+- If you reference code, quote the relevant parts inline.
+
+Slack thread context:
+${promptCtx.threadContext}${promptCtx.imageContext}
+`.trim();
 }

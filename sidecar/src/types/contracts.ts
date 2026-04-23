@@ -66,6 +66,13 @@ export interface AppConfig {
   repoPaths: {
     newtonWeb: string;
     newtonApi: string;
+    /**
+     * Optional absolute path to the watchtower repo itself. Powers the
+     * self-inquiry target in the informational workflow so miniOG can answer
+     * questions about its own configuration. If unset, the workflow attempts
+     * to auto-detect via the sidecar's __dirname.
+     */
+    watchtower?: string;
   };
   /**
    * Absolute directory that miniOG's working clones must live under. Enforced

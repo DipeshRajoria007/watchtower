@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { runInformationalWorkflow } from '../src/workflows/informationalWorkflow.js';
 import { runCodex } from '../src/codex/runCodex.js';
+import { resolveWatchtowerPath } from '../src/workflows/shared/selfInquiryContext.js';
 import type { WebClient } from '@slack/web-api';
 import type { CodexRunResult } from '../src/types/contracts.js';
 
@@ -32,6 +33,11 @@ vi.mock('../src/router/repoClassifier.js', () => ({
 
 vi.mock('../src/workspaces/workspaceManager.js', () => ({
   resolveWorkspace: vi.fn((repoPath: string) => repoPath),
+}));
+
+vi.mock('../src/workflows/shared/selfInquiryContext.js', () => ({
+  resolveWatchtowerPath: vi.fn().mockResolvedValue(undefined),
+  buildLiveStateSnapshot: vi.fn().mockResolvedValue('## Live state snapshot\n- (mocked)'),
 }));
 
 function makeSlack() {
@@ -108,6 +114,8 @@ function makeTask(overrides: Partial<{ channelId: string; threadTs: string; text
 describe('informationalWorkflow', () => {
   beforeEach(() => {
     vi.mocked(runCodex).mockReset();
+    vi.mocked(resolveWatchtowerPath).mockReset();
+    vi.mocked(resolveWatchtowerPath).mockResolvedValue(undefined);
   });
 
   it('fans out to both repos and combines answers with section headers', async () => {
@@ -164,7 +172,7 @@ describe('informationalWorkflow', () => {
     expect(result.message).toContain('could not find a clear answer');
   });
 
-  it('returns FAILED when both sides return NOT_APPLICABLE', async () => {
+  it('returns FAILED with the softer out-of-scope message when every outcome is NOT_APPLICABLE', async () => {
     vi.mocked(runCodex)
       .mockResolvedValueOnce(codexOk('NOT_APPLICABLE: unrelated to frontend'))
       .mockResolvedValueOnce(codexOk('NOT_APPLICABLE: unrelated to backend'));
@@ -173,7 +181,10 @@ describe('informationalWorkflow', () => {
     const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
 
     expect(result.status).toBe('FAILED');
-    expect(result.message).toContain('could not find a clear answer');
+    expect(result.message).toContain("doesn't seem to map");
+    expect(result.message).toContain('Frontend (newton-web)');
+    expect(result.message).toContain('Backend (newton-api)');
+    expect(result.message).not.toContain('could not find a clear answer');
   });
 
   it('runs single scoped codex when only one repo path is configured', async () => {
@@ -235,5 +246,93 @@ describe('informationalWorkflow', () => {
     expect(webCall?.[0].prompt).toContain('NOT_APPLICABLE');
     expect(apiCall?.[0].prompt).toContain('newton-api');
     expect(apiCall?.[0].prompt).toContain('NOT_APPLICABLE');
+  });
+
+  describe('self-inquiry target', () => {
+    it('returns the self answer alone when both product repos abstain', async () => {
+      vi.mocked(resolveWatchtowerPath).mockResolvedValue('/code/watchtower');
+      vi.mocked(runCodex)
+        .mockResolvedValueOnce(codexOk('NOT_APPLICABLE: not a frontend question'))
+        .mockResolvedValueOnce(codexOk('NOT_APPLICABLE: not a backend question'))
+        .mockResolvedValueOnce(codexOk('Figma MCP is not configured in `~/.claude.json`.'));
+
+      const slack = makeSlack();
+      const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+
+      expect(runCodex).toHaveBeenCalledTimes(3);
+      expect(result.status).toBe('SUCCESS');
+      expect(result.message).toBe('Figma MCP is not configured in `~/.claude.json`.');
+      expect(result.message).not.toContain('Bot internals');
+      expect(result.message).not.toContain('NOT_APPLICABLE');
+    });
+
+    it('combines all three sections in web → api → bot order when every target answers', async () => {
+      vi.mocked(resolveWatchtowerPath).mockResolvedValue('/code/watchtower');
+      vi.mocked(runCodex)
+        .mockResolvedValueOnce(codexOk('Frontend bit.'))
+        .mockResolvedValueOnce(codexOk('Backend bit.'))
+        .mockResolvedValueOnce(codexOk('Bot bit.'));
+
+      const slack = makeSlack();
+      const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+
+      expect(result.status).toBe('SUCCESS');
+      const webIdx = result.message?.indexOf('*Frontend (newton-web):*') ?? -1;
+      const apiIdx = result.message?.indexOf('*Backend (newton-api):*') ?? -1;
+      const selfIdx = result.message?.indexOf('*Bot internals (miniOG):*') ?? -1;
+      expect(webIdx).toBeGreaterThanOrEqual(0);
+      expect(apiIdx).toBeGreaterThan(webIdx);
+      expect(selfIdx).toBeGreaterThan(apiIdx);
+    });
+
+    it('injects the live state snapshot into the self-inquiry prompt with the watchtower cwd', async () => {
+      vi.mocked(resolveWatchtowerPath).mockResolvedValue('/code/watchtower');
+      vi.mocked(runCodex)
+        .mockResolvedValue(codexOk('NOT_APPLICABLE: pass-through'))
+        .mockResolvedValueOnce(codexOk('Frontend answer.'))
+        .mockResolvedValueOnce(codexOk('Backend answer.'))
+        .mockResolvedValueOnce(codexOk('Self answer.'));
+
+      const slack = makeSlack();
+      await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+
+      const calls = vi.mocked(runCodex).mock.calls;
+      const selfCall = calls.find(c => c[0].cwd === '/code/watchtower');
+      expect(selfCall).toBeDefined();
+      expect(selfCall?.[0].prompt).toContain('Live state snapshot');
+      expect(selfCall?.[0].prompt).toContain('miniOG / Watchtower **itself**');
+      expect(selfCall?.[0].prompt).toContain('NOT_APPLICABLE');
+    });
+
+    it('falls through cleanly when self-inquiry abstains and a product repo answers', async () => {
+      vi.mocked(resolveWatchtowerPath).mockResolvedValue('/code/watchtower');
+      vi.mocked(runCodex)
+        .mockResolvedValueOnce(codexOk('Frontend answer.'))
+        .mockResolvedValueOnce(codexOk('NOT_APPLICABLE: backend not involved'))
+        .mockResolvedValueOnce(codexOk('NOT_APPLICABLE: not a question about the bot'));
+
+      const slack = makeSlack();
+      const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+
+      expect(result.status).toBe('SUCCESS');
+      expect(result.message).toBe('Frontend answer.');
+      expect(result.message).not.toContain('NOT_APPLICABLE');
+      expect(result.message).not.toContain('Bot internals');
+    });
+
+    it('skips the self-inquiry target when no watchtower path can be resolved', async () => {
+      vi.mocked(resolveWatchtowerPath).mockResolvedValue(undefined);
+      vi.mocked(runCodex)
+        .mockResolvedValueOnce(codexOk('NOT_APPLICABLE: unrelated to frontend'))
+        .mockResolvedValueOnce(codexOk('NOT_APPLICABLE: unrelated to backend'));
+
+      const slack = makeSlack();
+      const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+
+      expect(runCodex).toHaveBeenCalledTimes(2);
+      expect(result.status).toBe('FAILED');
+      expect(result.message).toContain("doesn't seem to map");
+      expect(result.message).not.toContain('Bot internals');
+    });
   });
 });

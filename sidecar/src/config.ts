@@ -28,6 +28,7 @@ const settingsSchema = z.object({
   core_dev_slack_user_ids: z.string().default(''),
   core_dev_slack_user_group: z.string().default(''),
   mini_og_repo_root: z.string().default('/Users/dipesh/code/mini-og'),
+  watchtower_path: z.string().default(''),
 });
 
 type SettingsRow = z.infer<typeof settingsSchema>;
@@ -168,6 +169,11 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
     } catch {
       /* column already exists */
     }
+    try {
+      db.exec(`ALTER TABLE app_settings ADD COLUMN watchtower_path TEXT NOT NULL DEFAULT ''`);
+    } catch {
+      /* column already exists */
+    }
 
     const row = db
       .prepare(
@@ -189,7 +195,8 @@ export function loadConfigFromDb(dbPath: string): AppConfig {
           COALESCE(pm_task_timeout_ms, 600000) AS pm_task_timeout_ms,
           COALESCE(core_dev_slack_user_ids, '') AS core_dev_slack_user_ids,
           COALESCE(core_dev_slack_user_group, '') AS core_dev_slack_user_group,
-          COALESCE(mini_og_repo_root, '/Users/dipesh/code/mini-og') AS mini_og_repo_root
+          COALESCE(mini_og_repo_root, '/Users/dipesh/code/mini-og') AS mini_og_repo_root,
+          COALESCE(watchtower_path, '') AS watchtower_path
          FROM app_settings
          WHERE id = 1
          LIMIT 1`,
@@ -307,6 +314,10 @@ function mapSettingsToConfig(settings: SettingsRow, accessControlSettings?: Acce
   if (offending.length > 0) {
     throw new MiniOgRepoRootViolationError(miniOgRepoRoot, offending);
   }
+
+  const watchtowerPath = settings.watchtower_path.trim()
+    ? mustBeAbsoluteExistingDir(settings.watchtower_path, 'watchtower_path')
+    : undefined;
   const accessControl =
     accessControlSettings !== undefined
       ? toResolvedAccessControlConfig(accessControlSettings, ownerSlackUserIds)
@@ -331,6 +342,7 @@ function mapSettingsToConfig(settings: SettingsRow, accessControlSettings?: Acce
     repoPaths: {
       newtonWeb,
       newtonApi,
+      watchtower: watchtowerPath,
     },
     miniOgRepoRoot,
     unknownTaskPolicy: 'desktop_only',
