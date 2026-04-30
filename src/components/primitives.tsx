@@ -5,12 +5,12 @@ import {
   formatDurationSeconds,
   formatPercent,
   formatTokens,
-  formatTimestamp,
   getPriorityTone,
   getStatusTone,
   humanizeMode,
   prettyJson,
 } from '../lib/formatters';
+import { Timestamp } from './Timestamp';
 import type {
   ChannelHeat,
   DashboardMetrics,
@@ -242,7 +242,9 @@ export function RunList({
                 <StatusBadge label={run.status} tone={getStatusTone(run.status)} />
               </div>
               <div className="run-card-meta">
-                <span>Updated {formatTimestamp(run.updatedAt)}</span>
+                <span>
+                  Updated <Timestamp value={run.updatedAt} />
+                </span>
               </div>
               {run.errorMessage ? <p className="run-card-error">{run.errorMessage}</p> : null}
             </button>
@@ -292,11 +294,15 @@ export function RunInspector({
           </div>
           <div>
             <span>Created</span>
-            <strong>{formatTimestamp(run.createdAt)}</strong>
+            <strong>
+              <Timestamp value={run.createdAt} />
+            </strong>
           </div>
           <div>
             <span>Updated</span>
-            <strong>{formatTimestamp(run.updatedAt)}</strong>
+            <strong>
+              <Timestamp value={run.updatedAt} />
+            </strong>
           </div>
           <div>
             <span>Trace Entries</span>
@@ -340,7 +346,9 @@ export function TraceList({ logs, selectedRun }: { logs: JobLogEntry[]; selected
           <div className="trace-top">
             <StatusBadge label={log.level} tone={getStatusTone(log.level)} />
             <span className="trace-stage">{log.stage}</span>
-            <span className="trace-time">{formatTimestamp(log.createdAt)}</span>
+            <span className="trace-time">
+              <Timestamp value={log.createdAt} />
+            </span>
           </div>
           <div className="trace-message">
             <SlackMarkdown text={log.message} />
@@ -630,7 +638,9 @@ export function RunsTable({
               <td className="task-cell">{run.taskSummary}</td>
               <td className="workflow-cell">{run.workflow}</td>
               <td className="channel-cell col-channel">{run.channelId}</td>
-              <td className="updated-cell col-updated">{formatTimestamp(run.updatedAt)}</td>
+              <td className="updated-cell col-updated">
+                <Timestamp value={run.updatedAt} />
+              </td>
               {onCancelRun && (
                 <td className="actions-cell col-actions">
                   {isCancellable(run.status) && (
@@ -751,7 +761,9 @@ export function ShellTraceView({ logs, highlightStage }: { logs: JobLogEntry[]; 
               <span className="shell-group-stage">
                 {'\u25B8'} {group.stage}
               </span>
-              <span className="shell-group-time">{formatTimestamp(group.startTime)}</span>
+              <span className="shell-group-time">
+                <Timestamp value={group.startTime} />
+              </span>
             </div>
 
             {group.entries.map(log => {
