@@ -3,7 +3,8 @@ import { invoke } from '@tauri-apps/api/core';
 import type { GroupedAggregate, PerformanceOverview, TopRun } from '../types';
 import { GlowCard } from '../components/GlowCard';
 import { PageIntro } from '../components/primitives';
-import { formatCostUsd, formatDurationMs, formatPercent, formatTimestamp, formatTokens } from '../lib/formatters';
+import { formatCostUsd, formatDurationMs, formatPercent, formatTokens } from '../lib/formatters';
+import { Timestamp } from '../components/Timestamp';
 
 type RangeKey = '24h' | '7d' | '30d' | 'all';
 
@@ -257,7 +258,9 @@ function TopRunsTable({ rows, onSelect }: { rows: TopRun[]; onSelect: (jobId: st
         <tbody>
           {rows.map(row => (
             <tr key={row.jobId} className="row-clickable" onClick={() => onSelect(row.jobId)}>
-              <td>{formatTimestamp(row.startedAt)}</td>
+              <td>
+                <Timestamp value={row.startedAt} />
+              </td>
               <td>{row.workflow}</td>
               <td>{row.status}</td>
               <td className="num">{row.callCount}</td>

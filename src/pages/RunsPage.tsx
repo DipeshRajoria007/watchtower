@@ -11,14 +11,8 @@ import {
   WorkflowGraph,
 } from '../components/primitives';
 import type { SortDirection, SortField } from '../components/primitives';
-import {
-  formatCostUsd,
-  formatDurationMs,
-  formatPercent,
-  formatTimestamp,
-  formatTokens,
-  getStatusTone,
-} from '../lib/formatters';
+import { formatCostUsd, formatDurationMs, formatPercent, formatTokens, getStatusTone } from '../lib/formatters';
+import { Timestamp } from '../components/Timestamp';
 import { AgentPipelineView } from '../components/AgentPipelineView';
 import { GlowCard } from '../components/GlowCard';
 
@@ -188,11 +182,15 @@ export function RunsPage({
               </div>
               <div>
                 <span>Created</span>
-                <strong>{formatTimestamp(selectedRun.createdAt)}</strong>
+                <strong>
+                  <Timestamp value={selectedRun.createdAt} />
+                </strong>
               </div>
               <div>
                 <span>Updated</span>
-                <strong>{formatTimestamp(selectedRun.updatedAt)}</strong>
+                <strong>
+                  <Timestamp value={selectedRun.updatedAt} />
+                </strong>
               </div>
               <div>
                 <span>Trace Entries</span>
@@ -308,7 +306,9 @@ export function RunsPage({
                   <tbody>
                     {costSummary.calls.map(call => (
                       <tr key={call.id} className={call.ok ? '' : 'row-failed'}>
-                        <td>{formatTimestamp(call.createdAt)}</td>
+                        <td>
+                          <Timestamp value={call.createdAt} />
+                        </td>
                         <td>{call.role ?? '—'}</td>
                         <td>{call.backend}</td>
                         <td className="muted">{call.model ?? '—'}</td>
