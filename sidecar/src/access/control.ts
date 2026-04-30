@@ -240,14 +240,22 @@ export function evaluateAccess(params: {
   const matchedGroups = userGroups.filter(key => channelAllowed(accessControl.groups[key], channelId, channelType));
   const allowed = matchedGroups.some(key => ACCESS_RANK[key] >= ACCESS_RANK[requiredLevel]);
 
+  let reason: string | undefined;
+  if (!allowed) {
+    const channelEnabledForAnyGroup = ACCESS_GROUP_KEYS.some(key =>
+      channelAllowed(accessControl.groups[key], channelId, channelType),
+    );
+    reason = channelEnabledForAnyGroup
+      ? "Sorry, you're not on the access list for this channel. Please contact an admin."
+      : "Sorry, I don't have access to help in this channel. Please reach out to an admin.";
+  }
+
   return {
     allowed,
     ownerBypass: false,
     requiredLevel,
     matchedGroups,
     userGroups,
-    reason: allowed
-      ? undefined
-      : `Access denied. This request needs ${requiredLevel} access in this channel. Ask an admin to update Watchtower Settings.`,
+    reason,
   };
 }

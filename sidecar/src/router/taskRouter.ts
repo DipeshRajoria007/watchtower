@@ -141,8 +141,8 @@ export async function routeTask(params: {
 
     if (shouldBlock) {
       const denialText = isDirectMessage
-        ? "You don't have DM access to miniOG. Ask an admin to add you."
-        : (accessDecision.reason ?? 'Access denied.');
+        ? "Sorry about this — you don't currently have access to DM me. Please contact an admin."
+        : (accessDecision.reason ?? "Sorry, you're not on the access list for this channel. Please contact an admin.");
 
       await slack.chat.postMessage({
         channel: task.event.channelId,
