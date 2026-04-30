@@ -765,6 +765,7 @@ export async function runPrReviewWorkflow(params: {
         summary: buildGithubReviewSummary(normalizedOutputs),
         githubToken,
         prDiff: diff,
+        logStep,
       });
 
       logStep?.({
