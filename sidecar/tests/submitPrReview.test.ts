@@ -233,6 +233,113 @@ describe('submitPrReview', () => {
     expect(retryBody.comments).toHaveLength(0);
   });
 
+  it('retries the body-only fallback once after a transient 5xx, then succeeds', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(globalThis.fetch)
+        .mockResolvedValueOnce(new Response('Validation Failed', { status: 422 })) // initial with comments
+        .mockResolvedValueOnce(new Response('Bad Gateway', { status: 502 })) // body-only #1 transient
+        .mockResolvedValueOnce(new Response('{}', { status: 200 })); // body-only #2 succeeds
+
+      const promise = submitPrReview({
+        owner: 'Newton-School',
+        repo: 'newton-web',
+        pullNumber: 123,
+        commitId: 'abc123',
+        findingsByRole: [{ role: 'reviewer', findings: [baseFinding('high', 'src/a.ts', 4)] }],
+        summary: 'Transient retry test',
+        githubToken: 'ghp_test',
+      });
+
+      // Drive the 1.5s backoff timer.
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await promise;
+
+      expect(result.submitted).toBe(true);
+      expect(result.submissionMode).toBe('summary_only');
+      expect(result.fallbackReason).toBe('github_rejected_comments');
+      expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+
+      // Both body-only calls should have empty comments.
+      const retry1Body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[1][1]?.body as string);
+      const retry2Body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[2][1]?.body as string);
+      expect(retry1Body.comments).toHaveLength(0);
+      expect(retry2Body.comments).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT retry the body-only fallback again on a deterministic 422', async () => {
+    vi.mocked(globalThis.fetch)
+      .mockResolvedValueOnce(new Response('Validation Failed', { status: 422 })) // initial with comments
+      .mockResolvedValueOnce(new Response('Validation Failed', { status: 422 })); // body-only also 422 → no retry
+
+    const result = await submitPrReview({
+      owner: 'Newton-School',
+      repo: 'newton-web',
+      pullNumber: 123,
+      commitId: 'abc123',
+      findingsByRole: [{ role: 'reviewer', findings: [baseFinding('high', 'src/a.ts', 4)] }],
+      summary: 'Deterministic 422',
+      githubToken: 'ghp_test',
+    });
+
+    expect(result.submitted).toBe(false);
+    expect(result.submissionMode).toBe('skipped');
+    expect(result.fallbackReason).toBe('github_rejected_comments');
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('persists GitHub rejection details to logStep', async () => {
+    const logStep = vi.fn();
+    vi.mocked(globalThis.fetch)
+      .mockResolvedValueOnce(new Response('Validation Failed: line out of range', { status: 422 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    await submitPrReview({
+      owner: 'Newton-School',
+      repo: 'newton-web',
+      pullNumber: 123,
+      commitId: 'abc123',
+      findingsByRole: [{ role: 'reviewer', findings: [baseFinding('high', 'src/a.ts', 999)] }],
+      summary: 'logStep test',
+      githubToken: 'ghp_test',
+      logStep,
+    });
+
+    const rejectionCall = logStep.mock.calls.find(c => c[0]?.stage === 'pr_review.github_review.rejected');
+    expect(rejectionCall).toBeDefined();
+    const step = rejectionCall![0];
+    expect(step.level).toBe('WARN');
+    expect(step.data?.status).toBe(422);
+    expect(step.data?.errorBody).toContain('Validation Failed: line out of range');
+    expect(step.data?.attempt).toContain('inline comments');
+    expect(step.data?.owner).toBe('Newton-School');
+    expect(step.data?.repo).toBe('newton-web');
+    expect(step.data?.pullNumber).toBe(123);
+  });
+
+  it('persists thrown errors to logStep', async () => {
+    const logStep = vi.fn();
+    vi.mocked(globalThis.fetch).mockRejectedValueOnce(new Error('socket hang up'));
+
+    await submitPrReview({
+      owner: 'Newton-School',
+      repo: 'newton-web',
+      pullNumber: 123,
+      commitId: 'abc123',
+      findingsByRole: [{ role: 'reviewer', findings: [baseFinding('high', 'src/a.ts', 1)] }],
+      summary: 'throw test',
+      githubToken: 'ghp_test',
+      logStep,
+    });
+
+    const threwCall = logStep.mock.calls.find(c => c[0]?.stage === 'pr_review.github_review.threw');
+    expect(threwCall).toBeDefined();
+    expect(threwCall![0].data?.error).toContain('socket hang up');
+  });
+
   it('handles fetch errors gracefully', async () => {
     vi.mocked(globalThis.fetch).mockRejectedValueOnce(new Error('network error'));
 
