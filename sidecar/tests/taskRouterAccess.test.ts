@@ -263,7 +263,7 @@ describe('routeTask access control', () => {
     expect(runPrReviewWorkflow).not.toHaveBeenCalled();
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining('Access denied'),
+        text: "Sorry, you're not on the access list for this channel. Please contact an admin.",
       }),
     );
   });
@@ -310,7 +310,7 @@ describe('routeTask access control', () => {
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: 'D-REVIEW',
-        text: "You don't have DM access to miniOG. Ask an admin to add you.",
+        text: "Sorry about this — you don't currently have access to DM me. Please contact an admin.",
       }),
     );
     expect(logStep).toHaveBeenCalledWith(
