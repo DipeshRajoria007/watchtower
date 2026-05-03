@@ -8,7 +8,7 @@ import type {
   WorkflowStepLogger,
 } from '../types/contracts.js';
 import { getAdminUserIds } from '../access/control.js';
-import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
+import { runCodex, getActiveBackendId, selectBackendForUser } from '../codex/runCodex.js';
 import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint } from '../github/githubAuth.js';
@@ -38,7 +38,7 @@ function buildOwnerPrimaryPrompt(params: {
 }): string {
   const { task, workspaceRoot, githubToken, threadContext, imageContext } = params;
   return `
-${buildMentionSystemPrompt({ task, workflow: 'IMPLEMENTATION' })}
+${buildMentionSystemPrompt({ task, workflow: 'IMPLEMENTATION', toneMode: task.toneMode })}
 
 You are running Watchtower implementation mode.
 
@@ -81,7 +81,7 @@ function buildOwnerRelaxedPrompt(params: {
 }): string {
   const { task, workspaceRoot, githubToken, threadContext, imageContext } = params;
   return `
-${buildMentionSystemPrompt({ task, workflow: 'IMPLEMENTATION' })}
+${buildMentionSystemPrompt({ task, workflow: 'IMPLEMENTATION', toneMode: task.toneMode })}
 
 You are running Watchtower implementation mode in relaxed output mode.
 
@@ -116,7 +116,7 @@ function buildGuardrailedPrompt(params: {
 }): string {
   const { task, repoPath, repoName, githubToken, threadContext, imageContext } = params;
   return `
-${buildMentionSystemPrompt({ task, workflow: 'IMPLEMENTATION' })}
+${buildMentionSystemPrompt({ task, workflow: 'IMPLEMENTATION', toneMode: task.toneMode })}
 
 You are running Watchtower implementation mode with repository-scoped guardrails.
 
@@ -224,7 +224,20 @@ export async function runImplementationWorkflow(params: {
       requestedBy: ctx.requestedBy,
     };
 
-    const plannerProfile = profileForAgentRole('planner', getActiveBackendId());
+    const plannerBackend = store?.dossierStore
+      ? selectBackendForUser({
+          userId: task.event.userId,
+          workflow: 'IMPLEMENTATION',
+          dossierStore: store.dossierStore(),
+          onSelect: info =>
+            logStep?.({
+              stage: 'pipeline.backend.select',
+              message: `Selected backend ${info.backend} (${info.reason}).`,
+              data: info,
+            }),
+        })
+      : getActiveBackendId();
+    const plannerProfile = profileForAgentRole('planner', plannerBackend);
     const plannerPrompt = buildPlannerPrompt(plannerCtx);
     const plannerSchemaPath = path.resolve(process.cwd(), 'schemas/agent-planner-result.schema.json');
 
@@ -425,7 +438,7 @@ export async function runImplementationWorkflow(params: {
       }
 
       const quickPrompt = `
-${buildMentionSystemPrompt({ task, workflow: 'IMPLEMENTATION' })}
+${buildMentionSystemPrompt({ task, workflow: 'IMPLEMENTATION', toneMode: task.toneMode })}
 
 Context:
 - You are miniOG, a developer assistant bot in a Slack workspace.
@@ -442,11 +455,24 @@ ${ctx.threadContext}${ctx.imageContext}
 Write your response as a ready-to-post Slack message describing what you did.
 `.trim();
 
+      const quickBackend = store?.dossierStore
+        ? selectBackendForUser({
+            userId: task.event.userId,
+            workflow: 'IMPLEMENTATION',
+            dossierStore: store.dossierStore(),
+            onSelect: info =>
+              logStep?.({
+                stage: 'pipeline.backend.select',
+                message: `Selected backend ${info.backend} (${info.reason}).`,
+                data: info,
+              }),
+          })
+        : getActiveBackendId();
       const quickResult = await runCodex({
         cwd: ctx.cwd,
         prompt: quickPrompt,
         githubToken: ctx.githubToken,
-        ...highReasoningProfile(getActiveBackendId()),
+        ...highReasoningProfile(quickBackend),
         // timeoutMs: Math.floor(workflowTimeoutMs * 0.5),
         onLog: logStep,
         signal,
@@ -481,6 +507,19 @@ Write your response as a ready-to-post Slack message describing what you did.
     // we abandon cleanly.
     let pipelineCwd = ctx.cwd;
     if (ctx.isOwnerAuthor) {
+      let repoAffinity: { newtonWebHits?: number; newtonApiHits?: number } | undefined;
+      if (store?.dossierStore && task.event.userId) {
+        try {
+          const dossier = store.dossierStore().getDossier(task.event.userId);
+          const web = dossier.affinity.find(a => a.repo === 'newton-web');
+          const api = dossier.affinity.find(a => a.repo === 'newton-api');
+          if (web || api) {
+            repoAffinity = { newtonWebHits: web?.hits, newtonApiHits: api?.hits };
+          }
+        } catch {
+          // dossier read shouldn't block repo resolution
+        }
+      }
       const resolution = await resolveRepoOrAsk({
         task,
         config,
@@ -488,6 +527,7 @@ Write your response as a ready-to-post Slack message describing what you did.
         logStep,
         planAffectedFiles,
         threadMessages: ctx.threadMessages,
+        repoAffinity,
       });
 
       if (resolution.outcome === 'cancelled') {

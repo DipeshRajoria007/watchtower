@@ -285,12 +285,26 @@ export async function prepareWorkflowContext(params: {
   } else if (isOwnerAuthor) {
     cwd = resolveOwnerWorkspaceRoot(config);
   } else {
+    let repoAffinity: { newtonWebHits?: number; newtonApiHits?: number } | undefined;
+    if (store?.dossierStore && task.event.userId) {
+      try {
+        const dossier = store.dossierStore().getDossier(task.event.userId);
+        const web = dossier.affinity.find(a => a.repo === 'newton-web');
+        const api = dossier.affinity.find(a => a.repo === 'newton-api');
+        if (web || api) {
+          repoAffinity = { newtonWebHits: web?.hits, newtonApiHits: api?.hits };
+        }
+      } catch {
+        // dossier read shouldn't block repo resolution
+      }
+    }
     const resolution = await resolveRepoOrAsk({
       task,
       config,
       slack,
       logStep,
       threadMessages,
+      repoAffinity,
     });
     if (resolution.outcome === 'resolved') {
       repoName = resolution.name;

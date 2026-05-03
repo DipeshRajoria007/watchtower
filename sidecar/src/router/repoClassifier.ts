@@ -12,7 +12,24 @@ const API_SIGNAL_RULES: Array<[RegExp, number, string]> = [
   [/newton-api|\/manage\.py|\/requirements\.txt|\/newton\//i, 2, 'api-path-hint'],
 ];
 
-export function classifyRepo(texts: string[], threshold: number): RepoClassificationResult {
+export interface RepoAffinity {
+  /** Hits in the user's last 30 days for newton-web. */
+  newtonWebHits?: number;
+  /** Hits in the user's last 30 days for newton-api. */
+  newtonApiHits?: number;
+}
+
+/**
+ * Soft prior multiplier. With 0 hits → 1.0 (neutral). Asymptotically capped
+ * at 1.3× — strong text signals always dominate. tanh(hits/5) is roughly:
+ *   1 hit ~ 1.06, 5 hits ~ 1.23, 20 hits ~ 1.30.
+ */
+function affinityPrior(hits: number | undefined): number {
+  if (!hits || hits <= 0) return 1;
+  return 1 + 0.3 * Math.tanh(hits / 5);
+}
+
+export function classifyRepo(texts: string[], threshold: number, affinity?: RepoAffinity): RepoClassificationResult {
   let scoreWeb = 0;
   let scoreApi = 0;
   const signals: string[] = [];
@@ -29,6 +46,16 @@ export function classifyRepo(texts: string[], threshold: number): RepoClassifica
         scoreApi += weight;
         signals.push(`${signal}:${pattern.source}`);
       }
+    }
+  }
+
+  if (affinity) {
+    const webPrior = affinityPrior(affinity.newtonWebHits);
+    const apiPrior = affinityPrior(affinity.newtonApiHits);
+    if (webPrior !== 1 || apiPrior !== 1) {
+      scoreWeb *= webPrior;
+      scoreApi *= apiPrior;
+      signals.push(`affinity-prior:web=${webPrior.toFixed(2)}|api=${apiPrior.toFixed(2)}`);
     }
   }
 

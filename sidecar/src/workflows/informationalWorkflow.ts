@@ -253,7 +253,7 @@ export function synthesizeInformationalReplies(outcomes: PerRepoOutcome[]): { re
 function buildUnscopedPrompt(params: { cwd: string; task: NormalizedTask; promptCtx: PromptContext }): string {
   const { cwd, task, promptCtx } = params;
   return `
-${buildMentionSystemPrompt({ task, workflow: 'INFORMATIONAL' })}
+${buildMentionSystemPrompt({ task, workflow: 'INFORMATIONAL', toneMode: task.toneMode })}
 
 Context:
 - You are miniOG, a developer assistant bot in a Slack workspace.
@@ -277,7 +277,7 @@ ${promptCtx.threadContext}${promptCtx.imageContext}
 function buildScopedPrompt(params: { target: Target; task: NormalizedTask; promptCtx: PromptContext }): string {
   const { target, task, promptCtx } = params;
   return `
-${buildMentionSystemPrompt({ task, workflow: 'INFORMATIONAL' })}
+${buildMentionSystemPrompt({ task, workflow: 'INFORMATIONAL', toneMode: task.toneMode })}
 
 Context:
 - You are miniOG, a developer assistant bot in a Slack workspace.
@@ -326,7 +326,7 @@ function buildSelfInquiryPrompt(params: {
 }): string {
   const { target, task, promptCtx, snapshot } = params;
   return `
-${buildMentionSystemPrompt({ task, workflow: 'INFORMATIONAL' })}
+${buildMentionSystemPrompt({ task, workflow: 'INFORMATIONAL', toneMode: task.toneMode })}
 
 Context:
 - You are miniOG, a developer assistant bot in a Slack workspace.

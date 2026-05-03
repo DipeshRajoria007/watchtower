@@ -828,7 +828,7 @@ export async function runPrReviewWorkflow(params: {
 
   // --- Single-agent path (legacy) ---
   const prompt = `
-${buildMentionSystemPrompt({ task, workflow: 'PR_REVIEW' })}
+${buildMentionSystemPrompt({ task, workflow: 'PR_REVIEW', toneMode: task.toneMode })}
 
 You are executing Watchtower PR review automation.
 

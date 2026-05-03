@@ -1,6 +1,6 @@
 import type { WebClient } from '@slack/web-api';
 import type { AppConfig, NormalizedTask, WorkflowStepLogger } from '../../types/contracts.js';
-import { classifyRepo } from '../../router/repoClassifier.js';
+import { classifyRepo, type RepoAffinity } from '../../router/repoClassifier.js';
 import { formatAdminMention, getAdminUserIds } from '../../access/control.js';
 import { waitForRepoChoice } from '../../agents/pipeline.js';
 
@@ -26,6 +26,12 @@ export async function resolveRepoOrAsk(params: {
   planAffectedFiles?: string[];
   signal?: AbortSignal;
   askAdminsOnUncertain?: boolean;
+  /**
+   * Optional per-user repo affinity. When supplied, biases the keyword
+   * classifier toward repos the requester historically works in. Capped soft
+   * prior — strong text signals always win.
+   */
+  repoAffinity?: RepoAffinity;
 }): Promise<RepoResolution> {
   const {
     task,
@@ -36,6 +42,7 @@ export async function resolveRepoOrAsk(params: {
     planAffectedFiles = [],
     signal,
     askAdminsOnUncertain = true,
+    repoAffinity,
   } = params;
 
   // 1. Planner's affectedFiles contain an explicit repo name.
@@ -69,6 +76,7 @@ export async function resolveRepoOrAsk(params: {
   const classification = classifyRepo(
     [task.event.text, ...threadMessages.map(m => m.text)],
     config.repoClassifierThreshold,
+    repoAffinity,
   );
   logStep?.({
     stage: 'workflow.repo.classified',

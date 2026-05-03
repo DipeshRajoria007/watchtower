@@ -2,11 +2,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import type { CodexRunRequest, CodexRunResult, CostSource } from '../types/contracts.js';
+import type { CodexRunRequest, CodexRunResult, CostSource, WorkflowIntent } from '../types/contracts.js';
 import type { AgentBackend, AgentBackendId } from '../backends/types.js';
 import { getBackend } from '../backends/registry.js';
 import { computeCostUsd } from '../pricing/modelPrices.js';
 import { agentCallContext } from '../state/runContext.js';
+import type { DossierStore } from '../state/dossierStore.js';
 
 let activeBackendId: AgentBackendId = 'codex';
 
@@ -16,6 +17,55 @@ export function setActiveBackend(id: AgentBackendId): void {
 
 export function getActiveBackendId(): AgentBackendId {
   return activeBackendId;
+}
+
+/**
+ * Pick a backend for a specific user, biased by their dossier. Today this is
+ * a single conservative rule — users with a 7-day failure rate above 40% on
+ * IMPLEMENTATION jobs get routed to claude-code (typically more thorough).
+ * Everything else falls back to the global active backend. Decisions are
+ * advisory and reversible; callers may pass an `onSelect` hook to log the
+ * choice for offline review.
+ */
+export function selectBackendForUser(opts: {
+  userId: string;
+  workflow: WorkflowIntent;
+  dossierStore: DossierStore;
+  onSelect?: (info: {
+    backend: AgentBackendId;
+    reason: 'fallback' | 'high-failure-rate-implementation';
+    failureRate7d?: number;
+  }) => void;
+}): AgentBackendId {
+  const fallback = activeBackendId;
+  if (!opts.userId) {
+    opts.onSelect?.({ backend: fallback, reason: 'fallback' });
+    return fallback;
+  }
+
+  let dossier;
+  try {
+    dossier = opts.dossierStore.getDossier(opts.userId);
+  } catch {
+    opts.onSelect?.({ backend: fallback, reason: 'fallback' });
+    return fallback;
+  }
+
+  const fp = dossier.metrics['failure_fingerprint'] as { failureRate7d?: number; samples?: number } | undefined;
+  const samples = fp?.samples ?? 0;
+  const rate = fp?.failureRate7d;
+
+  if (opts.workflow === 'IMPLEMENTATION' && typeof rate === 'number' && rate > 0.4 && samples >= 3) {
+    opts.onSelect?.({
+      backend: 'claude-code',
+      reason: 'high-failure-rate-implementation',
+      failureRate7d: rate,
+    });
+    return 'claude-code';
+  }
+
+  opts.onSelect?.({ backend: fallback, reason: 'fallback' });
+  return fallback;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => void): Promise<T> {
