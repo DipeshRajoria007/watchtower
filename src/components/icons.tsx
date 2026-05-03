@@ -1,5 +1,5 @@
 import type { SVGProps } from 'react';
-import { Activity, LayoutDashboard, Lightbulb, Menu, Play, Rocket, Settings, Terminal, X } from 'lucide-react';
+import { Activity, LayoutDashboard, Lightbulb, Menu, Play, Rocket, Settings, Terminal, Users, X } from 'lucide-react';
 
 type IconProps = SVGProps<SVGSVGElement>;
 
@@ -52,6 +52,10 @@ export function PerformanceIcon() {
 
 export function DiagnosticsIcon() {
   return <Terminal size={ICON_SIZE} strokeWidth={ICON_STROKE} />;
+}
+
+export function DossiersIcon() {
+  return <Users size={ICON_SIZE} strokeWidth={ICON_STROKE} />;
 }
 
 export function SettingsIcon() {

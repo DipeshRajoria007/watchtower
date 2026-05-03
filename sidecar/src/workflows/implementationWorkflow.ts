@@ -151,7 +151,7 @@ export async function runImplementationWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
-  store?: PipelineStore;
+  store?: PipelineStore & { dossierStore?: () => import('../state/dossierStore.js').DossierStore };
   investigationStore?: InvestigationStore;
   jobId?: string;
   logStep?: WorkflowStepLogger;
@@ -164,7 +164,7 @@ export async function runImplementationWorkflow(params: {
     message: 'Running implementation workflow.',
   });
 
-  const ctx = await prepareWorkflowContext({ task, config, slack, logStep });
+  const ctx = await prepareWorkflowContext({ task, config, slack, store, logStep });
 
   // Thread-scoped investigation findings: if a prior INVESTIGATION ran in
   // this same thread, seed the planner with its diagnosis so vague follow-up

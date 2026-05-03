@@ -12,10 +12,19 @@ export type WorkflowIntent =
   | 'NONE'
   | 'DEV_ASSIST'
   | 'DEPLOY'
+  | 'MINIOG_DOSSIER'
   | 'UNKNOWN';
 export type WorkflowStatus = 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED' | 'CANCELLED';
 export type JobLogLevel = 'INFO' | 'WARN' | 'ERROR';
-export type PersonalityMode = 'normal';
+export type PersonalityMode = 'normal' | 'terse' | 'technical' | 'casual';
+
+export type DossierRole = 'pm' | 'dev' | 'designer' | 'ops';
+export type DossierForgetField = 'role' | 'tone' | 'notes' | 'project_affinity' | 'metrics' | 'all';
+
+export type MiniogSubcommand =
+  | { kind: 'whoami' }
+  | { kind: 'set-role'; role: DossierRole }
+  | { kind: 'forget'; field: DossierForgetField; confirmed: boolean };
 export type EventIngestSource = 'socket' | 'catchup' | 'launchpad';
 export type LaunchpadTarget = 'miniog';
 export type LaunchpadRequestStatus =
@@ -154,6 +163,7 @@ export interface NormalizedTask {
   isCoreDevAuthor: boolean;
   intent: WorkflowIntent;
   prContext?: PrContext;
+  miniogSubcommand?: MiniogSubcommand;
 }
 
 export interface RepoClassificationResult {

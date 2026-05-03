@@ -136,6 +136,7 @@ export function resolveRequiredAccessLevel(intent: WorkflowIntent): AccessLevel 
       return 'admin';
     case 'INFORMATIONAL':
     case 'CONVERSATIONAL':
+    case 'MINIOG_DOSSIER':
     case 'UNKNOWN':
     case 'NONE':
     default:

@@ -11,6 +11,7 @@ import type {
 import { evaluateAccess, getConfiguredAccessControl, resolveRequiredAccessLevel } from '../access/control.js';
 import type { JobStore } from '../state/jobStore.js';
 import { runDevAssistWorkflow } from '../workflows/devAssistWorkflow.js';
+import { runMiniogDossierWorkflow } from '../workflows/miniogDossierWorkflow.js';
 import { runDeployWorkflow } from '../workflows/deployWorkflow.js';
 import { runImplementationWorkflow } from '../workflows/implementationWorkflow.js';
 import { runInvestigationWorkflow } from '../workflows/investigationWorkflow.js';
@@ -46,7 +47,7 @@ export async function routeTask(params: {
     .replace(/\s+/g, ' ')
     .trim();
 
-  if (task.intent !== 'DEV_ASSIST' && task.intent !== 'DEPLOY') {
+  if (task.intent !== 'DEV_ASSIST' && task.intent !== 'DEPLOY' && task.intent !== 'MINIOG_DOSSIER') {
     if (isPresencePing(userMessage)) {
       resolvedIntent = 'CONVERSATIONAL';
     } else {
@@ -215,6 +216,10 @@ export async function routeTask(params: {
 
   if (resolvedIntent === 'DEV_ASSIST') {
     return runDevAssistWorkflow({ task: routedTask, config, slack, store, logStep });
+  }
+
+  if (resolvedIntent === 'MINIOG_DOSSIER') {
+    return runMiniogDossierWorkflow({ task: routedTask, slack, store, logStep });
   }
 
   if (resolvedIntent === 'DEPLOY') {

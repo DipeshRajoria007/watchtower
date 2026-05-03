@@ -5,6 +5,7 @@ import { AtmosphereStyles, MouseGlow, NoiseOverlay, Scanlines, Vignette } from '
 import {
   CloseIcon,
   DiagnosticsIcon,
+  DossiersIcon,
   IntelligenceIcon,
   LaunchpadIcon,
   MenuIcon,
@@ -55,6 +56,7 @@ export function AppShell({
     },
     { view: 'intelligence', label: 'Intelligence', icon: <IntelligenceIcon /> },
     { view: 'performance', label: 'Performance', icon: <PerformanceIcon /> },
+    { view: 'dossiers', label: 'Dossiers', icon: <DossiersIcon /> },
     { view: 'diagnostics', label: 'Diagnostics', icon: <DiagnosticsIcon /> },
     {
       view: 'settings',

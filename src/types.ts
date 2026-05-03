@@ -4,9 +4,55 @@ export type AppView =
   | 'runs'
   | 'intelligence'
   | 'performance'
+  | 'dossiers'
   | 'diagnostics'
   | 'settings'
   | 'review';
+
+export type DossierRole = 'pm' | 'dev' | 'designer' | 'ops';
+
+export type DossierForgetField = 'role' | 'tone' | 'notes' | 'project_affinity' | 'metrics' | 'all';
+
+export type DossierSummary = {
+  userId: string;
+  displayName: string | null;
+  realName: string | null;
+  role: DossierRole | null;
+  tz: string | null;
+  updatedAt: string;
+};
+
+export type DossierAffinityRow = {
+  repo: string;
+  hits: number;
+  successes: number;
+  failures: number;
+  lastUsedAt: string | null;
+  computedAt: string;
+};
+
+export type DossierMetricRow = {
+  metricKey: string;
+  metricValue: string;
+  computedAt: string;
+};
+
+export type DossierDetail = {
+  userId: string;
+  displayName: string | null;
+  realName: string | null;
+  tz: string | null;
+  email: string | null;
+  role: DossierRole | null;
+  notes: string | null;
+  source: string | null;
+  firstSeenAt: string | null;
+  updatedAt: string | null;
+  tone: string | null;
+  toneSource: string | null;
+  affinity: DossierAffinityRow[];
+  metrics: DossierMetricRow[];
+};
 
 export type SlackCommandTarget = 'miniog' | 'watchtower';
 

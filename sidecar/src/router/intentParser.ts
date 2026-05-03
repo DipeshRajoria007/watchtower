@@ -1,5 +1,13 @@
-import type { AppConfig, NormalizedTask, PrContext, SlackEventEnvelope, WorkflowIntent } from '../types/contracts.js';
+import type {
+  AppConfig,
+  MiniogSubcommand,
+  NormalizedTask,
+  PrContext,
+  SlackEventEnvelope,
+  WorkflowIntent,
+} from '../types/contracts.js';
 import { getAdminUserIds } from '../access/control.js';
+import { isDossierForgetField, isDossierRole } from '../state/dossierStore.js';
 import { hasDevAssistPrefix, hasNaturalDevAssistAlias } from './devAssistParser.js';
 
 const GITHUB_PR_REGEX = /https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)/g;
@@ -80,24 +88,72 @@ export function extractPrContext(texts: string[]): PrContext | undefined {
   return undefined;
 }
 
+/**
+ * Parse a `/miniog <subcommand>` style message into a structured subcommand.
+ * Returns null if the text is not a recognized dossier subcommand.
+ *
+ * Recognized forms (case-insensitive, leading bot mention tolerated):
+ *   whoami
+ *   set-role <pm|dev|designer|ops>
+ *   forget <role|tone|notes|project_affinity|metrics|all> [confirm]
+ */
+export function parseMiniogSubcommand(text: string): MiniogSubcommand | null {
+  if (!text) return null;
+  const stripped = text
+    .replace(/<@[^>]+>/g, ' ')
+    .trim()
+    .toLowerCase();
+  if (!stripped) return null;
+  const tokens = stripped.split(/\s+/);
+  const head = tokens[0];
+
+  if (head === 'whoami') return { kind: 'whoami' };
+
+  if (head === 'set-role') {
+    const role = tokens[1];
+    if (role && isDossierRole(role)) return { kind: 'set-role', role };
+    return null;
+  }
+
+  if (head === 'forget') {
+    const field = tokens[1];
+    if (!field || !isDossierForgetField(field)) return null;
+    if (field === 'all') {
+      const confirmed = tokens[2] === 'confirm';
+      return { kind: 'forget', field: 'all', confirmed };
+    }
+    return { kind: 'forget', field, confirmed: true };
+  }
+
+  return null;
+}
+
 function inferIntent(
   event: SlackEventEnvelope,
   config: AppConfig,
   mention: { detected: boolean; type: 'bot' | 'owner' | 'none' },
-): WorkflowIntent {
+): { intent: WorkflowIntent; miniogSubcommand?: MiniogSubcommand } {
+  // Dossier subcommands (whoami / set-role / forget) take precedence over every other route
+  // when the bot is mentioned. They are read-only or operator-self-edit commands and
+  // must not bleed into the AI classifier.
+  if (mention.detected) {
+    const sub = parseMiniogSubcommand(event.text ?? '');
+    if (sub) return { intent: 'MINIOG_DOSSIER', miniogSubcommand: sub };
+  }
+
   // Any explicit wt/watchtower prefix is always routed to dev-assist, even for owners.
   if (mention.detected && hasDevAssistPrefix(event.text ?? '')) {
-    return 'DEV_ASSIST';
+    return { intent: 'DEV_ASSIST' };
   }
 
   // Natural-language status/capability prompts should route to dev-assist as lightweight aliases.
   if (mention.detected && hasNaturalDevAssistAlias(event.text ?? '')) {
-    return 'DEV_ASSIST';
+    return { intent: 'DEV_ASSIST' };
   }
 
   // Deterministic deploy detection — routed before the AI classifier.
   if (mention.detected && isDeployRequest(event.text ?? '')) {
-    return 'DEPLOY';
+    return { intent: 'DEPLOY' };
   }
 
   // Intent classification for PR_REVIEW vs OWNER_AUTOPILOT is handled by the
@@ -107,10 +163,10 @@ function inferIntent(
   // Any bot mention (owner or non-owner) routes to OWNER_AUTOPILOT.
   // The workflow itself determines trust level based on ownerSlackUserIds.
   if (mention.detected && mention.type === 'bot') {
-    return 'OWNER_AUTOPILOT';
+    return { intent: 'OWNER_AUTOPILOT' };
   }
 
-  return 'UNKNOWN';
+  return { intent: 'UNKNOWN' };
 }
 
 export function normalizeTask(
@@ -122,6 +178,7 @@ export function normalizeTask(
   const isOwnerAuthor = config.ownerSlackUserIds.includes(event.userId);
   const isCoreDevAuthor = getAdminUserIds(config).includes(event.userId);
   const prContext = extractPrContext([event.text, ...threadTexts]);
+  const inferred = inferIntent(event, config, mention);
 
   return {
     event,
@@ -129,7 +186,8 @@ export function normalizeTask(
     mentionType: mention.type,
     isOwnerAuthor,
     isCoreDevAuthor,
-    intent: inferIntent(event, config, mention),
+    intent: inferred.intent,
     prContext,
+    miniogSubcommand: inferred.miniogSubcommand,
   };
 }

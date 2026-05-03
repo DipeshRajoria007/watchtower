@@ -15,14 +15,16 @@ import type {
   WorkflowIntent,
 } from '../types/contracts.js';
 import { createInvestigationStore, type InvestigationStore } from './investigationStore.js';
+import { createDossierStore, type DossierStore } from './dossierStore.js';
 
-function normalizeStoredPersonalityMode(_mode: unknown): PersonalityMode {
-  return 'normal';
+function normalizeStoredPersonalityMode(mode: unknown): PersonalityMode {
+  return mode === 'terse' || mode === 'technical' || mode === 'casual' ? mode : 'normal';
 }
 
 export class JobStore {
   private db: Database.Database;
   private _investigationStore?: InvestigationStore;
+  private _dossierStore?: DossierStore;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
@@ -35,6 +37,13 @@ export class JobStore {
       this._investigationStore = createInvestigationStore(this.db);
     }
     return this._investigationStore;
+  }
+
+  dossierStore(): DossierStore {
+    if (!this._dossierStore) {
+      this._dossierStore = createDossierStore(this.db);
+    }
+    return this._dossierStore;
   }
 
   private migrate(): void {
@@ -315,7 +324,50 @@ export class JobStore {
         updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_investigation_findings_channel ON investigation_findings(channel_id, thread_ts);
+
+      CREATE TABLE IF NOT EXISTS user_dossiers (
+        user_id TEXT PRIMARY KEY,
+        display_name TEXT,
+        real_name TEXT,
+        tz TEXT,
+        email TEXT,
+        role TEXT,
+        notes TEXT,
+        source TEXT,
+        first_seen_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_dossiers_updated_at ON user_dossiers(updated_at);
+
+      CREATE TABLE IF NOT EXISTS user_project_affinity (
+        user_id TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        hits INTEGER NOT NULL DEFAULT 0,
+        successes INTEGER NOT NULL DEFAULT 0,
+        failures INTEGER NOT NULL DEFAULT 0,
+        last_used_at TEXT,
+        computed_at TEXT NOT NULL,
+        PRIMARY KEY(user_id, repo)
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_project_affinity_user ON user_project_affinity(user_id, computed_at);
+
+      CREATE TABLE IF NOT EXISTS user_metrics (
+        user_id TEXT NOT NULL,
+        metric_key TEXT NOT NULL,
+        metric_value TEXT NOT NULL,
+        computed_at TEXT NOT NULL,
+        PRIMARY KEY(user_id, metric_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_metrics_computed_at ON user_metrics(user_id, computed_at);
+
+      CREATE INDEX IF NOT EXISTS idx_learning_signals_user_created ON learning_signals(user_id, created_at);
     `);
+
+    try {
+      this.db.exec(`ALTER TABLE learning_signals ADD COLUMN repo TEXT`);
+    } catch {
+      /* column already exists */
+    }
 
     // Add PM config columns to app_settings if missing
     try {
