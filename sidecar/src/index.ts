@@ -18,6 +18,7 @@ import { assertMacOS } from './platform.js';
 import { evaluatePolicy, loadPolicies } from './policies/evaluator.js';
 import { agentCallContext } from './state/runContext.js';
 import { normalizeTask } from './router/intentParser.js';
+import { classifyProduct } from './router/productClassifier.js';
 import { routeTask } from './router/taskRouter.js';
 import { startMentionCatchup } from './slack/mentionCatchup.js';
 import { SocketSlackClient } from './slack/socketClient.js';
@@ -796,6 +797,10 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
             userId: event.userId,
           });
           const repoName = typeof result.result?.repoName === 'string' ? result.result.repoName : undefined;
+          const productKey = isMemoryWorthyWorkflow(routedTask.intent)
+            ? (classifyProduct([event.text ?? '', result.message ?? '', JSON.stringify(result.result ?? {})])
+                .selected ?? undefined)
+            : undefined;
           store.recordLearningSignal({
             jobId,
             eventId: event.eventId,
@@ -808,6 +813,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
             errorKind: diagnosis?.errorKind,
             personalityMode,
             repo: repoName,
+            product: productKey,
           });
           if (isMemoryWorthyWorkflow(routedTask.intent) && result.message) {
             const prUrl =
@@ -819,6 +825,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
               status: result.status,
               repo: repoName,
               prUrl,
+              product: productKey,
               summary: result.message,
             });
           }
@@ -953,6 +960,9 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         channelId: event.channelId,
         userId: event.userId,
       });
+      const productKey = isMemoryWorthyWorkflow(routedTask.intent)
+        ? (classifyProduct([event.text ?? '', errorMessage ?? '']).selected ?? undefined)
+        : undefined;
       store.recordLearningSignal({
         jobId,
         eventId: event.eventId,
@@ -964,6 +974,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         correctionApplied: learning.correctionApplied,
         errorKind: diagnosis?.errorKind,
         personalityMode,
+        product: productKey,
       });
       if (isMemoryWorthyWorkflow(routedTask.intent) && errorMessage) {
         store.dossierStore().recordMemory({
@@ -971,6 +982,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
           jobId,
           workflow: routedTask.intent,
           status: 'FAILED',
+          product: productKey,
           summary: `Failed: ${errorMessage.slice(0, 280)}`,
         });
       }
@@ -1022,6 +1034,9 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         channelId: event.channelId,
         userId: event.userId,
       });
+      const productKey = isMemoryWorthyWorkflow(routedTask.intent)
+        ? (classifyProduct([event.text ?? '', errorMessage ?? '']).selected ?? undefined)
+        : undefined;
       store.recordLearningSignal({
         jobId,
         eventId: event.eventId,
@@ -1033,6 +1048,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         correctionApplied: learning.correctionApplied,
         errorKind: diagnosis?.errorKind,
         personalityMode,
+        product: productKey,
       });
       if (isMemoryWorthyWorkflow(routedTask.intent) && errorMessage) {
         store.dossierStore().recordMemory({
@@ -1040,6 +1056,7 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
           jobId,
           workflow: routedTask.intent,
           status: 'FAILED',
+          product: productKey,
           summary: `Failed: ${errorMessage.slice(0, 280)}`,
         });
       }

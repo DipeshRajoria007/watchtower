@@ -145,6 +145,7 @@ describe('formatDossierForPrompt', () => {
         updatedAt: '2026-05-03T00:00:00Z',
       },
       affinity: [],
+      productAffinity: [],
       metrics: {},
       tone: 'normal',
     });
@@ -162,6 +163,7 @@ describe('formatDossierForPrompt', () => {
         updatedAt: '2026-05-03T00:00:00Z',
       },
       affinity: [{ repo: 'newton-web', hits: 10, successes: 8, failures: 2, computedAt: '2026-05-03T00:00:00Z' }],
+      productAffinity: [],
       metrics: {
         intent_mix: { IMPLEMENTATION: 6, INVESTIGATION: 3, PR_REVIEW: 1 },
         failure_fingerprint: { topErrorKinds: [{ kind: 'TypeError' }, { kind: 'TimeoutError' }] },
@@ -183,6 +185,7 @@ describe('formatDossierForPrompt', () => {
         updatedAt: '2026-05-03T00:00:00Z',
       },
       affinity: [],
+      productAffinity: [],
       metrics: {},
       tone: 'normal',
     });

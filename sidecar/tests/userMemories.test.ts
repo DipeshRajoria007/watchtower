@@ -77,7 +77,7 @@ describe('user_memories — privacy invariant', () => {
     // The row keys are the only data shape persisted; if the DB ever leaks
     // raw input it'd be here.
     expect(Object.keys(row).sort()).toEqual(
-      ['createdAt', 'id', 'jobId', 'prUrl', 'repo', 'status', 'summary', 'userId', 'workflow'].sort(),
+      ['createdAt', 'id', 'jobId', 'prUrl', 'product', 'repo', 'status', 'summary', 'userId', 'workflow'].sort(),
     );
     store.close();
   });

@@ -16,11 +16,20 @@ export interface LearningSignalRow {
   personalityMode?: PersonalityMode | string | null;
   errorKind?: string | null;
   repo?: string | null;
+  product?: string | null;
   createdAt: string;
 }
 
 export interface ProjectAffinity {
   repo: string;
+  hits: number;
+  successes: number;
+  failures: number;
+  lastUsedAt?: string;
+}
+
+export interface ProductAffinity {
+  product: string;
   hits: number;
   successes: number;
   failures: number;
@@ -80,6 +89,31 @@ export function computeProjectAffinity(signals: LearningSignalRow[]): ProjectAff
     byRepo.set(repo, entry);
   }
   return [...byRepo.values()].sort((a, b) => {
+    if (b.hits !== a.hits) return b.hits - a.hits;
+    return b.successes - a.successes;
+  });
+}
+
+/**
+ * Per-(user, product) hits / successes / failures, last 30d.
+ * Skips rows with no `product` (signals predating the product classifier or
+ * jobs that did not match any product rule).
+ */
+export function computeProductAffinity(signals: LearningSignalRow[]): ProductAffinity[] {
+  const byProduct = new Map<string, ProductAffinity>();
+  for (const sig of signals) {
+    const product = (sig.product ?? '').trim();
+    if (!product) continue;
+    const entry = byProduct.get(product) ?? { product, hits: 0, successes: 0, failures: 0 };
+    entry.hits += 1;
+    if (sig.status === 'SUCCESS') entry.successes += 1;
+    else if (sig.status === 'FAILED') entry.failures += 1;
+    if (!entry.lastUsedAt || sig.createdAt > entry.lastUsedAt) {
+      entry.lastUsedAt = sig.createdAt;
+    }
+    byProduct.set(product, entry);
+  }
+  return [...byProduct.values()].sort((a, b) => {
     if (b.hits !== a.hits) return b.hits - a.hits;
     return b.successes - a.successes;
   });
