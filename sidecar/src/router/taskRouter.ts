@@ -239,7 +239,7 @@ export async function routeTask(params: {
   }
 
   if (resolvedIntent === 'INFORMATIONAL') {
-    return runInformationalWorkflow({ task: routedTask, config, slack, logStep, signal });
+    return runInformationalWorkflow({ task: routedTask, config, slack, store, logStep, signal });
   }
 
   if (resolvedIntent === 'CONVERSATIONAL') {

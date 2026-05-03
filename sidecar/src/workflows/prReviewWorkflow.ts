@@ -18,6 +18,8 @@ import { extractPrContext } from '../router/intentParser.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
+import { assembleRecall } from '../codex/recallAssembler.js';
+import type { RecallCapableStore } from '../state/dossierStore.js';
 import { highReasoningProfile, profileForAgentRole } from '../codex/modelProfiles.js';
 import { githubAuthModeHint, resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import { submitPrReview } from '../github/submitPrReview.js';
@@ -397,7 +399,9 @@ export async function runPrReviewWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
-  store?: Pick<JobStore, 'findLatestReviewedPrHeadSha' | 'getChannelPolicyPack'> & Partial<PipelineStore>;
+  store?: Pick<JobStore, 'findLatestReviewedPrHeadSha' | 'getChannelPolicyPack'> &
+    Partial<PipelineStore> &
+    RecallCapableStore;
   resolvePrHeadSha?: (input: {
     prContext: PrContext;
     githubToken?: string;
@@ -642,17 +646,48 @@ export async function runPrReviewWorkflow(params: {
     // 2. Checkout PR branch so agents see the actual PR code
     await checkoutPrBranch(repoPath, prContext.number, logStep);
 
+    // Phase G: assemble recall once and prepend to all three review prompts
+    // (reviewer, security, performance). Empty for unknown users; safe.
+    let recallBlock = '';
+    if (store?.dossierStore && store.recentSignalsForUser && task.event.userId) {
+      try {
+        const recall = await assembleRecall({
+          userId: task.event.userId,
+          workflow: 'PR_REVIEW',
+          store: store as unknown as JobStore,
+          vaultRoot: store.readVaultSettings?.().vaultPath ?? null,
+        });
+        if (recall.promptBlock) {
+          recallBlock = `${recall.promptBlock}\n\n`;
+          logStep?.({
+            stage: 'workflow.recall.injected',
+            message: `Injected recall (${recall.estimatedTokens} tokens, ${recall.sources.join(',')}).`,
+            data: { sources: recall.sources, estimatedTokens: recall.estimatedTokens, workflow: 'PR_REVIEW' },
+          });
+        }
+      } catch (err) {
+        logStep?.({
+          stage: 'workflow.recall.failed',
+          level: 'WARN',
+          message: 'recall assembly failed; running without it',
+          data: { error: (err as Error).message, workflow: 'PR_REVIEW' },
+        });
+      }
+    }
+
     // 3. Build PR-specific prompts with diff included
-    const reviewerPrompt = buildPrReviewerPrompt({
-      diff,
-      prTitle: prMeta.title,
-      prBody: prMeta.body,
-      threadContext,
-      prContext,
-      policyBlock,
-    });
-    const securityPrompt = buildPrSecurityPrompt({ diff, prTitle: prMeta.title, prContext });
-    const performancePrompt = buildPrPerformancePrompt({ diff, prTitle: prMeta.title, prContext });
+    const reviewerPrompt =
+      recallBlock +
+      buildPrReviewerPrompt({
+        diff,
+        prTitle: prMeta.title,
+        prBody: prMeta.body,
+        threadContext,
+        prContext,
+        policyBlock,
+      });
+    const securityPrompt = recallBlock + buildPrSecurityPrompt({ diff, prTitle: prMeta.title, prContext });
+    const performancePrompt = recallBlock + buildPrPerformancePrompt({ diff, prTitle: prMeta.title, prContext });
 
     // 4. Run all 3 review agents in parallel
     await slack.chat

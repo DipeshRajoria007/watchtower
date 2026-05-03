@@ -1,23 +1,26 @@
 import type { WebClient } from '@slack/web-api';
 import type { AppConfig, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
+import { assembleRecall } from '../codex/recallAssembler.js';
 import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { prepareWorkflowContext } from './shared/workflowUtils.js';
 import type { PipelineStore } from '../agents/pipeline.js';
 import type { InvestigationStore } from '../state/investigationStore.js';
+import type { RecallCapableStore } from '../state/dossierStore.js';
+import type { JobStore } from '../state/jobStore.js';
 
 export async function runInvestigationWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
-  store?: PipelineStore;
+  store?: PipelineStore & RecallCapableStore;
   investigationStore?: InvestigationStore;
   jobId?: string;
   logStep?: WorkflowStepLogger;
   signal?: AbortSignal;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, investigationStore, jobId, logStep, signal } = params;
+  const { task, config, slack, store, investigationStore, jobId, logStep, signal } = params;
 
   logStep?.({ stage: 'investigation.start', message: 'Running investigation workflow.' });
 
@@ -43,7 +46,36 @@ export async function runInvestigationWorkflow(params: {
   const repoPath = ctx.cwd;
   const repoName = ctx.repoName;
 
-  const investigatorPrompt = `
+  // Phase G: assemble the recall block once and prepend to the investigator
+  // prompt. Empty when the user has no dossier; safe to thread always.
+  let recallBlock = '';
+  if (store?.dossierStore && store.recentSignalsForUser && task.event.userId) {
+    try {
+      const recall = await assembleRecall({
+        userId: task.event.userId,
+        workflow: 'INVESTIGATION',
+        store: store as unknown as JobStore,
+        vaultRoot: store.readVaultSettings?.().vaultPath ?? null,
+      });
+      if (recall.promptBlock) {
+        recallBlock = `${recall.promptBlock}\n\n`;
+        logStep?.({
+          stage: 'workflow.recall.injected',
+          message: `Injected recall (${recall.estimatedTokens} tokens, ${recall.sources.join(',')}).`,
+          data: { sources: recall.sources, estimatedTokens: recall.estimatedTokens, workflow: 'INVESTIGATION' },
+        });
+      }
+    } catch (err) {
+      logStep?.({
+        stage: 'workflow.recall.failed',
+        level: 'WARN',
+        message: 'recall assembly failed; running without it',
+        data: { error: (err as Error).message, workflow: 'INVESTIGATION' },
+      });
+    }
+  }
+
+  const investigatorPrompt = `${recallBlock}${`
 ${buildMentionSystemPrompt({ task, workflow: 'INVESTIGATION', toneMode: task.toneMode })}
 
 You are the INVESTIGATOR agent.
@@ -68,7 +100,7 @@ Return strict JSON:
   "requiresMoreInfo": string | null,        // null if the hypothesis stands on its own; otherwise a specific ask
   "summary": string                         // one-line Slack summary of what you found
 }
-`.trim();
+`.trim()}`;
 
   const profile = highReasoningProfile(getActiveBackendId());
   const investigatorResult = await runCodex({

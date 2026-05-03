@@ -836,6 +836,31 @@ function intentToHumanLabel(intent: string): string | null {
 export const WHOAMI_PINNED_FACT_PREVIEW_LIMIT = 5;
 
 /**
+ * Structural slice of JobStore that the recall assembler (and the wiring
+ * around it) requires. Exported so workflow signatures can opt into recall
+ * with a single import instead of hand-rolling the duck-typed shape.
+ *
+ * Centralizes what was previously inline in implementationWorkflow.ts and
+ * makes it trivially shareable with informational/investigation/PR review
+ * recall sites added in Phase G.
+ */
+export interface RecallCapableStore {
+  dossierStore?: () => DossierStore;
+  recentSignalsForUser?: (
+    userId: string,
+    limit?: number,
+  ) => Array<{
+    intent: string | null;
+    workflow: string | null;
+    status: string | null;
+    repo: string | null;
+    errorKind: string | null;
+    createdAt: string;
+  }>;
+  readVaultSettings?: () => { vaultPath: string; vaultEnabled: boolean };
+}
+
+/**
  * Friendly Slack message body for `<@miniog> whoami`. Returns null when there
  * is literally nothing useful to say (no profile, no rolled-up metrics) so
  * the caller can render a cold-start message instead.

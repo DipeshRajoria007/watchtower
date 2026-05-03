@@ -7,11 +7,14 @@ import type {
   WorkflowStepLogger,
 } from '../types/contracts.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
+import { assembleRecall } from '../codex/recallAssembler.js';
 import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint } from '../github/githubAuth.js';
 import { prepareWorkflowContext, extractReplyFromCodexResult } from './shared/workflowUtils.js';
 import { resolveWatchtowerPath, buildLiveStateSnapshot } from './shared/selfInquiryContext.js';
+import type { RecallCapableStore } from '../state/dossierStore.js';
+import type { JobStore } from '../state/jobStore.js';
 
 type RepoName = 'newton-web' | 'newton-api' | 'miniog-self';
 type Target = { repo: RepoName; cwd: string };
@@ -34,10 +37,11 @@ export async function runInformationalWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
+  store?: RecallCapableStore;
   logStep?: WorkflowStepLogger;
   signal?: AbortSignal;
 }): Promise<WorkflowResult> {
-  const { task, config, slack, logStep, signal } = params;
+  const { task, config, slack, store, logStep, signal } = params;
 
   logStep?.({
     stage: 'informational.start',
@@ -47,6 +51,37 @@ export async function runInformationalWorkflow(params: {
   // Informational queries search both Newton repos in parallel — skip the
   // repo-clarify gate that prepareWorkflowContext would otherwise fire.
   const ctx = await prepareWorkflowContext({ task, config, slack, logStep, resolveRepo: false });
+
+  // Assemble the recall block once (Phase G). Prepended to every per-repo
+  // prompt below — including the self-inquiry path — so the model sees the
+  // user's pinned facts and recent work alongside the question. Empty when
+  // the user has no dossier; safe to thread unconditionally.
+  let recallBlock = '';
+  if (store?.dossierStore && store.recentSignalsForUser && task.event.userId) {
+    try {
+      const recall = await assembleRecall({
+        userId: task.event.userId,
+        workflow: 'INFORMATIONAL',
+        store: store as unknown as JobStore,
+        vaultRoot: store.readVaultSettings?.().vaultPath ?? null,
+      });
+      if (recall.promptBlock) {
+        recallBlock = `${recall.promptBlock}\n\n`;
+        logStep?.({
+          stage: 'workflow.recall.injected',
+          message: `Injected recall (${recall.estimatedTokens} tokens, ${recall.sources.join(',')}).`,
+          data: { sources: recall.sources, estimatedTokens: recall.estimatedTokens, workflow: 'INFORMATIONAL' },
+        });
+      }
+    } catch (err) {
+      logStep?.({
+        stage: 'workflow.recall.failed',
+        level: 'WARN',
+        message: 'recall assembly failed; running without it',
+        data: { error: (err as Error).message, workflow: 'INFORMATIONAL' },
+      });
+    }
+  }
 
   const promptCtx: PromptContext = {
     threadContext: ctx.threadContext,
@@ -75,11 +110,11 @@ export async function runInformationalWorkflow(params: {
   let ok: boolean;
 
   if (targets.length === 0) {
-    const single = await runSingleUnscoped({ ctx, task, promptCtx, logStep, signal });
+    const single = await runSingleUnscoped({ ctx, task, promptCtx, recallBlock, logStep, signal });
     reply = single.reply;
     ok = single.ok;
   } else {
-    const outcomes = await runFanout({ targets, task, promptCtx, selfSnapshot, logStep, signal });
+    const outcomes = await runFanout({ targets, task, promptCtx, recallBlock, selfSnapshot, logStep, signal });
     const synth = synthesizeInformationalReplies(outcomes);
     reply = synth.reply;
     ok = synth.ok;
@@ -118,12 +153,13 @@ async function runSingleUnscoped(params: {
   ctx: { cwd: string; imagePaths: string[] } & PromptContext;
   task: NormalizedTask;
   promptCtx: PromptContext;
+  recallBlock: string;
   logStep?: WorkflowStepLogger;
   signal?: AbortSignal;
 }): Promise<{ reply: string; ok: boolean }> {
-  const { ctx, task, promptCtx, logStep, signal } = params;
+  const { ctx, task, promptCtx, recallBlock, logStep, signal } = params;
 
-  const prompt = buildUnscopedPrompt({ cwd: ctx.cwd, task, promptCtx });
+  const prompt = `${recallBlock}${buildUnscopedPrompt({ cwd: ctx.cwd, task, promptCtx })}`;
 
   const result = await runCodex({
     cwd: ctx.cwd,
@@ -150,11 +186,12 @@ async function runFanout(params: {
   targets: Target[];
   task: NormalizedTask;
   promptCtx: PromptContext;
+  recallBlock: string;
   selfSnapshot?: string;
   logStep?: WorkflowStepLogger;
   signal?: AbortSignal;
 }): Promise<PerRepoOutcome[]> {
-  const { targets, task, promptCtx, selfSnapshot, logStep, signal } = params;
+  const { targets, task, promptCtx, recallBlock, selfSnapshot, logStep, signal } = params;
 
   logStep?.({
     stage: 'informational.fanout.start',
@@ -166,10 +203,11 @@ async function runFanout(params: {
     targets.map(target =>
       runCodex({
         cwd: target.cwd,
-        prompt:
+        prompt: `${recallBlock}${
           target.repo === 'miniog-self'
             ? buildSelfInquiryPrompt({ target, task, promptCtx, snapshot: selfSnapshot ?? '' })
-            : buildScopedPrompt({ target, task, promptCtx }),
+            : buildScopedPrompt({ target, task, promptCtx })
+        }`,
         githubToken: promptCtx.githubToken,
         ...highReasoningProfile(getActiveBackendId()),
         onLog: logStep,
