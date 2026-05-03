@@ -780,6 +780,11 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         }
 
         try {
+          const personalityMode = store.getPersonalityMode({
+            channelId: event.channelId,
+            userId: event.userId,
+          });
+          const repoName = typeof result.result?.repoName === 'string' ? result.result.repoName : undefined;
           store.recordLearningSignal({
             jobId,
             eventId: event.eventId,
@@ -790,7 +795,10 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
             status: result.status,
             correctionApplied: learning.correctionApplied,
             errorKind: diagnosis?.errorKind,
+            personalityMode,
+            repo: repoName,
           });
+          store.dossierStore().invalidate(event.userId);
         } catch (error) {
           logStep({
             stage: 'learning.signal.persist_failed',
@@ -917,6 +925,10 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
     await addReaction(client, event.channelId, event.eventTs, 'x');
 
     try {
+      const personalityMode = store.getPersonalityMode({
+        channelId: event.channelId,
+        userId: event.userId,
+      });
       store.recordLearningSignal({
         jobId,
         eventId: event.eventId,
@@ -927,7 +939,9 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         status: 'FAILED',
         correctionApplied: learning.correctionApplied,
         errorKind: diagnosis?.errorKind,
+        personalityMode,
       });
+      store.dossierStore().invalidate(event.userId);
     } catch (error) {
       logStep({
         stage: 'learning.signal.persist_failed',
@@ -971,6 +985,10 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
     await addReaction(client, event.channelId, event.eventTs, 'x');
 
     try {
+      const personalityMode = store.getPersonalityMode({
+        channelId: event.channelId,
+        userId: event.userId,
+      });
       store.recordLearningSignal({
         jobId,
         eventId: event.eventId,
@@ -981,7 +999,9 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         status: 'FAILED',
         correctionApplied: learning.correctionApplied,
         errorKind: diagnosis?.errorKind,
+        personalityMode,
       });
+      store.dossierStore().invalidate(event.userId);
     } catch {
       // ignore persistence failures in terminal error path
     }

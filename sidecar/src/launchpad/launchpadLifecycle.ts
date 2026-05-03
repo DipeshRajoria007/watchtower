@@ -10,6 +10,12 @@ type LaunchpadStore = {
     result?: Record<string, unknown>;
     errorMessage?: string;
   }) => void;
+  /**
+   * Optional dossier accessor; when present, finalize/fail evict the user's
+   * cached dossier so the next read recomputes the rollup. Optional so test
+   * stores don't have to construct a real DossierStore.
+   */
+  dossierStore?: () => { invalidate: (userId: string) => void };
 };
 
 function fallbackCompletionText(message: string): string {
@@ -94,6 +100,16 @@ export async function finalizeLaunchpadWorkflowResult(params: {
     result: result.result,
     errorMessage: result.status === 'FAILED' || result.status === 'CANCELLED' ? result.message : undefined,
   });
+
+  // Drop the dossier LRU entry: a job just completed, so the next dossier read
+  // should re-probe learning_signals and recompute affinity/metrics.
+  if (event.userId && store.dossierStore) {
+    try {
+      store.dossierStore().invalidate(event.userId);
+    } catch {
+      // never let cache invalidation block the lifecycle
+    }
+  }
 
   logStep?.({
     stage: 'launchpad.request.completed',
