@@ -33,7 +33,7 @@ describe('formatDossierForHuman — empty / cold start', () => {
   });
 
   it('renders even with only a profile (no metrics)', () => {
-    const out = formatDossierForHuman(withProfile());
+    const out = formatDossierForHuman(withProfile(), { isOwner: true });
     expect(out).toContain('• *Name*: theOG');
     expect(out).toContain('• *Timezone*: Asia/Kolkata');
     expect(out).toContain('forget all confirm');
@@ -234,6 +234,24 @@ describe('formatDossierForHuman — failure fingerprint gating', () => {
       }),
     )!;
     expect(out).not.toContain('Recent snags');
+  });
+});
+
+describe('formatDossierForHuman — owner-gated wipe footer', () => {
+  it('shows the wipe footer for owner', () => {
+    const out = formatDossierForHuman(withProfile(), { isOwner: true });
+    expect(out).toContain('forget all confirm');
+  });
+
+  it('hides the wipe footer for non-owner', () => {
+    const out = formatDossierForHuman(withProfile(), { isOwner: false });
+    expect(out).not.toContain('forget all confirm');
+    expect(out).not.toContain('Wipe with');
+  });
+
+  it('hides the wipe footer when isOwner is omitted (default closed)', () => {
+    const out = formatDossierForHuman(withProfile());
+    expect(out).not.toContain('forget all confirm');
   });
 });
 

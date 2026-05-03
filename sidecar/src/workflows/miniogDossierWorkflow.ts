@@ -54,7 +54,8 @@ export async function runMiniogDossierWorkflow(params: {
 
     const dossier = dossiers.getDossier(userId);
     const body =
-      formatDossierForHuman(dossier) ?? "I don't have a dossier for you yet — interact with me a bit and try again.";
+      formatDossierForHuman(dossier, { isOwner: task.isOwnerAuthor }) ??
+      "I don't have a dossier for you yet — interact with me a bit and try again.";
     await reply(body);
 
     logStep?.({
@@ -90,6 +91,29 @@ export async function runMiniogDossierWorkflow(params: {
   }
 
   if (sub.kind === 'forget') {
+    // `forget all` is the destructive whole-dossier wipe — gated to the owner
+    // so individual users can't (accidentally or otherwise) delete the
+    // history miniOG has accumulated for them. Per-field forgets (role,
+    // tone, notes, project_affinity, metrics) remain self-editable since
+    // those are normal privacy hygiene, not a data wipe.
+    if (sub.field === 'all' && !task.isOwnerAuthor) {
+      await reply(
+        'Sorry, only the owner can wipe a full dossier. You can still clear individual fields with `forget role`, `forget tone`, or `forget notes`.',
+      );
+      logStep?.({
+        stage: 'miniog.dossier.forget.denied',
+        level: 'WARN',
+        message: 'Non-owner attempted forget all; denied.',
+        data: { field: sub.field, requesterId: userId },
+      });
+      return {
+        workflow: 'MINIOG_DOSSIER',
+        status: 'SKIPPED',
+        message: 'Forget-all denied: owner-only.',
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
     if (sub.field === 'all' && !sub.confirmed) {
       await reply(
         "That wipes your entire dossier (profile, role, tone, affinity, metrics). Reply with `forget all confirm` if you're sure.",
