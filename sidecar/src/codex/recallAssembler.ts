@@ -18,8 +18,10 @@ const DEFAULT_BUDGETS: Record<string, number> = {
 };
 
 const SIGNAL_LIMIT = 20;
+const MEMORY_LIMIT = 8;
 const VAULT_NOTE_TOKEN_BUDGET = 750;
 const SIGNAL_TOKEN_BUDGET = 600;
+const MEMORY_TOKEN_BUDGET = 600;
 
 /**
  * Approximate token counter — char/4 is rough but stable enough for budget
@@ -144,7 +146,9 @@ export async function assembleRecall(input: RecallInput): Promise<RecallOutput> 
     logger.debug({ err: String(err) }, 'recall: dossier read failed');
   }
 
-  // 2. Recent signals.
+  // 2. Recent activity — prefer rich memory entries over bare-enum signal
+  // lines. Fall back to signals if there are no memories yet (e.g. user has
+  // history that predates the user_memories table).
   let signalsBlock = '';
   let dossierProfile: { displayName?: string; realName?: string } = {};
   try {
@@ -153,22 +157,47 @@ export async function assembleRecall(input: RecallInput): Promise<RecallOutput> 
       displayName: dossier.profile?.displayName,
       realName: dossier.profile?.realName,
     };
-    const rows = input.store.recentSignalsForUser(input.userId, SIGNAL_LIMIT);
-    const lines = formatSignalLines(rows);
-    if (lines.length > 0) {
+
+    const memoryRows = input.store.dossierStore().recentMemoriesForUser(input.userId, MEMORY_LIMIT);
+    if (memoryRows.length > 0) {
       let used = 0;
       const kept: string[] = [];
-      for (const line of lines) {
-        if (used + line.tokens > SIGNAL_TOKEN_BUDGET) break;
-        kept.push(line.text);
-        used += line.tokens;
+      for (const m of memoryRows) {
+        const date = (m.createdAt ?? '').slice(0, 10);
+        const wf = m.workflow ?? 'WORK';
+        const status = m.status ?? '?';
+        const repo = m.repo ? ` ${m.repo}` : '';
+        const pr = m.prUrl ? ` (${m.prUrl})` : '';
+        const text = `[${date}] ${wf} ${status}${repo} — ${m.summary}${pr}`;
+        const tokens = approxTokens(text);
+        if (used + tokens > MEMORY_TOKEN_BUDGET) break;
+        kept.push(text);
+        used += tokens;
       }
       if (kept.length > 0) {
-        signalsBlock = `Recent activity:\n${kept.join('\n')}`;
+        signalsBlock = `Recent work:\n${kept.join('\n')}`;
+      }
+    }
+
+    if (!signalsBlock) {
+      // Fallback: bare enum lines for users with pre-Phase-A history only.
+      const rows = input.store.recentSignalsForUser(input.userId, SIGNAL_LIMIT);
+      const lines = formatSignalLines(rows);
+      if (lines.length > 0) {
+        let used = 0;
+        const kept: string[] = [];
+        for (const line of lines) {
+          if (used + line.tokens > SIGNAL_TOKEN_BUDGET) break;
+          kept.push(line.text);
+          used += line.tokens;
+        }
+        if (kept.length > 0) {
+          signalsBlock = `Recent activity:\n${kept.join('\n')}`;
+        }
       }
     }
   } catch (err) {
-    logger.debug({ err: String(err) }, 'recall: signals read failed');
+    logger.debug({ err: String(err) }, 'recall: activity read failed');
   }
 
   // 3. Vault operator notes.
