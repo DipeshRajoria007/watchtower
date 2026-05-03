@@ -9,6 +9,7 @@ import {
   rollupWindowStart,
   type LearningSignalRow,
 } from './dossierBuilder.js';
+import { scheduleVaultRender } from '../vault/vaultWriter.js';
 
 export interface DossierProfile {
   userId: string;
@@ -412,6 +413,7 @@ export function createDossierStore(db: Database.Database): DossierStore {
       const staleBefore = new Date(Date.now() - PROFILE_REFRESH_MS).toISOString();
       refreshProfile.run({ ...params, staleBefore });
       cache.invalidate(input.userId);
+      scheduleVaultRender({ kind: 'user', userId: input.userId });
     },
 
     getDossier(userId) {
@@ -435,12 +437,14 @@ export function createDossierStore(db: Database.Database): DossierStore {
       const now = new Date().toISOString();
       upsertRoleStmt.run({ userId, role, now });
       cache.invalidate(userId);
+      scheduleVaultRender({ kind: 'user', userId });
     },
 
     setTone(userId, mode, source) {
       const now = new Date().toISOString();
       setToneStmt.run({ userId, mode, source, now });
       cache.invalidate(userId);
+      scheduleVaultRender({ kind: 'user', userId });
     },
 
     forgetField(userId, field) {
@@ -469,6 +473,7 @@ export function createDossierStore(db: Database.Database): DossierStore {
           break;
       }
       cache.invalidate(userId);
+      scheduleVaultRender({ kind: 'user', userId });
     },
 
     adminEdit(input) {
@@ -480,6 +485,7 @@ export function createDossierStore(db: Database.Database): DossierStore {
         now,
       });
       cache.invalidate(input.userId);
+      scheduleVaultRender({ kind: 'user', userId: input.userId });
     },
 
     listDossiers() {

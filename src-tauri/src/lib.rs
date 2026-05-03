@@ -387,6 +387,8 @@ struct AppSettings {
     pm_task_timeout_ms: i64,
     core_dev_slack_user_ids: String,
     core_dev_slack_user_group: String,
+    vault_path: String,
+    vault_enabled: bool,
     access_control: AccessControlSettings,
 }
 
@@ -484,6 +486,8 @@ impl Default for AppSettings {
             pm_task_timeout_ms: 600_000,
             core_dev_slack_user_ids: String::new(),
             core_dev_slack_user_group: String::new(),
+            vault_path: String::new(),
+            vault_enabled: false,
             access_control: AccessControlSettings::default(),
         }
     }
@@ -2761,6 +2765,8 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
     let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN pm_task_timeout_ms INTEGER NOT NULL DEFAULT 600000", []);
     let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN core_dev_slack_user_ids TEXT NOT NULL DEFAULT ''", []);
     let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN core_dev_slack_user_group TEXT NOT NULL DEFAULT ''", []);
+    let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN vault_path TEXT NOT NULL DEFAULT ''", []);
+    let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN vault_enabled INTEGER NOT NULL DEFAULT 0", []);
     ensure_access_control_seeded(&connection)?;
 
     Ok(())
@@ -3049,7 +3055,9 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
               COALESCE(pm_slack_user_ids, '') as pm_slack_user_ids,
               COALESCE(pm_task_timeout_ms, 600000) as pm_task_timeout_ms,
               COALESCE(core_dev_slack_user_ids, '') as core_dev_slack_user_ids,
-              COALESCE(core_dev_slack_user_group, '') as core_dev_slack_user_group
+              COALESCE(core_dev_slack_user_group, '') as core_dev_slack_user_group,
+              COALESCE(vault_path, '') as vault_path,
+              COALESCE(vault_enabled, 0) as vault_enabled
              FROM app_settings
              WHERE id = 1
              LIMIT 1",
@@ -3086,6 +3094,8 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
                 pm_task_timeout_ms: row.get(24)?,
                 core_dev_slack_user_ids: row.get(25)?,
                 core_dev_slack_user_group: row.get(26)?,
+                vault_path: row.get(27)?,
+                vault_enabled: row.get::<_, i64>(28)? != 0,
                 access_control: AccessControlSettings::default(),
             })
         })
@@ -3130,8 +3140,10 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               pm_task_timeout_ms,
               core_dev_slack_user_ids,
               core_dev_slack_user_group,
+              vault_path,
+              vault_enabled,
               updated_at
-             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
               slack_bot_token=excluded.slack_bot_token,
               slack_app_token=excluded.slack_app_token,
@@ -3160,6 +3172,8 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
               pm_task_timeout_ms=excluded.pm_task_timeout_ms,
               core_dev_slack_user_ids=excluded.core_dev_slack_user_ids,
               core_dev_slack_user_group=excluded.core_dev_slack_user_group,
+              vault_path=excluded.vault_path,
+              vault_enabled=excluded.vault_enabled,
               updated_at=excluded.updated_at",
             params![
                 settings.slack_bot_token.trim(),
@@ -3189,6 +3203,8 @@ fn persist_app_settings(connection: &Connection, settings: &AppSettings) -> Resu
                 settings.pm_task_timeout_ms,
                 settings.core_dev_slack_user_ids.trim(),
                 settings.core_dev_slack_user_group.trim(),
+                settings.vault_path.trim(),
+                if settings.vault_enabled { 1_i64 } else { 0_i64 },
                 Utc::now().to_rfc3339(),
             ],
         )

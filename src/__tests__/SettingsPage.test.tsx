@@ -28,6 +28,8 @@ function makeSettings(): AppSettings {
     agentBackend: 'codex',
     coreDevSlackUserIds: '',
     coreDevSlackUserGroup: '',
+    vaultPath: '',
+    vaultEnabled: false,
     accessControl: {
       mode: 'audit',
       groups: {

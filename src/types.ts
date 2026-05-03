@@ -273,6 +273,8 @@ export type AppSettings = {
   agentBackend: AgentBackendId;
   coreDevSlackUserIds: string;
   coreDevSlackUserGroup: string;
+  vaultPath: string;
+  vaultEnabled: boolean;
   accessControl: AccessControlSettings;
 };
 

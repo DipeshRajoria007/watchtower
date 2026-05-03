@@ -368,6 +368,16 @@ export class JobStore {
     } catch {
       /* column already exists */
     }
+    try {
+      this.db.exec(`ALTER TABLE app_settings ADD COLUMN vault_path TEXT NOT NULL DEFAULT ''`);
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.db.exec(`ALTER TABLE app_settings ADD COLUMN vault_enabled INTEGER NOT NULL DEFAULT 0`);
+    } catch {
+      /* column already exists */
+    }
 
     // Add PM config columns to app_settings if missing
     try {
@@ -1876,6 +1886,24 @@ export class JobStore {
       paused60m,
       topWorkflow,
     };
+  }
+
+  readVaultSettings(): { vaultPath: string; vaultEnabled: boolean } {
+    try {
+      const row = this.db
+        .prepare(
+          `SELECT COALESCE(vault_path, '') AS vault_path,
+                  COALESCE(vault_enabled, 0) AS vault_enabled
+           FROM app_settings WHERE id = 1 LIMIT 1`,
+        )
+        .get() as { vault_path?: string; vault_enabled?: number } | undefined;
+      return {
+        vaultPath: (row?.vault_path ?? '').trim(),
+        vaultEnabled: Boolean(row?.vault_enabled),
+      };
+    } catch {
+      return { vaultPath: '', vaultEnabled: false };
+    }
   }
 
   recordLearningSignal(input: {
