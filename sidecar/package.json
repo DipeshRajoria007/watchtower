@@ -12,6 +12,7 @@
   "dependencies": {
     "@slack/bolt": "^4.4.0",
     "better-sqlite3": "^12.4.1",
+    "chokidar": "^5.0.0",
     "pino": "^9.11.0",
     "uuid": "^11.1.0",
     "zod": "^4.1.5"

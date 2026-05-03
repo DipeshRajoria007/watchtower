@@ -8,6 +8,13 @@ import { slugify, userNotePath } from './vaultPaths.js';
 
 const FLUSH_INTERVAL_MS = 30_000;
 
+// Note: we deliberately do *not* suppress watcher events for self-writes.
+// `parseOperatorEdits` only matches `Role:` / `Notes:` outside the auto
+// block; the renderer never emits those tokens in operator-editable regions,
+// so writer-initiated change events parse to no-ops. `adminEdit` is also
+// idempotent under repeated identical edits, so any residual ping-pong
+// converges in one cycle.
+
 type DirtyKey = { kind: 'user'; userId: string } | { kind: 'project'; repo: string } | { kind: 'daily'; date: string };
 
 interface VaultWriterRuntime {

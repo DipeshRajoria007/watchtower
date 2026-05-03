@@ -23,6 +23,7 @@ import { startMentionCatchup } from './slack/mentionCatchup.js';
 import { SocketSlackClient } from './slack/socketClient.js';
 import { cleanupStaleWorkspaces } from './workspaces/workspaceManager.js';
 import { configureVaultWriter, shutdownVaultWriter } from './vault/vaultWriter.js';
+import { configureVaultWatcher, shutdownVaultWatcher } from './vault/vaultWatcher.js';
 import { loadWorkflowTemplates } from './workflows/registry.js';
 import { fetchThreadContext } from './slack/threadContext.js';
 import { resolveUserGroupMembers } from './slack/userGroupResolver.js';
@@ -1022,6 +1023,13 @@ async function main(): Promise<void> {
     vaultPath: vaultSettings.vaultPath,
     enabled: vaultSettings.vaultEnabled,
   });
+  // Two-way edits: chokidar watches users/*.md and lifts Role/Notes back into
+  // user_dossiers. No-op when vault is disabled.
+  await configureVaultWatcher({
+    store,
+    vaultPath: vaultSettings.vaultPath,
+    enabled: vaultSettings.vaultEnabled,
+  }).catch(err => logger.warn({ err: String(err) }, 'vault watcher start failed'));
 
   // Mark any leftover RUNNING jobs as FAILED — their processes are gone after restart
   const orphaned = store.cleanupOrphanedRunningJobs();
@@ -1042,6 +1050,7 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => {
     logger.info('received SIGINT');
     shutdownVaultWriter();
+    void shutdownVaultWatcher();
     store.close();
     process.exit(0);
   });
@@ -1049,6 +1058,7 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => {
     logger.info('received SIGTERM');
     shutdownVaultWriter();
+    void shutdownVaultWatcher();
     store.close();
     process.exit(0);
   });
