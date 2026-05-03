@@ -4,11 +4,13 @@ import {
   computeActiveHours,
   computeFailureFingerprint,
   computeIntentMix,
+  computeProductAffinity,
   computeProjectAffinity,
   computeResponseStyle,
   rollupWindowStart,
   type LearningSignalRow,
 } from './dossierBuilder.js';
+import { productDisplayName } from '../router/productClassifier.js';
 import { scheduleVaultRender } from '../vault/vaultWriter.js';
 
 export interface DossierProfile {
@@ -33,9 +35,19 @@ export interface DossierAffinityRow {
   computedAt: string;
 }
 
+export interface DossierProductAffinityRow {
+  product: string;
+  hits: number;
+  successes: number;
+  failures: number;
+  lastUsedAt?: string;
+  computedAt: string;
+}
+
 export interface UserDossier {
   profile: DossierProfile | null;
   affinity: DossierAffinityRow[];
+  productAffinity: DossierProductAffinityRow[];
   metrics: Record<string, unknown>;
   tone: PersonalityMode;
   toneSource?: string;
@@ -106,6 +118,7 @@ export interface UserMemoryRow {
   status: string | null;
   repo: string | null;
   prUrl: string | null;
+  product: string | null;
   summary: string;
   createdAt: string;
 }
@@ -132,6 +145,7 @@ export interface DossierStore {
     status?: string;
     repo?: string;
     prUrl?: string;
+    product?: string;
     summary: string;
   }): number;
   recentMemoriesForUser(userId: string, limit?: number): UserMemoryRow[];
@@ -189,6 +203,34 @@ export function createDossierStore(db: Database.Database): DossierStore {
      FROM user_project_affinity
      WHERE user_id = ?
      ORDER BY hits DESC, successes DESC`,
+  );
+
+  const selectProductAffinity = db.prepare(
+    `SELECT product,
+            hits,
+            successes,
+            failures,
+            last_used_at AS lastUsedAt,
+            computed_at AS computedAt
+     FROM user_product_affinity
+     WHERE user_id = ?
+     ORDER BY hits DESC, successes DESC`,
+  );
+
+  const upsertProductAffinityStmt = db.prepare(
+    `INSERT INTO user_product_affinity(
+       user_id, product, hits, successes, failures, last_used_at, computed_at
+     ) VALUES(@userId, @product, @hits, @successes, @failures, @lastUsedAt, @computedAt)
+     ON CONFLICT(user_id, product) DO UPDATE SET
+       hits = excluded.hits,
+       successes = excluded.successes,
+       failures = excluded.failures,
+       last_used_at = excluded.last_used_at,
+       computed_at = excluded.computed_at`,
+  );
+
+  const deleteStaleProductAffinityStmt = db.prepare(
+    `DELETE FROM user_product_affinity WHERE user_id = @userId AND computed_at < @cutoff`,
   );
 
   const selectMetrics = db.prepare(
@@ -260,8 +302,8 @@ export function createDossierStore(db: Database.Database): DossierStore {
 
   const insertMemoryStmt = db.prepare(
     `INSERT INTO user_memories(
-       user_id, job_id, workflow, status, repo, pr_url, summary, created_at
-     ) VALUES(@userId, @jobId, @workflow, @status, @repo, @prUrl, @summary, @createdAt)`,
+       user_id, job_id, workflow, status, repo, pr_url, product, summary, created_at
+     ) VALUES(@userId, @jobId, @workflow, @status, @repo, @prUrl, @product, @summary, @createdAt)`,
   );
 
   const selectRecentMemoriesStmt = db.prepare(
@@ -272,6 +314,7 @@ export function createDossierStore(db: Database.Database): DossierStore {
             status,
             repo,
             pr_url AS prUrl,
+            product,
             summary,
             created_at AS createdAt
      FROM user_memories
@@ -300,6 +343,7 @@ export function createDossierStore(db: Database.Database): DossierStore {
             personality_mode AS personalityMode,
             error_kind AS errorKind,
             repo,
+            product,
             created_at AS createdAt
      FROM learning_signals
      WHERE user_id = ? AND created_at >= ?
@@ -352,6 +396,7 @@ export function createDossierStore(db: Database.Database): DossierStore {
     const rows = selectSignalsWindow.all(userId, windowStart) as LearningSignalRow[];
 
     const affinity = computeProjectAffinity(rows);
+    const productAffinity = computeProductAffinity(rows);
     const failureFingerprint = computeFailureFingerprint(rows, now);
     const intentMix = computeIntentMix(rows);
     const responseStyle = computeResponseStyle(rows);
@@ -362,6 +407,18 @@ export function createDossierStore(db: Database.Database): DossierStore {
     // single-statement writes are atomic; a partial failure here is harmless
     // because the next getDossier call will recompute.
     deleteStaleAffinityStmt.run({ userId, cutoff: computedAt });
+    deleteStaleProductAffinityStmt.run({ userId, cutoff: computedAt });
+    for (const row of productAffinity) {
+      upsertProductAffinityStmt.run({
+        userId,
+        product: row.product,
+        hits: row.hits,
+        successes: row.successes,
+        failures: row.failures,
+        lastUsedAt: row.lastUsedAt ?? null,
+        computedAt,
+      });
+    }
     for (const row of affinity) {
       upsertAffinityStmt.run({
         userId,
@@ -424,6 +481,7 @@ export function createDossierStore(db: Database.Database): DossierStore {
   function readDossier(userId: string): UserDossier {
     const profileRow = selectProfile.get(userId) as DossierProfile | undefined;
     const affinityRows = selectAffinity.all(userId) as DossierAffinityRow[];
+    const productAffinityRows = selectProductAffinity.all(userId) as DossierProductAffinityRow[];
     const metricRows = selectMetrics.all(userId) as Array<{ metricKey: string; metricValue: string }>;
     const toneRow = selectTone.get(userId) as { mode?: string; source?: string } | undefined;
 
@@ -444,6 +502,7 @@ export function createDossierStore(db: Database.Database): DossierStore {
     return {
       profile: profileRow ?? null,
       affinity: affinityRows,
+      productAffinity: productAffinityRows,
       metrics,
       tone,
       toneSource: toneRow?.source,
@@ -557,6 +616,7 @@ export function createDossierStore(db: Database.Database): DossierStore {
         status: input.status ?? null,
         repo: input.repo ?? null,
         prUrl: input.prUrl ?? null,
+        product: input.product ?? null,
         summary: input.summary,
         createdAt,
       });
@@ -581,6 +641,14 @@ export function formatDossierForPrompt(dossier: UserDossier): string {
   if (topRepo && topRepo.hits > 0) {
     const rate = Math.round((100 * topRepo.successes) / Math.max(1, topRepo.hits));
     lines.push(`Primary repo: ${topRepo.repo} (${topRepo.hits} jobs, ${rate}% success)`);
+  }
+
+  const topProduct = dossier.productAffinity[0];
+  if (topProduct && topProduct.hits >= 3) {
+    const rate = Math.round((100 * topProduct.successes) / Math.max(1, topProduct.hits));
+    lines.push(
+      `Primary product: ${productDisplayName(topProduct.product)} (${topProduct.hits} jobs, ${rate}% success)`,
+    );
   }
 
   const intentMix = dossier.metrics['intent_mix'];
@@ -699,6 +767,14 @@ export function formatDossierForHuman(dossier: UserDossier): string | null {
   if (topRepo && topRepo.hits >= 3) {
     const rate = Math.round((100 * topRepo.successes) / Math.max(1, topRepo.hits));
     lines.push(`• *Most active in*: \`${topRepo.repo}\` (${topRepo.hits} jobs, ${rate}% success)`);
+  }
+
+  const topProduct = dossier.productAffinity[0];
+  if (topProduct && topProduct.hits >= 3) {
+    const rate = Math.round((100 * topProduct.successes) / Math.max(1, topProduct.hits));
+    lines.push(
+      `• *Top product*: ${productDisplayName(topProduct.product)} (${topProduct.hits} jobs, ${rate}% success)`,
+    );
   }
 
   const fp = dossier.metrics['failure_fingerprint'] as { failureRate7d?: number; samples?: number } | undefined;

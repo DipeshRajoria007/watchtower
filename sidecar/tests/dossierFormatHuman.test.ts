@@ -8,6 +8,7 @@ function makeDossier(overrides: Partial<UserDossier> = {}): UserDossier {
   return {
     profile: null,
     affinity: [],
+    productAffinity: [],
     metrics: {},
     tone: 'normal',
     ...overrides,

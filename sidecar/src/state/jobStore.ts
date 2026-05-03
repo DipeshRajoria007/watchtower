@@ -374,10 +374,32 @@ export class JobStore {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_user_memories_user_created ON user_memories(user_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS user_product_affinity (
+        user_id TEXT NOT NULL,
+        product TEXT NOT NULL,
+        hits INTEGER NOT NULL DEFAULT 0,
+        successes INTEGER NOT NULL DEFAULT 0,
+        failures INTEGER NOT NULL DEFAULT 0,
+        last_used_at TEXT,
+        computed_at TEXT NOT NULL,
+        PRIMARY KEY(user_id, product)
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_product_affinity_user ON user_product_affinity(user_id, computed_at);
     `);
 
     try {
       this.db.exec(`ALTER TABLE learning_signals ADD COLUMN repo TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.db.exec(`ALTER TABLE learning_signals ADD COLUMN product TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.db.exec(`ALTER TABLE user_memories ADD COLUMN product TEXT`);
     } catch {
       /* column already exists */
     }
@@ -1964,13 +1986,14 @@ export class JobStore {
     errorKind?: string;
     personalityMode?: PersonalityMode;
     repo?: string;
+    product?: string;
   }): void {
     this.db
       .prepare(
         `INSERT INTO learning_signals(
            job_id, event_id, channel_id, user_id, workflow, status, intent,
-           correction_applied, personality_mode, error_kind, repo, created_at
-         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           correction_applied, personality_mode, error_kind, repo, product, created_at
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.jobId,
@@ -1984,6 +2007,7 @@ export class JobStore {
         input.personalityMode ?? 'normal',
         input.errorKind ?? null,
         input.repo ?? null,
+        input.product ?? null,
         new Date().toISOString(),
       );
   }
