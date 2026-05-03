@@ -53,8 +53,10 @@ export async function runMiniogDossierWorkflow(params: {
     }
 
     const dossier = dossiers.getDossier(userId);
+    const pinnedFacts = dossiers.listPinnedFacts(userId);
     const body =
-      formatDossierForHuman(dossier) ?? "I don't have a dossier for you yet — interact with me a bit and try again.";
+      formatDossierForHuman(dossier, { pinnedFacts }) ??
+      "I don't have a dossier for you yet — interact with me a bit and try again.";
     await reply(body);
 
     logStep?.({

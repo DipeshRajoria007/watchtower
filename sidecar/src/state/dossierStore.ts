@@ -832,6 +832,9 @@ function intentToHumanLabel(intent: string): string | null {
   }
 }
 
+/** Maximum pinned-fact bullets shown inline in whoami before the overflow line. */
+export const WHOAMI_PINNED_FACT_PREVIEW_LIMIT = 5;
+
 /**
  * Friendly Slack message body for `<@miniog> whoami`. Returns null when there
  * is literally nothing useful to say (no profile, no rolled-up metrics) so
@@ -840,12 +843,20 @@ function intentToHumanLabel(intent: string): string | null {
  * This is the user-facing surface — it deliberately does NOT leak internal
  * taxonomy (WorkflowIntent enum names, error_kind codes). For LLM-facing
  * surfaces, use `formatDossierForPrompt` instead.
+ *
+ * Optional `pinnedFacts` populates a "Things you asked me to remember" block
+ * between the activity stats and the recent-snags caveat. Capped at 5 inline
+ * bullets; overflow points the user at the full `memories` listing.
  */
-export function formatDossierForHuman(dossier: UserDossier): string | null {
+export function formatDossierForHuman(
+  dossier: UserDossier,
+  options?: { pinnedFacts?: ReadonlyArray<PinnedFactRow> },
+): string | null {
   const profile = dossier.profile;
   const intentMix = dossier.metrics['intent_mix'] as Record<string, number> | undefined;
   const hasMetrics = Boolean(intentMix && Object.keys(intentMix).length > 0);
-  if (!profile && !hasMetrics) return null;
+  const pinnedFacts = options?.pinnedFacts ?? [];
+  if (!profile && !hasMetrics && pinnedFacts.length === 0) return null;
 
   const lines: string[] = ["Here's what I know about you:"];
   const name = profile?.displayName ?? profile?.realName ?? profile?.userId ?? 'someone I haven’t met yet';
@@ -901,6 +912,23 @@ export function formatDossierForHuman(dossier: UserDossier): string | null {
     lines.push(
       `• *Top product*: ${productDisplayName(topProduct.product)} (${topProduct.hits} jobs, ${rate}% success)`,
     );
+  }
+
+  // Things-you-asked-me-to-remember block. Only shown when at least one
+  // pinned fact exists; capped at WHOAMI_PINNED_FACT_PREVIEW_LIMIT bullets
+  // with an overflow line directing the user to `memories` for the full list.
+  // No ids/timestamps inline — those live in `memories`.
+  if (pinnedFacts.length > 0) {
+    lines.push('');
+    lines.push('*Things you asked me to remember*');
+    const preview = pinnedFacts.slice(0, WHOAMI_PINNED_FACT_PREVIEW_LIMIT);
+    for (const fact of preview) {
+      lines.push(`• ${fact.text}`);
+    }
+    const overflow = pinnedFacts.length - preview.length;
+    if (overflow > 0) {
+      lines.push(`(${overflow} more — say \`memories\`)`);
+    }
   }
 
   const fp = dossier.metrics['failure_fingerprint'] as { failureRate7d?: number; samples?: number } | undefined;
