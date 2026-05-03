@@ -54,8 +54,7 @@ export async function runMiniogDossierWorkflow(params: {
 
     const dossier = dossiers.getDossier(userId);
     const body =
-      formatDossierForHuman(dossier, { isOwner: task.isOwnerAuthor }) ??
-      "I don't have a dossier for you yet — interact with me a bit and try again.";
+      formatDossierForHuman(dossier) ?? "I don't have a dossier for you yet — interact with me a bit and try again.";
     await reply(body);
 
     logStep?.({

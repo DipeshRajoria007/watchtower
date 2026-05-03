@@ -575,12 +575,8 @@ function intentToHumanLabel(intent: string): string | null {
  * This is the user-facing surface — it deliberately does NOT leak internal
  * taxonomy (WorkflowIntent enum names, error_kind codes). For LLM-facing
  * surfaces, use `formatDossierForPrompt` instead.
- *
- * `options.isOwner` controls the privacy footer: only owners see the
- * `forget all confirm` hint, since non-owners can't run that command anyway
- * (gated in the dossier workflow).
  */
-export function formatDossierForHuman(dossier: UserDossier, options: { isOwner?: boolean } = {}): string | null {
+export function formatDossierForHuman(dossier: UserDossier): string | null {
   const profile = dossier.profile;
   const intentMix = dossier.metrics['intent_mix'] as Record<string, number> | undefined;
   const hasMetrics = Boolean(intentMix && Object.keys(intentMix).length > 0);
@@ -589,10 +585,6 @@ export function formatDossierForHuman(dossier: UserDossier, options: { isOwner?:
   const lines: string[] = ["Here's what I know about you:"];
   const name = profile?.displayName ?? profile?.realName ?? profile?.userId ?? 'someone I haven’t met yet';
   lines.push(`• *Name*: ${name}`);
-
-  if (profile?.tz) {
-    lines.push(`• *Timezone*: ${profile.tz}`);
-  }
 
   if (profile?.role) {
     lines.push(`• *Role*: ${profile.role}`);
@@ -644,10 +636,6 @@ export function formatDossierForHuman(dossier: UserDossier, options: { isOwner?:
     lines.push(`• *Recent snags*: ${pct}% failure over ${fp.samples} jobs in the last week.`);
   }
 
-  if (options.isOwner) {
-    lines.push('');
-    lines.push('> Wipe with `forget all confirm`.');
-  }
   return lines.join('\n');
 }
 

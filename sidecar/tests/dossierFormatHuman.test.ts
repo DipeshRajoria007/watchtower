@@ -33,10 +33,10 @@ describe('formatDossierForHuman — empty / cold start', () => {
   });
 
   it('renders even with only a profile (no metrics)', () => {
-    const out = formatDossierForHuman(withProfile(), { isOwner: true });
+    const out = formatDossierForHuman(withProfile());
     expect(out).toContain('• *Name*: theOG');
-    expect(out).toContain('• *Timezone*: Asia/Kolkata');
-    expect(out).toContain('forget all confirm');
+    // Timezone is intentionally omitted — everyone in this org shares one tz.
+    expect(out).not.toContain('Timezone');
   });
 
   it('renders even with only metrics (no profile)', () => {
@@ -237,21 +237,11 @@ describe('formatDossierForHuman — failure fingerprint gating', () => {
   });
 });
 
-describe('formatDossierForHuman — owner-gated wipe footer', () => {
-  it('shows the wipe footer for owner', () => {
-    const out = formatDossierForHuman(withProfile(), { isOwner: true });
-    expect(out).toContain('forget all confirm');
-  });
-
-  it('hides the wipe footer for non-owner', () => {
-    const out = formatDossierForHuman(withProfile(), { isOwner: false });
-    expect(out).not.toContain('forget all confirm');
-    expect(out).not.toContain('Wipe with');
-  });
-
-  it('hides the wipe footer when isOwner is omitted (default closed)', () => {
+describe('formatDossierForHuman — wipe footer is never surfaced', () => {
+  it('does not advertise forget all in any rendering', () => {
     const out = formatDossierForHuman(withProfile());
     expect(out).not.toContain('forget all confirm');
+    expect(out).not.toContain('Wipe with');
   });
 });
 
