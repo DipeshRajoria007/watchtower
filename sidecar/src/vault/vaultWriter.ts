@@ -143,10 +143,14 @@ export async function atomicWriteIfChanged(filePath: string, content: string): P
 async function renderUserKey(rt: VaultWriterRuntime, userId: string): Promise<void> {
   if (!rt.vaultRoot) return;
   const dossier = rt.dossierStore.getDossier(userId);
+  const pinnedFacts = rt.dossierStore.listPinnedFacts(userId);
+  // Cap recent work in the file at 30 entries; the file is meant for human
+  // browsing and the recall block already injects 8 into the prompt.
+  const memories = rt.dossierStore.recentMemoriesForUser(userId, 30);
   const slug = slugify(dossier.profile?.displayName ?? dossier.profile?.realName ?? userId);
   const filePath = userNotePath(rt.vaultRoot, slug);
   const prior = await readPriorContent(filePath);
-  const body = renderUserNote({ dossier, prior });
+  const body = renderUserNote({ dossier, pinnedFacts, memories, prior });
   const wrote = await atomicWriteIfChanged(filePath, body);
   if (wrote) {
     logger.info({ userId, filePath }, 'vault user note written');

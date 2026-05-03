@@ -423,6 +423,27 @@ export class JobStore {
     } catch {
       /* column already exists */
     }
+    // One-time vault default-on (Phase D): if both fields are still default-
+    // empty/zero, flip the operator into the new vault experience with a
+    // sensible path under ~/Documents/miniog-memory. Idempotent — only runs
+    // when the operator has never touched the setting.
+    try {
+      const home = process.env.HOME ?? '';
+      if (home) {
+        const defaultPath = `${home}/Documents/miniog-memory`;
+        this.db
+          .prepare(
+            `UPDATE app_settings
+             SET vault_path = ?, vault_enabled = 1
+             WHERE id = 1
+               AND COALESCE(vault_path, '') = ''
+               AND COALESCE(vault_enabled, 0) = 0`,
+          )
+          .run(defaultPath);
+      }
+    } catch {
+      /* row may not exist yet on a fresh install; harmless */
+    }
 
     // Add PM config columns to app_settings if missing
     try {

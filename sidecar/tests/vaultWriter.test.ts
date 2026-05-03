@@ -61,7 +61,10 @@ describe('vault writer flush', () => {
     const file = userNotePath(vaultRoot, slugify('Dipesh'));
     const body = await fs.readFile(file, 'utf8');
     expect(body).toContain('miniog_user_id: U1');
-    expect(body).toContain('**Name**: Dipesh');
+    expect(body).toContain('## About');
+    expect(body).toContain('*Dipesh*');
+    expect(body).toContain('## Things to remember');
+    expect(body).toContain('## Recent work');
     store.close();
   });
 
