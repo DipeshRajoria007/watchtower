@@ -1,4 +1,4 @@
-import type { NormalizedTask, WorkflowIntent } from '../types/contracts.js';
+import type { NormalizedTask, PersonalityMode, WorkflowIntent } from '../types/contracts.js';
 
 type MentionPromptWorkflow = Exclude<WorkflowIntent, 'DEV_ASSIST'>;
 
@@ -26,9 +26,15 @@ function isSeriousContext(task: NormalizedTask, workflow: MentionPromptWorkflow)
   );
 }
 
-export function buildMentionSystemPrompt(params: { task: NormalizedTask; workflow: MentionPromptWorkflow }): string {
-  const { task, workflow } = params;
+export function buildMentionSystemPrompt(params: {
+  task: NormalizedTask;
+  workflow: MentionPromptWorkflow;
+  /** Optional dossier-derived tone override; defaults to 'normal'. */
+  toneMode?: PersonalityMode;
+}): string {
+  const { task, workflow, toneMode = 'normal' } = params;
   const seriousContext = isSeriousContext(task, workflow);
+  const toneLine = toneLineFor(toneMode);
   const lines: string[] = [
     'System behavior for Slack mention handling:',
     '- You are miniOG, a personal developer assistant operating from Slack mentions.',
@@ -36,7 +42,7 @@ export function buildMentionSystemPrompt(params: { task: NormalizedTask; workflo
     `- Request source: ${roleLabel(task)}.`,
     '- Treat the latest mentioned message as the primary instruction and use thread context for disambiguation.',
     '- Respond like a direct human teammate: concise, clear, and action-oriented.',
-    '- Use plain, natural wording.',
+    toneLine,
     '- No jokes, sarcasm, playful metaphors, or themed tone.',
     seriousContext
       ? '- This is a serious work context. Keep the reply especially direct and unembellished.'
@@ -53,4 +59,17 @@ export function buildMentionSystemPrompt(params: { task: NormalizedTask; workflo
   }
 
   return lines.join('\n');
+}
+
+function toneLineFor(mode: PersonalityMode): string {
+  switch (mode) {
+    case 'terse':
+      return '- Tone preference: terse. Prefer one-paragraph replies and skip pleasantries.';
+    case 'technical':
+      return '- Tone preference: technical. Lean on code blocks, file paths, and concrete identifiers.';
+    case 'casual':
+      return '- Tone preference: casual. A friendly opening line is fine; avoid stiff phrasing.';
+    default:
+      return '- Use plain, natural wording.';
+  }
 }

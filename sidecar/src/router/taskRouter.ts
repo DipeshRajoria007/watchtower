@@ -27,6 +27,7 @@ import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import { classifyWorkflowIntent } from './classifyIntent.js';
 import { isPresencePing } from '../workflows/shared/workflowUtils.js';
+import { formatDossierForPrompt } from '../state/dossierStore.js';
 
 export async function routeTask(params: {
   task: NormalizedTask;
@@ -40,6 +41,21 @@ export async function routeTask(params: {
   const { task, config, slack, store, jobId, logStep, signal } = params;
   let resolvedIntent: WorkflowIntent = task.intent;
   let classificationReasoning: string | undefined;
+
+  // Resolve dossier-derived tone once at the router so every downstream
+  // workflow that builds a mention system prompt can honor it without
+  // each one re-querying the DB.
+  let toneMode: ReturnType<typeof store.getPersonalityMode> = 'normal';
+  if (task.event.userId) {
+    try {
+      toneMode = store.getPersonalityMode({
+        channelId: task.event.channelId,
+        userId: task.event.userId,
+      });
+    } catch {
+      // tone lookup is advisory; default 'normal' on any failure
+    }
+  }
 
   // Presence pings: cheap regex check, skip the AI classifier entirely.
   const userMessage = (task.event.text ?? '')
@@ -55,10 +71,25 @@ export async function routeTask(params: {
       // Pass mentionType so the classifier knows if this is a direct @miniOG mention
       // or an indirect @theOG mention (owner-mention triggers should be filtered for relevance).
       const hasPrUrl = Boolean(task.prContext);
+      let userDossierSummary: string | undefined;
+      try {
+        const dossier = store.dossierStore().getDossier(task.event.userId);
+        if (dossier.profile || dossier.affinity.length > 0) {
+          userDossierSummary = formatDossierForPrompt(dossier);
+        }
+      } catch (err) {
+        logStep?.({
+          stage: 'router.classify.dossier_lookup_failed',
+          level: 'WARN',
+          message: 'Failed to assemble dossier summary for classifier; continuing without it.',
+          data: { error: (err as Error).message },
+        });
+      }
       const classification = await classifyWorkflowIntent({
         userMessage,
         hasPrUrl,
         mentionType: task.mentionType,
+        userDossierSummary,
         logStep,
       });
       classificationReasoning = classification.reasoning;
@@ -80,7 +111,8 @@ export async function routeTask(params: {
     }
   }
 
-  const routedTask = resolvedIntent !== task.intent ? { ...task, intent: resolvedIntent } : task;
+  const routedTask: NormalizedTask =
+    resolvedIntent !== task.intent || toneMode !== task.toneMode ? { ...task, intent: resolvedIntent, toneMode } : task;
 
   // NONE = classifier determined this is human-to-human conversation, miniOG should stay silent
   if (resolvedIntent === 'NONE') {

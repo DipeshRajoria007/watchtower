@@ -79,9 +79,15 @@ export async function classifyWorkflowIntent(params: {
   threadContext?: string;
   hasPrUrl: boolean;
   mentionType?: 'bot' | 'owner' | 'none';
+  /**
+   * Optional per-user dossier summary (from formatDossierForPrompt). Injected
+   * as advisory context — the classifier is told to weight the current message
+   * above this when deciding intent.
+   */
+  userDossierSummary?: string;
   logStep?: WorkflowStepLogger;
 }): Promise<IntentClassification> {
-  const { userMessage, threadContext, hasPrUrl, mentionType = 'bot', logStep } = params;
+  const { userMessage, threadContext, hasPrUrl, mentionType = 'bot', userDossierSummary, logStep } = params;
   const isIndirectMention = mentionType === 'owner';
 
   logStep?.({
@@ -97,7 +103,11 @@ export async function classifyWorkflowIntent(params: {
       ? `\nReturn strict JSON:\n{\n  "intent": "PR_REVIEW" | "IMPLEMENTATION" | "INVESTIGATION" | "INFORMATIONAL" | "CONVERSATIONAL" | "NONE",\n  "confidence": number between 0 and 1,\n  "reasoning": "one sentence explaining why"\n}`
       : `\nReturn strict JSON:\n{\n  "intent": "PR_REVIEW" | "IMPLEMENTATION" | "INVESTIGATION" | "INFORMATIONAL" | "CONVERSATIONAL",\n  "confidence": number between 0 and 1,\n  "reasoning": "one sentence explaining why"\n}`;
 
-    const fullPrompt = `${prompt}${returnFormat}\n\n${buildClassifyUserPrompt({ userMessage, threadContext, hasPrUrl, mentionType })}`;
+    const dossierBlock = userDossierSummary
+      ? `\n\nUser context (from past activity, advisory only — weight the current message above this):\n${userDossierSummary}\n`
+      : '';
+
+    const fullPrompt = `${prompt}${returnFormat}${dossierBlock}\n\n${buildClassifyUserPrompt({ userMessage, threadContext, hasPrUrl, mentionType })}`;
     const profile = lightweightProfile(getActiveBackendId());
 
     const result = await runCodex({

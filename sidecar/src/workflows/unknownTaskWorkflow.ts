@@ -168,7 +168,7 @@ async function generateUnknownReplyWithCodex(params: {
   const threadContext = threadTexts.filter(Boolean).join('\n---\n');
 
   const prompt = `
-${buildMentionSystemPrompt({ task, workflow: 'UNKNOWN' })}
+${buildMentionSystemPrompt({ task, workflow: 'UNKNOWN', toneMode: task.toneMode })}
 
 Generate a Slack reply for an unknown/random bot mention.
 

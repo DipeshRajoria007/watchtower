@@ -164,6 +164,12 @@ export interface NormalizedTask {
   intent: WorkflowIntent;
   prContext?: PrContext;
   miniogSubcommand?: MiniogSubcommand;
+  /**
+   * Dossier-derived tone preference, populated by the router after looking up
+   * the requesting user's personality_profiles row. Defaults to 'normal' when
+   * no per-user override is set; downstream prompts honor this.
+   */
+  toneMode?: PersonalityMode;
 }
 
 export interface RepoClassificationResult {

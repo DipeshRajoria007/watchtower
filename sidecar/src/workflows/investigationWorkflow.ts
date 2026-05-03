@@ -44,7 +44,7 @@ export async function runInvestigationWorkflow(params: {
   const repoName = ctx.repoName;
 
   const investigatorPrompt = `
-${buildMentionSystemPrompt({ task, workflow: 'INVESTIGATION' })}
+${buildMentionSystemPrompt({ task, workflow: 'INVESTIGATION', toneMode: task.toneMode })}
 
 You are the INVESTIGATOR agent.
 

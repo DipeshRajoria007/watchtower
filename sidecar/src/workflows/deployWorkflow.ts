@@ -27,7 +27,7 @@ function loadDeploySkillInstructions(): string | undefined {
 function buildDeployPrompt(params: { task: NormalizedTask; skillInstructions: string }): string {
   const { task, skillInstructions } = params;
   return `
-${buildMentionSystemPrompt({ task, workflow: 'DEPLOY' })}
+${buildMentionSystemPrompt({ task, workflow: 'DEPLOY', toneMode: task.toneMode })}
 
 You are running a production deployment for newton-web.
 
