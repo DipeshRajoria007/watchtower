@@ -76,6 +76,15 @@ function dedupeKey(event: SlackEventEnvelope, intent: string): string {
   return `${event.channelId}:${event.threadTs}:${event.eventTs}:${intent}`;
 }
 
+/**
+ * Returns true when the workflow produces output worth saving as a per-user
+ * memory entry. Chat / silent / unrouted / dossier-meta workflows produce no
+ * "what miniOG did for you" narrative, so we skip them.
+ */
+function isMemoryWorthyWorkflow(intent: string): boolean {
+  return intent !== 'CONVERSATIONAL' && intent !== 'NONE' && intent !== 'UNKNOWN' && intent !== 'MINIOG_DOSSIER';
+}
+
 async function addReaction(client: WebClient, channel: string, timestamp: string, name: string): Promise<void> {
   try {
     await client.reactions.add({ channel, timestamp, name });
@@ -800,6 +809,19 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
             personalityMode,
             repo: repoName,
           });
+          if (isMemoryWorthyWorkflow(routedTask.intent) && result.message) {
+            const prUrl =
+              typeof result.result?.prUrl === 'string' && result.result.prUrl ? result.result.prUrl : undefined;
+            store.dossierStore().recordMemory({
+              userId: event.userId,
+              jobId,
+              workflow: routedTask.intent,
+              status: result.status,
+              repo: repoName,
+              prUrl,
+              summary: result.message,
+            });
+          }
           store.dossierStore().invalidate(event.userId);
         } catch (error) {
           logStep({
@@ -943,6 +965,15 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         errorKind: diagnosis?.errorKind,
         personalityMode,
       });
+      if (isMemoryWorthyWorkflow(routedTask.intent) && errorMessage) {
+        store.dossierStore().recordMemory({
+          userId: event.userId,
+          jobId,
+          workflow: routedTask.intent,
+          status: 'FAILED',
+          summary: `Failed: ${errorMessage.slice(0, 280)}`,
+        });
+      }
       store.dossierStore().invalidate(event.userId);
     } catch (error) {
       logStep({
@@ -1003,6 +1034,15 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         errorKind: diagnosis?.errorKind,
         personalityMode,
       });
+      if (isMemoryWorthyWorkflow(routedTask.intent) && errorMessage) {
+        store.dossierStore().recordMemory({
+          userId: event.userId,
+          jobId,
+          workflow: routedTask.intent,
+          status: 'FAILED',
+          summary: `Failed: ${errorMessage.slice(0, 280)}`,
+        });
+      }
       store.dossierStore().invalidate(event.userId);
     } catch {
       // ignore persistence failures in terminal error path

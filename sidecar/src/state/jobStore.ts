@@ -361,6 +361,19 @@ export class JobStore {
       CREATE INDEX IF NOT EXISTS idx_user_metrics_computed_at ON user_metrics(user_id, computed_at);
 
       CREATE INDEX IF NOT EXISTS idx_learning_signals_user_created ON learning_signals(user_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS user_memories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        job_id TEXT,
+        workflow TEXT,
+        status TEXT,
+        repo TEXT,
+        pr_url TEXT,
+        summary TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_memories_user_created ON user_memories(user_id, created_at);
     `);
 
     try {

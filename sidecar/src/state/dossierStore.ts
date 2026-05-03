@@ -98,6 +98,18 @@ class TtlLru<V> {
   }
 }
 
+export interface UserMemoryRow {
+  id: number;
+  userId: string;
+  jobId: string | null;
+  workflow: string | null;
+  status: string | null;
+  repo: string | null;
+  prUrl: string | null;
+  summary: string;
+  createdAt: string;
+}
+
 export interface DossierStore {
   firstSeen(input: { userId: string; displayName?: string; realName?: string; tz?: string; email?: string }): void;
   getDossier(userId: string): UserDossier;
@@ -107,6 +119,22 @@ export interface DossierStore {
   adminEdit(input: { userId: string; role?: DossierRole | null; notes?: string | null }): void;
   listDossiers(): DossierSummary[];
   invalidate(userId: string): void;
+
+  /**
+   * Append a "what miniOG did for this user" row. summary is the user-facing
+   * one-line workflow output (NOT the user's raw input — privacy invariant).
+   * Returns the inserted row id.
+   */
+  recordMemory(input: {
+    userId: string;
+    jobId?: string;
+    workflow?: string;
+    status?: string;
+    repo?: string;
+    prUrl?: string;
+    summary: string;
+  }): number;
+  recentMemoriesForUser(userId: string, limit?: number): UserMemoryRow[];
 }
 
 const PROFILE_REFRESH_MS = 24 * 60 * 60 * 1000;
@@ -226,6 +254,30 @@ export function createDossierStore(db: Database.Database): DossierStore {
      FROM user_dossiers
      ORDER BY updated_at DESC
      LIMIT 500`,
+  );
+
+  // --- Conversation gist memory (Phase A) --------------------------------
+
+  const insertMemoryStmt = db.prepare(
+    `INSERT INTO user_memories(
+       user_id, job_id, workflow, status, repo, pr_url, summary, created_at
+     ) VALUES(@userId, @jobId, @workflow, @status, @repo, @prUrl, @summary, @createdAt)`,
+  );
+
+  const selectRecentMemoriesStmt = db.prepare(
+    `SELECT id,
+            user_id AS userId,
+            job_id AS jobId,
+            workflow,
+            status,
+            repo,
+            pr_url AS prUrl,
+            summary,
+            created_at AS createdAt
+     FROM user_memories
+     WHERE user_id = ?
+     ORDER BY created_at DESC
+     LIMIT ?`,
   );
 
   // --- Lazy rollup support (Phase 1) -------------------------------------
@@ -494,6 +546,25 @@ export function createDossierStore(db: Database.Database): DossierStore {
 
     invalidate(userId) {
       cache.invalidate(userId);
+    },
+
+    recordMemory(input) {
+      const createdAt = new Date().toISOString();
+      const result = insertMemoryStmt.run({
+        userId: input.userId,
+        jobId: input.jobId ?? null,
+        workflow: input.workflow ?? null,
+        status: input.status ?? null,
+        repo: input.repo ?? null,
+        prUrl: input.prUrl ?? null,
+        summary: input.summary,
+        createdAt,
+      });
+      return Number(result.lastInsertRowid);
+    },
+
+    recentMemoriesForUser(userId, limit = 30) {
+      return selectRecentMemoriesStmt.all(userId, limit) as UserMemoryRow[];
     },
   };
 }
