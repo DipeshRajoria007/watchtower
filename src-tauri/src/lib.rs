@@ -572,7 +572,11 @@ pub fn run() {
             list_dossiers,
             get_dossier,
             save_dossier_field,
-            forget_dossier_field
+            forget_dossier_field,
+            list_pinned_facts,
+            add_pinned_fact,
+            remove_pinned_fact,
+            get_user_memories
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -1560,6 +1564,222 @@ async fn forget_dossier_field(
         other => return Err(format!("field '{other}' is not a valid forget target")),
     }
     Ok(())
+}
+
+// ─── Phase E: pinned facts + memories admin surface ─────────────────────
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PinnedFact {
+    id: i64,
+    user_id: String,
+    text: String,
+    source: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UserMemory {
+    id: i64,
+    user_id: String,
+    job_id: Option<String>,
+    workflow: Option<String>,
+    status: Option<String>,
+    repo: Option<String>,
+    pr_url: Option<String>,
+    product: Option<String>,
+    summary: String,
+    created_at: String,
+}
+
+const PINNED_FACT_MAX_CHARS: usize = 280;
+const PINNED_FACT_USER_CAP: i64 = 50;
+
+#[tauri::command]
+async fn list_pinned_facts(user_id: String, state: State<'_, AppState>) -> Result<Vec<PinnedFact>, String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    let mut stmt = connection
+        .prepare(
+            "SELECT id, user_id, text, source, created_at, updated_at
+             FROM user_pinned_facts
+             WHERE user_id = ?
+             ORDER BY created_at DESC, id DESC",
+        )
+        .map_err(|err| format!("db prepare failed: {err}"))?;
+    let rows = stmt
+        .query_map(params![user_id], |row| {
+            Ok(PinnedFact {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                text: row.get(2)?,
+                source: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })
+        .map_err(|err| format!("db query failed: {err}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|err| format!("db row failed: {err}"))?);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn add_pinned_fact(
+    user_id: String,
+    text: String,
+    state: State<'_, AppState>,
+) -> Result<PinnedFact, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("Pinned fact text must not be empty".to_string());
+    }
+    let truncated = if trimmed.len() > PINNED_FACT_MAX_CHARS {
+        trimmed.chars().take(PINNED_FACT_MAX_CHARS).collect::<String>()
+    } else {
+        trimmed.to_string()
+    };
+
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    let now = Utc::now().to_rfc3339();
+
+    // Idempotency: identical text → return existing row.
+    let existing: Option<PinnedFact> = connection
+        .query_row(
+            "SELECT id, user_id, text, source, created_at, updated_at
+             FROM user_pinned_facts
+             WHERE user_id = ? AND text = ?
+             LIMIT 1",
+            params![user_id, truncated],
+            |row| {
+                Ok(PinnedFact {
+                    id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    text: row.get(2)?,
+                    source: row.get(3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|err| format!("db query failed: {err}"))?;
+    if let Some(row) = existing {
+        return Ok(row);
+    }
+
+    connection
+        .execute(
+            "INSERT INTO user_pinned_facts(user_id, text, source, created_at, updated_at)
+             VALUES(?, ?, 'admin-edit', ?, ?)",
+            params![user_id, truncated, now, now],
+        )
+        .map_err(|err| format!("db insert failed: {err}"))?;
+    let new_id = connection.last_insert_rowid();
+
+    // Cap enforcement: evict the oldest if we just exceeded the per-user cap.
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM user_pinned_facts WHERE user_id = ?",
+            params![user_id],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("db query failed: {err}"))?;
+    if count > PINNED_FACT_USER_CAP {
+        connection
+            .execute(
+                "DELETE FROM user_pinned_facts
+                 WHERE id = (
+                   SELECT id FROM user_pinned_facts
+                   WHERE user_id = ?
+                   ORDER BY created_at ASC, id ASC
+                   LIMIT 1
+                 )",
+                params![user_id],
+            )
+            .map_err(|err| format!("db evict failed: {err}"))?;
+    }
+
+    let row = connection
+        .query_row(
+            "SELECT id, user_id, text, source, created_at, updated_at
+             FROM user_pinned_facts WHERE id = ?",
+            params![new_id],
+            |row| {
+                Ok(PinnedFact {
+                    id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    text: row.get(2)?,
+                    source: row.get(3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            },
+        )
+        .map_err(|err| format!("db row read failed: {err}"))?;
+    Ok(row)
+}
+
+#[tauri::command]
+async fn remove_pinned_fact(
+    user_id: String,
+    id: i64,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    connection
+        .execute(
+            "DELETE FROM user_pinned_facts WHERE id = ? AND user_id = ?",
+            params![id, user_id],
+        )
+        .map_err(|err| format!("db delete failed: {err}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_user_memories(
+    user_id: String,
+    limit: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<Vec<UserMemory>, String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    let mut stmt = connection
+        .prepare(
+            "SELECT id, user_id, job_id, workflow, status, repo, pr_url, product, summary, created_at
+             FROM user_memories
+             WHERE user_id = ?
+             ORDER BY created_at DESC
+             LIMIT ?",
+        )
+        .map_err(|err| format!("db prepare failed: {err}"))?;
+    let rows = stmt
+        .query_map(params![user_id, limit.unwrap_or(50)], |row| {
+            Ok(UserMemory {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                job_id: row.get(2)?,
+                workflow: row.get(3)?,
+                status: row.get(4)?,
+                repo: row.get(5)?,
+                pr_url: row.get(6)?,
+                product: row.get(7)?,
+                summary: row.get(8)?,
+                created_at: row.get(9)?,
+            })
+        })
+        .map_err(|err| format!("db query failed: {err}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|err| format!("db row failed: {err}"))?);
+    }
+    Ok(out)
 }
 
 fn query_runs(connection: &Connection, sql: &str) -> Result<Vec<RunSummary>, String> {
