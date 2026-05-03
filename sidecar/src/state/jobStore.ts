@@ -1888,6 +1888,39 @@ export class JobStore {
     };
   }
 
+  /**
+   * Return the most recent learning signals for a user. Used by the recall
+   * assembler (Phase v2.5) to compose a per-user context block.
+   */
+  recentSignalsForUser(
+    userId: string,
+    limit = 20,
+  ): Array<{
+    intent: string | null;
+    workflow: string | null;
+    status: string | null;
+    repo: string | null;
+    errorKind: string | null;
+    createdAt: string;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT intent, workflow, status, repo, error_kind AS errorKind, created_at AS createdAt
+         FROM learning_signals
+         WHERE user_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(userId, limit) as Array<{
+      intent: string | null;
+      workflow: string | null;
+      status: string | null;
+      repo: string | null;
+      errorKind: string | null;
+      createdAt: string;
+    }>;
+  }
+
   readVaultSettings(): { vaultPath: string; vaultEnabled: boolean } {
     try {
       const row = this.db

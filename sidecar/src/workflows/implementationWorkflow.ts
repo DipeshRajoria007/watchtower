@@ -9,6 +9,7 @@ import type {
 } from '../types/contracts.js';
 import { getAdminUserIds } from '../access/control.js';
 import { runCodex, getActiveBackendId, selectBackendForUser } from '../codex/runCodex.js';
+import { assembleRecall } from '../codex/recallAssembler.js';
 import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint } from '../github/githubAuth.js';
@@ -151,7 +152,21 @@ export async function runImplementationWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
   slack: WebClient;
-  store?: PipelineStore & { dossierStore?: () => import('../state/dossierStore.js').DossierStore };
+  store?: PipelineStore & {
+    dossierStore?: () => import('../state/dossierStore.js').DossierStore;
+    readVaultSettings?: () => { vaultPath: string; vaultEnabled: boolean };
+    recentSignalsForUser?: (
+      userId: string,
+      limit?: number,
+    ) => Array<{
+      intent: string | null;
+      workflow: string | null;
+      status: string | null;
+      repo: string | null;
+      errorKind: string | null;
+      createdAt: string;
+    }>;
+  };
   investigationStore?: InvestigationStore;
   jobId?: string;
   logStep?: WorkflowStepLogger;
@@ -238,7 +253,32 @@ export async function runImplementationWorkflow(params: {
         })
       : getActiveBackendId();
     const plannerProfile = profileForAgentRole('planner', plannerBackend);
-    const plannerPrompt = buildPlannerPrompt(plannerCtx);
+    let plannerPrompt = buildPlannerPrompt(plannerCtx);
+    if (store?.dossierStore && store.recentSignalsForUser && task.event.userId) {
+      try {
+        const recall = await assembleRecall({
+          userId: task.event.userId,
+          workflow: 'IMPLEMENTATION',
+          store: store as unknown as import('../state/jobStore.js').JobStore,
+          vaultRoot: store.readVaultSettings?.().vaultPath ?? null,
+        });
+        if (recall.promptBlock) {
+          plannerPrompt = `${recall.promptBlock}\n\n${plannerPrompt}`;
+          logStep?.({
+            stage: 'pipeline.recall.injected',
+            message: `Injected recall block (${recall.estimatedTokens} tokens, sources: ${recall.sources.join(', ')})`,
+            data: { sources: recall.sources, estimatedTokens: recall.estimatedTokens },
+          });
+        }
+      } catch (err) {
+        logStep?.({
+          stage: 'pipeline.recall.failed',
+          level: 'WARN',
+          message: 'Failed to assemble recall block; running without it.',
+          data: { error: (err as Error).message },
+        });
+      }
+    }
     const plannerSchemaPath = path.resolve(process.cwd(), 'schemas/agent-planner-result.schema.json');
 
     logStep?.({ stage: 'pipeline.agent.planner.start', message: 'Starting planner agent.' });
