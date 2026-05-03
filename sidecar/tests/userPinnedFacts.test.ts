@@ -9,6 +9,18 @@ describe('parseMiniogSubcommand — Phase B verbs', () => {
     expect(result).toEqual({ kind: 'remember', text: 'Dashboard rewrite started 2026-04-15' });
   });
 
+  it("strips Slack's '*Sent using* <@bot>' attribution from remember text", () => {
+    const result = parseMiniogSubcommand(
+      '<@UBOT> remember prefer terse PR review summaries\n*Sent using* <@U0ACB8RHKED|Claude>',
+    );
+    expect(result).toEqual({ kind: 'remember', text: 'prefer terse PR review summaries' });
+  });
+
+  it('strips inline *Sent using* on a single line', () => {
+    const result = parseMiniogSubcommand('remember dashboard fix *Sent using* <@U0ACB8RHKED|Claude>');
+    expect(result).toEqual({ kind: 'remember', text: 'dashboard fix' });
+  });
+
   it('rejects bare `remember` with no text', () => {
     expect(parseMiniogSubcommand('remember')).toBeNull();
     expect(parseMiniogSubcommand('remember   ')).toBeNull();
