@@ -1,4 +1,9 @@
-import type { UserDossier } from '../state/dossierStore.js';
+import type { PinnedFactRow, UserDossier, UserMemoryRow } from '../state/dossierStore.js';
+import { productDisplayName } from '../router/productClassifier.js';
+
+/** Marker delimiting the operator-editable list inside the auto block. */
+export const PINNED_LIST_BEGIN = '<!-- miniog:pinned-begin -->';
+export const PINNED_LIST_END = '<!-- miniog:pinned-end -->';
 
 export const AUTO_BEGIN_MARKER = '<!-- BEGIN miniog:auto -->';
 export const AUTO_END_MARKER = '<!-- END miniog:auto -->';
@@ -87,79 +92,119 @@ function fmtRate(successes: number, hits: number): string {
   return `${Math.round((100 * successes) / hits)}%`;
 }
 
-/** Markdown body for a single user's auto block. */
-export function renderUserAutoBody(dossier: UserDossier): string {
+/**
+ * Markdown body for a single user's auto block.
+ *
+ * Layout (three sections inside the auto block):
+ *   1. About — AI-inferred narrative when present (Phase C); otherwise a
+ *      compact identity + activity summary derived from the dossier.
+ *   2. Things to remember — bulleted list of `user_pinned_facts`, wrapped in
+ *      hidden marker comments so the watcher can diff edits back to the DB.
+ *   3. Recent work — last N entries from `user_memories`.
+ *
+ * Section 2 is a controlled exception to the "auto block is DB-truth" rule:
+ * the watcher (Phase v2) treats edits to bullets *between* the
+ * miniog:pinned-begin / miniog:pinned-end markers as authoritative and
+ * mirrors them back into `user_pinned_facts`. All other auto-block edits
+ * are still discarded on the next render.
+ */
+export function renderUserAutoBody(input: {
+  dossier: UserDossier;
+  pinnedFacts?: ReadonlyArray<PinnedFactRow>;
+  memories?: ReadonlyArray<UserMemoryRow>;
+}): string {
+  const { dossier, pinnedFacts = [], memories = [] } = input;
   const profile = dossier.profile;
   const lines: string[] = [];
 
-  lines.push('## Profile');
-  if (!profile) {
-    lines.push('No identity captured yet.');
+  // ── Section 1: About ────────────────────────────────────────────────
+  lines.push('## About');
+  const inferred = dossier.metrics['inferred_profile'] as { text?: string } | undefined;
+  if (inferred?.text) {
+    lines.push(inferred.text);
   } else {
-    const name = profile.displayName ?? profile.realName ?? profile.userId;
-    lines.push(`- **Name**: ${name}`);
-    lines.push(`- **User ID**: \`${profile.userId}\``);
-    if (profile.role) lines.push(`- **Role**: ${profile.role}`);
-    if (profile.tz) lines.push(`- **Timezone**: ${profile.tz}`);
-    if (profile.email) lines.push(`- **Email**: ${profile.email}`);
-    lines.push(`- **First seen**: ${profile.firstSeenAt}`);
-    lines.push(`- **Updated**: ${profile.updatedAt}`);
-  }
+    // Fallback prose until Phase C's nightly synthesizer fills this in.
+    if (!profile) {
+      lines.push("miniOG hasn't met this user yet.");
+    } else {
+      const name = profile.displayName ?? profile.realName ?? profile.userId;
+      const fragments: string[] = [`*${name}* (\`${profile.userId}\`)`];
+      if (profile.role) fragments.push(`role *${profile.role}*`);
 
-  if (dossier.tone !== 'normal') {
-    lines.push('');
-    lines.push('## Tone');
-    lines.push(`- **Mode**: ${dossier.tone}`);
-    if (dossier.toneSource) lines.push(`- **Source**: ${dossier.toneSource}`);
-  }
-
-  lines.push('');
-  lines.push('## Project affinity');
-  if (dossier.affinity.length === 0) {
-    lines.push('No data yet.');
-  } else {
-    lines.push('| Repo | Hits | Success | Fail | Last used |');
-    lines.push('|---|---:|---:|---:|---|');
-    for (const row of dossier.affinity) {
-      lines.push(
-        `| ${row.repo} | ${row.hits} | ${row.successes} (${fmtRate(row.successes, row.hits)}) | ${row.failures} | ${row.lastUsedAt ?? '—'} |`,
-      );
-    }
-  }
-
-  const intentMix = dossier.metrics['intent_mix'] as Record<string, number> | undefined;
-  if (intentMix && Object.keys(intentMix).length > 0) {
-    lines.push('');
-    lines.push('## Typical intents');
-    const sorted = Object.entries(intentMix).sort((a, b) => b[1] - a[1]);
-    for (const [intent, count] of sorted) {
-      lines.push(`- ${intent}: ${count}`);
-    }
-  }
-
-  const fp = dossier.metrics['failure_fingerprint'] as
-    | { topErrorKinds?: Array<{ kind: string; count: number }>; failureRate7d?: number; samples?: number }
-    | undefined;
-  if (fp && (fp.topErrorKinds?.length || typeof fp.failureRate7d === 'number')) {
-    lines.push('');
-    lines.push('## Failure fingerprint');
-    if (typeof fp.failureRate7d === 'number' && (fp.samples ?? 0) > 0) {
-      lines.push(`- **7-day failure rate**: ${Math.round(100 * fp.failureRate7d)}% over ${fp.samples} jobs`);
-    }
-    if (fp.topErrorKinds?.length) {
-      for (const ek of fp.topErrorKinds) {
-        lines.push(`- ${ek.kind}: ${ek.count}`);
+      const topRepo = dossier.affinity[0];
+      if (topRepo && topRepo.hits >= 3) {
+        fragments.push(
+          `mostly on \`${topRepo.repo}\` (${topRepo.hits} jobs, ${fmtRate(topRepo.successes, topRepo.hits)} success)`,
+        );
       }
+
+      const topProduct = dossier.productAffinity[0];
+      if (topProduct && topProduct.hits >= 3) {
+        fragments.push(`top product *${productDisplayName(topProduct.product)}* (${topProduct.hits} jobs)`);
+      }
+
+      lines.push(fragments.join('; ') + '.');
+      lines.push('');
+      lines.push("_miniOG hasn't synthesized a richer profile yet — interact a bit more for the nightly rebuild._");
     }
   }
 
-  if (profile?.notes) {
-    lines.push('');
-    lines.push('## Operator notes (from Tauri)');
-    lines.push(profile.notes);
+  // ── Section 2: Things to remember (operator-editable) ────────────────
+  lines.push('');
+  lines.push('## Things to remember');
+  lines.push('_Edit this list directly: add or remove bullets and miniOG will sync._');
+  lines.push(PINNED_LIST_BEGIN);
+  if (pinnedFacts.length === 0) {
+    lines.push('<!-- empty -->');
+  } else {
+    for (const fact of pinnedFacts) {
+      lines.push(`- ${fact.text}`);
+    }
+  }
+  lines.push(PINNED_LIST_END);
+
+  // ── Section 3: Recent work ───────────────────────────────────────────
+  lines.push('');
+  lines.push('## Recent work');
+  if (memories.length === 0) {
+    lines.push('No tracked interactions yet.');
+  } else {
+    for (const m of memories) {
+      const date = (m.createdAt ?? '').slice(0, 10);
+      const wf = m.workflow ?? 'WORK';
+      const status = m.status ?? '?';
+      const repoBit = m.repo ? ` ${m.repo}` : '';
+      const productBit = m.product ? ` · ${productDisplayName(m.product)}` : '';
+      const prBit = m.prUrl ? ` · ${m.prUrl}` : '';
+      lines.push(`- **${date}** ${wf} ${status}${repoBit}${productBit} — ${m.summary}${prBit}`);
+    }
   }
 
   return lines.join('\n');
+}
+
+/**
+ * Pull the bulleted list inside the miniog:pinned-begin / miniog:pinned-end
+ * markers from a user note. Returns the array of bullet text values (without
+ * the leading `- ` marker), or null if the markers aren't found.
+ *
+ * This is the read-side helper the watcher uses to diff against
+ * `user_pinned_facts`. Operator edits to this list — adding or removing
+ * bullets — are mirrored back to the DB.
+ */
+export function parsePinnedListFromAutoBody(autoBody: string): string[] | null {
+  const beginIdx = autoBody.indexOf(PINNED_LIST_BEGIN);
+  const endIdx = autoBody.indexOf(PINNED_LIST_END);
+  if (beginIdx === -1 || endIdx === -1 || endIdx <= beginIdx) return null;
+  const slice = autoBody.slice(beginIdx + PINNED_LIST_BEGIN.length, endIdx);
+  const out: string[] = [];
+  for (const rawLine of slice.split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('<!--')) continue;
+    const match = line.match(/^[-*]\s+(.+?)\s*$/);
+    if (match) out.push(match[1]);
+  }
+  return out;
 }
 
 const USER_OPERATOR_TRAILER = [
@@ -172,15 +217,21 @@ const USER_OPERATOR_TRAILER = [
   '',
 ].join('\n');
 
-export function renderUserNote(params: { dossier: UserDossier; prior?: string; now?: Date }): string {
-  const { dossier, prior, now = new Date() } = params;
+export function renderUserNote(params: {
+  dossier: UserDossier;
+  pinnedFacts?: ReadonlyArray<PinnedFactRow>;
+  memories?: ReadonlyArray<UserMemoryRow>;
+  prior?: string;
+  now?: Date;
+}): string {
+  const { dossier, pinnedFacts = [], memories = [], prior, now = new Date() } = params;
   return composeFile({
     frontmatter: {
       miniog_kind: 'user',
       miniog_user_id: dossier.profile?.userId,
       miniog_rendered_at: now.toISOString(),
     },
-    autoBody: renderUserAutoBody(dossier),
+    autoBody: renderUserAutoBody({ dossier, pinnedFacts, memories }),
     prior,
     defaultOperatorTrailer: USER_OPERATOR_TRAILER,
   });

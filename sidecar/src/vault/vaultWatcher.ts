@@ -4,7 +4,7 @@ import chokidar, { type FSWatcher } from 'chokidar';
 import { logger } from '../logging/logger.js';
 import type { JobStore } from '../state/jobStore.js';
 import type { DossierRole } from '../types/contracts.js';
-import { splitAutoBlock } from './vaultRenderer.js';
+import { parsePinnedListFromAutoBody, splitAutoBlock } from './vaultRenderer.js';
 import { scheduleVaultRender } from './vaultWriter.js';
 
 const VALID_ROLES: ReadonlySet<DossierRole> = new Set<DossierRole>(['pm', 'dev', 'designer', 'ops']);
@@ -110,30 +110,68 @@ async function handleVaultFileChange(rt: VaultWatcherRuntime, filePath: string):
     return;
   }
 
+  const userId = fm.miniog_user_id;
+  let touched = false;
+
+  // Role/Notes: existing operator-region edits.
   const edits = parseOperatorEdits(content);
-  if (edits.role === undefined && edits.notes === undefined) {
-    logger.debug({ filePath, userId: fm.miniog_user_id }, 'vault watcher: no recognized operator edits');
+  if (edits.role !== undefined || edits.notes !== undefined) {
+    try {
+      rt.store.dossierStore().adminEdit({ userId, role: edits.role, notes: edits.notes });
+      touched = true;
+      logger.info(
+        { userId, role: edits.role, notesLength: edits.notes?.length ?? null },
+        'vault watcher: applied operator edit',
+      );
+    } catch (err) {
+      logger.warn({ err: String(err), userId }, 'vault watcher: adminEdit failed');
+    }
+  }
+
+  // Pinned facts: diff the bullets inside miniog:pinned-{begin,end} markers
+  // against the live `user_pinned_facts` table. Adds/removals are mirrored
+  // back to the DB. This is the controlled exception to the "auto block is
+  // DB-truth" rule (Phase D, documented in vaultRenderer.ts).
+  const split = splitAutoBlock(content);
+  if (split) {
+    const fileBullets = parsePinnedListFromAutoBody(split.auto);
+    if (fileBullets !== null) {
+      const dossierStore = rt.store.dossierStore();
+      const dbFacts = dossierStore.listPinnedFacts(userId);
+      const fileSet = new Set(fileBullets.map(b => b.trim()).filter(b => b.length > 0));
+      const dbSet = new Set(dbFacts.map(f => f.text));
+
+      // Adds: bullets in file but not in DB.
+      for (const text of fileSet) {
+        if (!dbSet.has(text)) {
+          const out = dossierStore.addPinnedFact({ userId, text, source: 'vault-edit' });
+          if (out) {
+            touched = true;
+            logger.info({ userId, id: out.row.id, text }, 'vault watcher: lifted pinned fact from vault edit');
+          }
+        }
+      }
+      // Removals: rows in DB whose text no longer appears as a bullet.
+      for (const fact of dbFacts) {
+        if (!fileSet.has(fact.text)) {
+          if (dossierStore.removePinnedFact(userId, fact.id)) {
+            touched = true;
+            logger.info({ userId, id: fact.id, text: fact.text }, 'vault watcher: removed pinned fact from vault edit');
+          }
+        }
+      }
+    }
+  }
+
+  if (!touched) {
+    logger.debug({ filePath, userId }, 'vault watcher: no recognized operator edits');
     return;
   }
 
-  try {
-    rt.store.dossierStore().adminEdit({
-      userId: fm.miniog_user_id,
-      role: edits.role,
-      notes: edits.notes,
-    });
-    logger.info(
-      { userId: fm.miniog_user_id, role: edits.role, notesLength: edits.notes?.length ?? null },
-      'vault watcher: applied operator edit',
-    );
-  } catch (err) {
-    logger.warn({ err: String(err), userId: fm.miniog_user_id }, 'vault watcher: adminEdit failed');
-    return;
-  }
-
-  // adminEdit already calls scheduleVaultRender; we re-emit defensively in
-  // case the writer was misconfigured. No-op when disabled.
-  scheduleVaultRender({ kind: 'user', userId: fm.miniog_user_id });
+  // adminEdit / addPinnedFact / removePinnedFact each invalidate the LRU and
+  // schedule a re-render via dossierStore. Re-emit defensively here too in
+  // case the writer was misconfigured. No-op when vault is disabled.
+  scheduleVaultRender({ kind: 'user', userId });
 }
 
 export interface VaultWatcherConfig {

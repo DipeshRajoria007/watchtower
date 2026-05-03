@@ -143,4 +143,69 @@ describe('vault watcher integration', () => {
 
     store.close();
   });
+
+  it('lifts a new bullet under "## Things to remember" into user_pinned_facts', async () => {
+    const vaultRoot = await makeTempDir();
+    const store = new JobStore(':memory:');
+    const dossiers = store.dossierStore();
+    dossiers.firstSeen({ userId: 'U_PIN_ADD', displayName: 'PinAdd' });
+
+    configureVaultWriter({ store, vaultPath: vaultRoot, enabled: true });
+    scheduleVaultRender({ kind: 'user', userId: 'U_PIN_ADD' });
+    await flushVault();
+
+    const filePath = userNotePath(vaultRoot, slugify('PinAdd'));
+    expect(dossiers.listPinnedFacts('U_PIN_ADD')).toHaveLength(0);
+
+    await configureVaultWatcher({ store, vaultPath: vaultRoot, enabled: true });
+
+    const original = await fs.readFile(filePath, 'utf8');
+    const tampered = original.replace('<!-- empty -->', '<!-- empty -->\n- prefer terse PR review summaries');
+    await fs.writeFile(filePath, tampered, 'utf8');
+
+    let observed: string[] = [];
+    for (let i = 0; i < 60; i++) {
+      const facts = dossiers.listPinnedFacts('U_PIN_ADD');
+      if (facts.length > 0) {
+        observed = facts.map(f => f.text);
+        break;
+      }
+      await new Promise(r => setTimeout(r, 50));
+    }
+    expect(observed).toEqual(['prefer terse PR review summaries']);
+    store.close();
+  });
+
+  it('removes a fact from user_pinned_facts when its bullet is deleted from the file', async () => {
+    const vaultRoot = await makeTempDir();
+    const store = new JobStore(':memory:');
+    const dossiers = store.dossierStore();
+    dossiers.firstSeen({ userId: 'U_PIN_DEL', displayName: 'PinDel' });
+    dossiers.addPinnedFact({ userId: 'U_PIN_DEL', text: 'fact-to-remove', source: 'slack-remember' });
+
+    configureVaultWriter({ store, vaultPath: vaultRoot, enabled: true });
+    scheduleVaultRender({ kind: 'user', userId: 'U_PIN_DEL' });
+    await flushVault();
+
+    const filePath = userNotePath(vaultRoot, slugify('PinDel'));
+    expect(dossiers.listPinnedFacts('U_PIN_DEL')).toHaveLength(1);
+
+    await configureVaultWatcher({ store, vaultPath: vaultRoot, enabled: true });
+
+    // Operator deletes the bullet (replaces the line with the empty marker).
+    const original = await fs.readFile(filePath, 'utf8');
+    const tampered = original.replace('- fact-to-remove', '<!-- empty -->');
+    await fs.writeFile(filePath, tampered, 'utf8');
+
+    let removed = false;
+    for (let i = 0; i < 60; i++) {
+      if (dossiers.listPinnedFacts('U_PIN_DEL').length === 0) {
+        removed = true;
+        break;
+      }
+      await new Promise(r => setTimeout(r, 50));
+    }
+    expect(removed).toBe(true);
+    store.close();
+  });
 });
