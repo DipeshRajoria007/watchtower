@@ -536,4 +536,113 @@ export function formatDossierForPrompt(dossier: UserDossier): string {
   return lines.map(line => (line.length > 200 ? line.slice(0, 197) + '...' : line)).join('\n');
 }
 
+/**
+ * Translate internal WorkflowIntent values into something a human can parse
+ * at a glance. Returns null for intents that aren't worth surfacing
+ * (chat, silent routes, the dossier command itself, unrouted noise) so
+ * those don't pollute the "Mostly:" hint.
+ *
+ * If a new WorkflowIntent value is added without a translation here, the
+ * humane formatter silently skips it — that's a safer default than
+ * rendering a raw enum string back to the user.
+ */
+function intentToHumanLabel(intent: string): string | null {
+  switch (intent) {
+    case 'IMPLEMENTATION':
+      return 'code changes';
+    case 'INVESTIGATION':
+      return 'investigations';
+    case 'INFORMATIONAL':
+      return 'questions';
+    case 'PR_REVIEW':
+      return 'PR reviews';
+    case 'OWNER_AUTOPILOT':
+      return 'general help';
+    case 'DEV_ASSIST':
+      return '`wt` commands';
+    case 'DEPLOY':
+      return 'deploys';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Friendly Slack message body for `<@miniog> whoami`. Returns null when there
+ * is literally nothing useful to say (no profile, no rolled-up metrics) so
+ * the caller can render a cold-start message instead.
+ *
+ * This is the user-facing surface — it deliberately does NOT leak internal
+ * taxonomy (WorkflowIntent enum names, error_kind codes). For LLM-facing
+ * surfaces, use `formatDossierForPrompt` instead.
+ */
+export function formatDossierForHuman(dossier: UserDossier): string | null {
+  const profile = dossier.profile;
+  const intentMix = dossier.metrics['intent_mix'] as Record<string, number> | undefined;
+  const hasMetrics = Boolean(intentMix && Object.keys(intentMix).length > 0);
+  if (!profile && !hasMetrics) return null;
+
+  const lines: string[] = ["Here's what I know about you:"];
+  const name = profile?.displayName ?? profile?.realName ?? profile?.userId ?? 'someone I haven’t met yet';
+  lines.push(`• *Name*: ${name}`);
+
+  if (profile?.tz) {
+    lines.push(`• *Timezone*: ${profile.tz}`);
+  }
+
+  if (profile?.role) {
+    lines.push(`• *Role*: ${profile.role}`);
+  } else {
+    lines.push('• *Role*: not set — try `set-role pm` (or dev/designer/ops)');
+  }
+
+  // Tone is only worth surfacing when the operator explicitly set it. Passive
+  // learning derives a tone but stays silent — surfacing it would feel like
+  // miniOG inferring something behind the user's back.
+  if (dossier.tone !== 'normal' && (dossier.toneSource === 'set-role' || dossier.toneSource === 'admin-edit')) {
+    lines.push(`• *Tone*: ${dossier.tone} (you set this)`);
+  }
+
+  // Activity volume — sum the intent counts that we actually surface to the
+  // user (skip CONVERSATIONAL/NONE/UNKNOWN/MINIOG_DOSSIER) so the number
+  // matches the "Mostly:" denominator below.
+  let totalRelevant = 0;
+  let dominantIntent: string | null = null;
+  let dominantCount = 0;
+  if (intentMix) {
+    for (const [intent, count] of Object.entries(intentMix)) {
+      if (typeof count !== 'number' || count <= 0) continue;
+      if (intentToHumanLabel(intent) === null) continue;
+      totalRelevant += count;
+      if (count > dominantCount) {
+        dominantCount = count;
+        dominantIntent = intent;
+      }
+    }
+  }
+  if (totalRelevant > 0) {
+    lines.push(`• *Activity*: ${totalRelevant} jobs in the last month`);
+    if (dominantIntent && dominantCount / totalRelevant >= 0.3) {
+      const label = intentToHumanLabel(dominantIntent);
+      if (label) lines.push(`• *Mostly*: ${label}`);
+    }
+  }
+
+  const topRepo = dossier.affinity[0];
+  if (topRepo && topRepo.hits >= 3) {
+    const rate = Math.round((100 * topRepo.successes) / Math.max(1, topRepo.hits));
+    lines.push(`• *Most active in*: \`${topRepo.repo}\` (${topRepo.hits} jobs, ${rate}% success)`);
+  }
+
+  const fp = dossier.metrics['failure_fingerprint'] as { failureRate7d?: number; samples?: number } | undefined;
+  if (fp && (fp.samples ?? 0) >= 5 && (fp.failureRate7d ?? 0) > 0.3) {
+    const pct = Math.round((fp.failureRate7d ?? 0) * 100);
+    lines.push(`• *Recent snags*: ${pct}% failure over ${fp.samples} jobs in the last week.`);
+  }
+
+  lines.push('');
+  lines.push('> Wipe with `forget all confirm`.');
+  return lines.join('\n');
+}
+
 export const __test__ = { TtlLru };
