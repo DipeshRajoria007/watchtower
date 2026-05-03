@@ -22,6 +22,7 @@ const MEMORY_LIMIT = 8;
 const VAULT_NOTE_TOKEN_BUDGET = 750;
 const SIGNAL_TOKEN_BUDGET = 600;
 const MEMORY_TOKEN_BUDGET = 600;
+const PINNED_TOKEN_BUDGET = 300;
 
 /**
  * Approximate token counter — char/4 is rough but stable enough for budget
@@ -118,7 +119,7 @@ export interface RecallOutput {
   /** Ready-to-splice prompt block. Empty string when no recall data is available. */
   promptBlock: string;
   estimatedTokens: number;
-  sources: Array<'dossier' | 'signals' | 'vault'>;
+  sources: Array<'dossier' | 'signals' | 'vault' | 'pinned'>;
 }
 
 /**
@@ -212,14 +213,41 @@ export async function assembleRecall(input: RecallInput): Promise<RecallOutput> 
     vaultBlock = `Operator notes:\n${clipToTokenBudget(vaultRaw, VAULT_NOTE_TOKEN_BUDGET)}`;
   }
 
-  // Drop categories until everything fits the budget. dossier survives last.
-  const sections: Array<{ kind: 'vault' | 'signals' | 'dossier'; text: string }> = [];
+  // 4. User-pinned facts ("things to remember"). Highest priority — these
+  // are explicit instructions the user gave miniOG, so they survive the
+  // budget last.
+  let pinnedBlock = '';
+  try {
+    const pinned = input.store.dossierStore().listPinnedFacts(input.userId);
+    if (pinned.length > 0) {
+      let used = 0;
+      const kept: string[] = [];
+      // Newest first (matches listPinnedFacts ordering); drop oldest if over budget.
+      for (const fact of pinned) {
+        const line = `- ${fact.text}`;
+        const tokens = approxTokens(line);
+        if (used + tokens > PINNED_TOKEN_BUDGET) break;
+        kept.push(line);
+        used += tokens;
+      }
+      if (kept.length > 0) {
+        pinnedBlock = `Things to remember (the user told me):\n${kept.join('\n')}`;
+      }
+    }
+  } catch (err) {
+    logger.debug({ err: String(err) }, 'recall: pinned facts read failed');
+  }
+
+  // Drop categories until everything fits the budget. Drop order:
+  // vault → signals → dossier → pinned. Pinned survives last because they
+  // are explicit user instructions.
+  const sections: Array<{ kind: 'pinned' | 'vault' | 'signals' | 'dossier'; text: string }> = [];
   if (vaultBlock) sections.push({ kind: 'vault', text: vaultBlock });
   if (signalsBlock) sections.push({ kind: 'signals', text: signalsBlock });
   if (dossierSummary) sections.push({ kind: 'dossier', text: dossierSummary });
+  if (pinnedBlock) sections.push({ kind: 'pinned', text: pinnedBlock });
 
-  // Drop order requires `vault` first, `signals` second, `dossier` last.
-  const dropOrder: Array<'vault' | 'signals' | 'dossier'> = ['vault', 'signals', 'dossier'];
+  const dropOrder: Array<'pinned' | 'vault' | 'signals' | 'dossier'> = ['vault', 'signals', 'dossier', 'pinned'];
 
   function totalTokens(): number {
     return sections.reduce((sum, s) => sum + approxTokens(s.text), 0);
@@ -242,8 +270,9 @@ export async function assembleRecall(input: RecallInput): Promise<RecallOutput> 
     return { promptBlock: '', estimatedTokens: 0, sources };
   }
 
+  // Render order: pinned (most important) → dossier → signals → vault.
   const ordered: string[] = [];
-  for (const kind of ['dossier', 'signals', 'vault'] as const) {
+  for (const kind of ['pinned', 'dossier', 'signals', 'vault'] as const) {
     const found = sections.find(s => s.kind === kind);
     if (found) {
       ordered.push(found.text);

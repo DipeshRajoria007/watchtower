@@ -24,7 +24,10 @@ export type DossierForgetField = 'role' | 'tone' | 'notes' | 'project_affinity' 
 export type MiniogSubcommand =
   | { kind: 'whoami' }
   | { kind: 'set-role'; role: DossierRole }
-  | { kind: 'forget'; field: DossierForgetField; confirmed: boolean };
+  | { kind: 'forget'; field: DossierForgetField; confirmed: boolean }
+  | { kind: 'remember'; text: string }
+  | { kind: 'memories' }
+  | { kind: 'forget-memory'; id: number };
 export type EventIngestSource = 'socket' | 'catchup' | 'launchpad';
 export type LaunchpadTarget = 'miniog';
 export type LaunchpadRequestStatus =

@@ -97,29 +97,47 @@ export function extractPrContext(texts: string[]): PrContext | undefined {
  *   set-role <pm|dev|designer|ops>
  *   forget <role|tone|notes|project_affinity|metrics|all> [confirm]
  */
+const PINNED_FACT_MAX_CHARS = 280;
+
 export function parseMiniogSubcommand(text: string): MiniogSubcommand | null {
   if (!text) return null;
-  const stripped = text
-    .replace(/<@[^>]+>/g, ' ')
-    .trim()
-    .toLowerCase();
-  if (!stripped) return null;
-  const tokens = stripped.split(/\s+/);
-  const head = tokens[0];
+  // Preserve case for value extraction (e.g. the freeform text after `remember`),
+  // but use a lowercased copy for verb dispatch.
+  const noMentions = text.replace(/<@[^>]+>/g, ' ').trim();
+  if (!noMentions) return null;
+  const tokens = noMentions.split(/\s+/);
+  const head = tokens[0]?.toLowerCase();
 
   if (head === 'whoami') return { kind: 'whoami' };
 
+  if (head === 'memories') return { kind: 'memories' };
+
+  if (head === 'remember') {
+    // Everything after the first word, original case preserved, capped.
+    const rest = noMentions.slice(tokens[0].length).trim();
+    if (!rest) return null;
+    return { kind: 'remember', text: rest.slice(0, PINNED_FACT_MAX_CHARS) };
+  }
+
   if (head === 'set-role') {
-    const role = tokens[1];
+    const role = tokens[1]?.toLowerCase();
     if (role && isDossierRole(role)) return { kind: 'set-role', role };
     return null;
   }
 
   if (head === 'forget') {
-    const field = tokens[1];
+    const field = tokens[1]?.toLowerCase();
+    // `forget memory <id>` removes a specific pinned fact; lives alongside
+    // the per-field clears handled below.
+    if (field === 'memory') {
+      if (tokens.length < 3) return null;
+      const id = Number.parseInt(tokens[2], 10);
+      if (!Number.isFinite(id) || id <= 0) return null;
+      return { kind: 'forget-memory', id };
+    }
     if (!field || !isDossierForgetField(field)) return null;
     if (field === 'all') {
-      const confirmed = tokens[2] === 'confirm';
+      const confirmed = tokens[2]?.toLowerCase() === 'confirm';
       return { kind: 'forget', field: 'all', confirmed };
     }
     return { kind: 'forget', field, confirmed: true };
