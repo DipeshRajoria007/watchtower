@@ -103,7 +103,12 @@ export function parseMiniogSubcommand(text: string): MiniogSubcommand | null {
   if (!text) return null;
   // Preserve case for value extraction (e.g. the freeform text after `remember`),
   // but use a lowercased copy for verb dispatch.
-  const noMentions = text.replace(/<@[^>]+>/g, ' ').trim();
+  // Also strip Slack's "*Sent using* <@bot>" attribution that some integrations
+  // append to outgoing messages — otherwise it lands inside the user's
+  // freeform `remember` text. Match before mention removal so the trailing
+  // <@…> in the attribution is consumed first.
+  const cleaned = text.replace(/\*Sent using\*[\s\S]*$/, '');
+  const noMentions = cleaned.replace(/<@[^>]+>/g, ' ').trim();
   if (!noMentions) return null;
   const tokens = noMentions.split(/\s+/);
   const head = tokens[0]?.toLowerCase();

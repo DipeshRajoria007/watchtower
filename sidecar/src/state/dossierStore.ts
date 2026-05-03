@@ -691,6 +691,8 @@ export function createDossierStore(db: Database.Database): DossierStore {
         summary: input.summary,
         createdAt,
       });
+      cache.invalidate(input.userId);
+      scheduleVaultRender({ kind: 'user', userId: input.userId });
       return Number(result.lastInsertRowid);
     },
 
@@ -727,6 +729,7 @@ export function createDossierStore(db: Database.Database): DossierStore {
         }
       }
       cache.invalidate(input.userId);
+      scheduleVaultRender({ kind: 'user', userId: input.userId });
       return { row, rotatedOut };
     },
 
@@ -736,7 +739,10 @@ export function createDossierStore(db: Database.Database): DossierStore {
 
     removePinnedFact(userId, id) {
       const result = deletePinnedByIdStmt.run(id, userId);
-      if (result.changes > 0) cache.invalidate(userId);
+      if (result.changes > 0) {
+        cache.invalidate(userId);
+        scheduleVaultRender({ kind: 'user', userId });
+      }
       return result.changes > 0;
     },
   };
