@@ -54,6 +54,28 @@ export type DossierDetail = {
   metrics: DossierMetricRow[];
 };
 
+export type PinnedFact = {
+  id: number;
+  userId: string;
+  text: string;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UserMemory = {
+  id: number;
+  userId: string;
+  jobId: string | null;
+  workflow: string | null;
+  status: string | null;
+  repo: string | null;
+  prUrl: string | null;
+  product: string | null;
+  summary: string;
+  createdAt: string;
+};
+
 export type SlackCommandTarget = 'miniog' | 'watchtower';
 
 export type ThemePresetId = 'watchtower-midnight' | 'signal-paper' | 'ember-terminal' | 'harbor-mint' | 'custom';

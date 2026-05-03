@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { GlowCard } from '../components/GlowCard';
 import { PageIntro } from '../components/primitives';
 import { Timestamp } from '../components/Timestamp';
-import type { DossierDetail, DossierForgetField, DossierRole, DossierSummary } from '../types';
+import type { DossierDetail, DossierForgetField, DossierRole, DossierSummary, PinnedFact, UserMemory } from '../types';
 
 const ROLES: DossierRole[] = ['pm', 'dev', 'designer', 'ops'];
 const FORGET_FIELDS: Array<{ value: DossierForgetField; label: string }> = [
@@ -25,6 +25,10 @@ export function DossierPage() {
   const [savingField, setSavingField] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
+  const [pinnedFacts, setPinnedFacts] = useState<PinnedFact[]>([]);
+  const [memories, setMemories] = useState<UserMemory[]>([]);
+  const [pinnedDraft, setPinnedDraft] = useState('');
+  const [savingPinned, setSavingPinned] = useState(false);
 
   const loadList = useCallback(async () => {
     setLoadingList(true);
@@ -43,12 +47,20 @@ export function DossierPage() {
     setLoadingDetail(true);
     setError(null);
     try {
-      const result = await invoke<DossierDetail>('get_dossier', { userId });
+      const [result, facts, mem] = await Promise.all([
+        invoke<DossierDetail>('get_dossier', { userId }),
+        invoke<PinnedFact[]>('list_pinned_facts', { userId }),
+        invoke<UserMemory[]>('get_user_memories', { userId, limit: 30 }),
+      ]);
       setDetail(result);
       setNotesDraft(result.notes ?? '');
+      setPinnedFacts(facts);
+      setMemories(mem);
     } catch (err) {
       setError(`Failed to load dossier: ${String(err)}`);
       setDetail(null);
+      setPinnedFacts([]);
+      setMemories([]);
     } finally {
       setLoadingDetail(false);
     }
@@ -63,6 +75,8 @@ export function DossierPage() {
     else {
       setDetail(null);
       setNotesDraft('');
+      setPinnedFacts([]);
+      setMemories([]);
     }
   }, [selectedUserId, loadDetail]);
 
@@ -88,6 +102,34 @@ export function DossierPage() {
       setError(`Save failed: ${String(err)}`);
     } finally {
       setSavingField(null);
+    }
+  }
+
+  async function addPinnedFact() {
+    if (!selectedUserId) return;
+    const text = pinnedDraft.trim();
+    if (!text) return;
+    setSavingPinned(true);
+    setError(null);
+    try {
+      await invoke<PinnedFact>('add_pinned_fact', { userId: selectedUserId, text });
+      setPinnedDraft('');
+      await loadDetail(selectedUserId);
+    } catch (err) {
+      setError(`Pin failed: ${String(err)}`);
+    } finally {
+      setSavingPinned(false);
+    }
+  }
+
+  async function removePinnedFact(id: number) {
+    if (!selectedUserId) return;
+    setError(null);
+    try {
+      await invoke('remove_pinned_fact', { userId: selectedUserId, id });
+      await loadDetail(selectedUserId);
+    } catch (err) {
+      setError(`Remove failed: ${String(err)}`);
     }
   }
 
@@ -316,6 +358,89 @@ export function DossierPage() {
                             <pre style={{ margin: '0.2rem 0 0', fontSize: '0.75rem', overflowX: 'auto' }}>
                               {prettyJson(m.metricValue)}
                             </pre>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  <div>
+                    <h4>Things to remember (pinned facts)</h4>
+                    {pinnedFacts.length === 0 ? (
+                      <p className="muted">No pinned facts.</p>
+                    ) : (
+                      <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                        {pinnedFacts.map(f => (
+                          <li
+                            key={f.id}
+                            style={{
+                              display: 'flex',
+                              gap: '0.5rem',
+                              alignItems: 'center',
+                              padding: '0.3rem 0',
+                            }}
+                          >
+                            <span style={{ flex: 1 }}>
+                              <strong>[{f.id}]</strong> {f.text}
+                              <span className="muted" style={{ fontSize: '0.75rem', marginLeft: '0.5rem' }}>
+                                · {f.source} · <Timestamp value={f.createdAt} />
+                              </span>
+                            </span>
+                            <button type="button" className="btn-secondary" onClick={() => void removePinnedFact(f.id)}>
+                              Remove
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                      <input
+                        type="text"
+                        className="input"
+                        style={{ flex: 1 }}
+                        placeholder="Add a fact for miniOG to remember about this user…"
+                        value={pinnedDraft}
+                        onChange={e => setPinnedDraft(e.target.value)}
+                        maxLength={280}
+                      />
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={() => void addPinnedFact()}
+                        disabled={savingPinned || !pinnedDraft.trim()}
+                      >
+                        {savingPinned ? 'Pinning…' : 'Pin'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4>Recent work</h4>
+                    {memories.length === 0 ? (
+                      <p className="muted">No tracked interactions yet.</p>
+                    ) : (
+                      <ul style={{ listStyle: 'none', padding: 0, margin: 0, maxHeight: '40vh', overflowY: 'auto' }}>
+                        {memories.map(m => (
+                          <li
+                            key={m.id}
+                            style={{ padding: '0.4rem 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+                          >
+                            <div className="muted" style={{ fontSize: '0.75rem' }}>
+                              <Timestamp value={m.createdAt} /> · {m.workflow ?? 'WORK'} · {m.status ?? '?'}
+                              {m.repo ? ` · ${m.repo}` : ''}
+                              {m.product ? ` · ${m.product}` : ''}
+                            </div>
+                            <div style={{ marginTop: '0.2rem' }}>
+                              {m.summary}
+                              {m.prUrl ? (
+                                <>
+                                  {' '}
+                                  <a href={m.prUrl} target="_blank" rel="noreferrer">
+                                    [PR]
+                                  </a>
+                                </>
+                              ) : null}
+                            </div>
                           </li>
                         ))}
                       </ul>
