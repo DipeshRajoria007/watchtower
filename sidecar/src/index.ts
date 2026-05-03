@@ -22,6 +22,7 @@ import { routeTask } from './router/taskRouter.js';
 import { startMentionCatchup } from './slack/mentionCatchup.js';
 import { SocketSlackClient } from './slack/socketClient.js';
 import { cleanupStaleWorkspaces } from './workspaces/workspaceManager.js';
+import { configureVaultWriter, shutdownVaultWriter } from './vault/vaultWriter.js';
 import { loadWorkflowTemplates } from './workflows/registry.js';
 import { fetchThreadContext } from './slack/threadContext.js';
 import { resolveUserGroupMembers } from './slack/userGroupResolver.js';
@@ -1012,6 +1013,16 @@ async function main(): Promise<void> {
   logger.info({ dbPath, maxConcurrentJobs: config.maxConcurrentJobs }, 'watchtower sidecar starting');
   cleanupStaleWorkspaces();
 
+  // Boot the optional Obsidian-compatible vault writer. When disabled (or no
+  // path configured), scheduleVaultRender calls become no-ops; the dossier
+  // store stays unaware of which mode the operator is in.
+  const vaultSettings = store.readVaultSettings();
+  configureVaultWriter({
+    store,
+    vaultPath: vaultSettings.vaultPath,
+    enabled: vaultSettings.vaultEnabled,
+  });
+
   // Mark any leftover RUNNING jobs as FAILED — their processes are gone after restart
   const orphaned = store.cleanupOrphanedRunningJobs();
   if (orphaned > 0) {
@@ -1030,12 +1041,14 @@ async function main(): Promise<void> {
 
   process.on('SIGINT', () => {
     logger.info('received SIGINT');
+    shutdownVaultWriter();
     store.close();
     process.exit(0);
   });
 
   process.on('SIGTERM', () => {
     logger.info('received SIGTERM');
+    shutdownVaultWriter();
     store.close();
     process.exit(0);
   });

@@ -170,13 +170,14 @@ const NOTIFICATION_AUDIO_SOUND_CARDS: NotificationAudioSoundCard[] = [
   { description: 'Small crystal tick', id: 'tink', label: 'Tink' },
 ];
 
-type SettingsSection = 'appearance' | 'connections' | 'access' | 'automation';
+type SettingsSection = 'appearance' | 'connections' | 'access' | 'automation' | 'memory';
 
 const SETTINGS_NAV: { description: string; key: SettingsSection; label: string }[] = [
   { key: 'appearance', label: 'Appearance', description: 'Theme and notification sounds' },
   { key: 'connections', label: 'Connections', description: 'Slack tokens and repo paths' },
   { key: 'access', label: 'Access', description: 'Ownership and role-based controls' },
   { key: 'automation', label: 'Automation', description: 'Backend and runtime limits' },
+  { key: 'memory', label: 'Memory', description: 'Obsidian-compatible dossier vault' },
 ];
 
 function buildThemePreviewStyle(theme: ReturnType<typeof resolveAppTheme>): CSSProperties {
@@ -1112,6 +1113,51 @@ export function SettingsPage({
                         }
                       />
                     </label>
+                  </div>
+                </SectionCard>
+              </div>
+            )}
+
+            {/* ──────── Memory (Obsidian vault) ──────── */}
+            {activeSection === 'memory' && (
+              <div className="settings-sections">
+                <SectionCard
+                  title="Memory Vault"
+                  subtitle="Render miniOG dossiers to a local Obsidian-compatible markdown folder. One-way only in this version — operator-editable regions are preserved across renders."
+                >
+                  <div className="settings-fields">
+                    <label className="field field-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={settings.vaultEnabled}
+                        onChange={event => updateSettings({ vaultEnabled: event.target.checked })}
+                      />
+                      <span>Enable vault rendering</span>
+                      <small className="field-hint">
+                        When enabled, dossier changes are debounced and written to disk every 30s. Disabling leaves
+                        existing files in place and stops further writes.
+                      </small>
+                    </label>
+
+                    <label className="field">
+                      <span>Vault directory (absolute path)</span>
+                      <input
+                        type="text"
+                        placeholder="/Users/you/Documents/Obsidian/Memory"
+                        value={settings.vaultPath}
+                        onChange={event => updateSettings({ vaultPath: event.target.value })}
+                        spellCheck={false}
+                      />
+                      <small className="field-hint">
+                        Files land under <code>&lt;vault&gt;/miniog/users/</code> with one Markdown note per Slack user.
+                        Anything outside the <code>miniog:auto</code> markers is yours to edit.
+                      </small>
+                    </label>
+
+                    <small className="field-hint">
+                      Only one Watchtower install should write to a given vault path. Pointing two installs at the same
+                      directory (e.g. via Obsidian Sync or Dropbox) is unsupported.
+                    </small>
                   </div>
                 </SectionCard>
               </div>
