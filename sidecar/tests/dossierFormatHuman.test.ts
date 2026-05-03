@@ -238,6 +238,69 @@ describe('formatDossierForHuman — failure fingerprint gating', () => {
   });
 });
 
+describe('formatDossierForHuman — pinned facts (Phase F)', () => {
+  function makeFact(id: number, text: string): import('../src/state/dossierStore.js').PinnedFactRow {
+    return {
+      id,
+      userId: 'U1',
+      text,
+      source: 'slack-remember',
+      createdAt: NOW_ISO,
+      updatedAt: NOW_ISO,
+    };
+  }
+
+  it('does not emit the section when no pinned facts are passed', () => {
+    const out = formatDossierForHuman(withProfile());
+    expect(out).not.toContain('Things you asked me to remember');
+    const out2 = formatDossierForHuman(withProfile(), { pinnedFacts: [] });
+    expect(out2).not.toContain('Things you asked me to remember');
+  });
+
+  it('renders all bullets when there are <= 5 facts', () => {
+    const facts = [makeFact(1, 'fact one'), makeFact(2, 'fact two'), makeFact(3, 'fact three')];
+    const out = formatDossierForHuman(withProfile(), { pinnedFacts: facts });
+    expect(out).toContain('*Things you asked me to remember*');
+    expect(out).toContain('• fact one');
+    expect(out).toContain('• fact two');
+    expect(out).toContain('• fact three');
+    expect(out).not.toMatch(/\d+ more/); // no overflow line
+  });
+
+  it('caps at 5 bullets and shows an overflow line', () => {
+    const facts = [
+      makeFact(1, 'fact 1'),
+      makeFact(2, 'fact 2'),
+      makeFact(3, 'fact 3'),
+      makeFact(4, 'fact 4'),
+      makeFact(5, 'fact 5'),
+      makeFact(6, 'fact 6'),
+      makeFact(7, 'fact 7'),
+    ];
+    const out = formatDossierForHuman(withProfile(), { pinnedFacts: facts })!;
+    expect(out).toContain('• fact 1');
+    expect(out).toContain('• fact 5');
+    expect(out).not.toContain('• fact 6');
+    expect(out).toContain('(2 more — say `memories`)');
+  });
+
+  it('never leaks ids or timestamps in the rendered bullets', () => {
+    const facts = [makeFact(42, 'sensitive text')];
+    const out = formatDossierForHuman(withProfile(), { pinnedFacts: facts })!;
+    expect(out).toContain('• sensitive text');
+    expect(out).not.toContain('42');
+    expect(out).not.toContain(NOW_ISO);
+  });
+
+  it('renders even with only pinned facts (no profile, no metrics)', () => {
+    const facts = [makeFact(1, 'standalone fact')];
+    const out = formatDossierForHuman(makeDossier(), { pinnedFacts: facts });
+    expect(out).toContain("Here's what I know about you:");
+    expect(out).toContain('*Things you asked me to remember*');
+    expect(out).toContain('• standalone fact');
+  });
+});
+
 describe('formatDossierForHuman — wipe footer is never surfaced', () => {
   it('does not advertise forget all in any rendering', () => {
     const out = formatDossierForHuman(withProfile());
