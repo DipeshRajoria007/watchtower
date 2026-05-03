@@ -750,6 +750,13 @@ export function formatDossierForPrompt(dossier: UserDossier): string {
   const tz = profile?.tz ? ` — ${profile.tz}` : '';
   lines.push(`User: ${name}${role}${tz}`);
 
+  // Phase C: AI-synthesised prose summary, when present. Comes first so the
+  // LLM sees the narrative before the structured numbers below.
+  const inferred = dossier.metrics['inferred_profile'] as { text?: string } | undefined;
+  if (inferred?.text) {
+    lines.push(`About: ${inferred.text}`);
+  }
+
   const topRepo = dossier.affinity[0];
   if (topRepo && topRepo.hits > 0) {
     const rate = Math.round((100 * topRepo.successes) / Math.max(1, topRepo.hits));

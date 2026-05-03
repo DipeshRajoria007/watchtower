@@ -25,6 +25,7 @@ import { SocketSlackClient } from './slack/socketClient.js';
 import { cleanupStaleWorkspaces } from './workspaces/workspaceManager.js';
 import { configureVaultWriter, shutdownVaultWriter } from './vault/vaultWriter.js';
 import { configureVaultWatcher, shutdownVaultWatcher } from './vault/vaultWatcher.js';
+import { startProfileSynthesizerScheduler, stopProfileSynthesizerScheduler } from './learning/profileSynthesizer.js';
 import { loadWorkflowTemplates } from './workflows/registry.js';
 import { fetchThreadContext } from './slack/threadContext.js';
 import { resolveUserGroupMembers } from './slack/userGroupResolver.js';
@@ -1088,6 +1089,12 @@ async function main(): Promise<void> {
     enabled: vaultSettings.vaultEnabled,
   }).catch(err => logger.warn({ err: String(err) }, 'vault watcher start failed'));
 
+  // Phase C: nightly profile synthesizer. Ticks every 60s and runs once per
+  // IST day (~midnight) for users with activity since the last run.
+  // Bounded cost: skips users with <3 memories or last synthesis <12h ago,
+  // concurrency capped at 2 LLM calls in flight.
+  startProfileSynthesizerScheduler(store);
+
   // Mark any leftover RUNNING jobs as FAILED — their processes are gone after restart
   const orphaned = store.cleanupOrphanedRunningJobs();
   if (orphaned > 0) {
@@ -1108,6 +1115,7 @@ async function main(): Promise<void> {
     logger.info('received SIGINT');
     shutdownVaultWriter();
     void shutdownVaultWatcher();
+    stopProfileSynthesizerScheduler();
     store.close();
     process.exit(0);
   });
@@ -1116,6 +1124,7 @@ async function main(): Promise<void> {
     logger.info('received SIGTERM');
     shutdownVaultWriter();
     void shutdownVaultWatcher();
+    stopProfileSynthesizerScheduler();
     store.close();
     process.exit(0);
   });
