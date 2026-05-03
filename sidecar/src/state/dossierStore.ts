@@ -123,6 +123,20 @@ export interface UserMemoryRow {
   createdAt: string;
 }
 
+export interface PinnedFactRow {
+  id: number;
+  userId: string;
+  text: string;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Maximum stored characters per pinned fact, after trim. */
+export const PINNED_FACT_MAX_CHARS = 280;
+/** Per-user cap; on overflow, oldest is rotated out. */
+export const PINNED_FACT_USER_CAP = 50;
+
 export interface DossierStore {
   firstSeen(input: { userId: string; displayName?: string; realName?: string; tz?: string; email?: string }): void;
   getDossier(userId: string): UserDossier;
@@ -149,6 +163,23 @@ export interface DossierStore {
     summary: string;
   }): number;
   recentMemoriesForUser(userId: string, limit?: number): UserMemoryRow[];
+
+  /**
+   * Adds a user-pinned fact ("remember this"). Trims and caps text at
+   * PINNED_FACT_MAX_CHARS. When the per-user cap is exceeded, the oldest
+   * entry is rotated out and returned as `rotatedOut`. Idempotent: if an
+   * identical text already exists for the user, no new row is inserted and
+   * the existing row is returned with `rotatedOut: null`.
+   *
+   * Returns null when the input text is empty after trim.
+   */
+  addPinnedFact(input: {
+    userId: string;
+    text: string;
+    source: 'slack-remember' | 'vault-edit' | 'admin-edit';
+  }): { row: PinnedFactRow; rotatedOut: PinnedFactRow | null } | null;
+  listPinnedFacts(userId: string): PinnedFactRow[];
+  removePinnedFact(userId: string, id: number): boolean;
 }
 
 const PROFILE_REFRESH_MS = 24 * 60 * 60 * 1000;
@@ -322,6 +353,46 @@ export function createDossierStore(db: Database.Database): DossierStore {
      ORDER BY created_at DESC
      LIMIT ?`,
   );
+
+  // --- Pinned facts (Phase B) -------------------------------------------
+
+  const findPinnedByText = db.prepare(
+    `SELECT id, user_id AS userId, text, source, created_at AS createdAt, updated_at AS updatedAt
+     FROM user_pinned_facts
+     WHERE user_id = ? AND text = ?
+     LIMIT 1`,
+  );
+
+  const insertPinnedStmt = db.prepare(
+    `INSERT INTO user_pinned_facts(user_id, text, source, created_at, updated_at)
+     VALUES(@userId, @text, @source, @now, @now)`,
+  );
+
+  const selectPinnedByIdStmt = db.prepare(
+    `SELECT id, user_id AS userId, text, source, created_at AS createdAt, updated_at AS updatedAt
+     FROM user_pinned_facts
+     WHERE id = ?
+     LIMIT 1`,
+  );
+
+  const listPinnedStmt = db.prepare(
+    `SELECT id, user_id AS userId, text, source, created_at AS createdAt, updated_at AS updatedAt
+     FROM user_pinned_facts
+     WHERE user_id = ?
+     ORDER BY created_at DESC, id DESC`,
+  );
+
+  const countPinnedStmt = db.prepare(`SELECT COUNT(*) AS n FROM user_pinned_facts WHERE user_id = ?`);
+
+  const oldestPinnedStmt = db.prepare(
+    `SELECT id, user_id AS userId, text, source, created_at AS createdAt, updated_at AS updatedAt
+     FROM user_pinned_facts
+     WHERE user_id = ?
+     ORDER BY created_at ASC, id ASC
+     LIMIT 1`,
+  );
+
+  const deletePinnedByIdStmt = db.prepare(`DELETE FROM user_pinned_facts WHERE id = ? AND user_id = ?`);
 
   // --- Lazy rollup support (Phase 1) -------------------------------------
 
@@ -625,6 +696,48 @@ export function createDossierStore(db: Database.Database): DossierStore {
 
     recentMemoriesForUser(userId, limit = 30) {
       return selectRecentMemoriesStmt.all(userId, limit) as UserMemoryRow[];
+    },
+
+    addPinnedFact(input) {
+      const text = (input.text ?? '').trim().slice(0, PINNED_FACT_MAX_CHARS);
+      if (!text) return null;
+
+      // Idempotency: identical text → no insert, return existing row.
+      const existing = findPinnedByText.get(input.userId, text) as PinnedFactRow | undefined;
+      if (existing) return { row: existing, rotatedOut: null };
+
+      const now = new Date().toISOString();
+      const result = insertPinnedStmt.run({
+        userId: input.userId,
+        text,
+        source: input.source,
+        now,
+      });
+      const id = Number(result.lastInsertRowid);
+      const row = selectPinnedByIdStmt.get(id) as PinnedFactRow;
+
+      // Cap enforcement: if we now exceed the per-user limit, evict the oldest.
+      let rotatedOut: PinnedFactRow | null = null;
+      const countRow = countPinnedStmt.get(input.userId) as { n: number };
+      if (countRow.n > PINNED_FACT_USER_CAP) {
+        const oldest = oldestPinnedStmt.get(input.userId) as PinnedFactRow | undefined;
+        if (oldest && oldest.id !== id) {
+          deletePinnedByIdStmt.run(oldest.id, input.userId);
+          rotatedOut = oldest;
+        }
+      }
+      cache.invalidate(input.userId);
+      return { row, rotatedOut };
+    },
+
+    listPinnedFacts(userId) {
+      return listPinnedStmt.all(userId) as PinnedFactRow[];
+    },
+
+    removePinnedFact(userId, id) {
+      const result = deletePinnedByIdStmt.run(id, userId);
+      if (result.changes > 0) cache.invalidate(userId);
+      return result.changes > 0;
     },
   };
 }

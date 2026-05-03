@@ -386,6 +386,16 @@ export class JobStore {
         PRIMARY KEY(user_id, product)
       );
       CREATE INDEX IF NOT EXISTS idx_user_product_affinity_user ON user_product_affinity(user_id, computed_at);
+
+      CREATE TABLE IF NOT EXISTS user_pinned_facts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_pinned_facts_user ON user_pinned_facts(user_id, created_at);
     `);
 
     try {

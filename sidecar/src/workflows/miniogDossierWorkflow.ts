@@ -143,6 +143,96 @@ export async function runMiniogDossierWorkflow(params: {
     };
   }
 
+  if (sub.kind === 'remember') {
+    const result = dossiers.addPinnedFact({
+      userId,
+      text: sub.text,
+      source: 'slack-remember',
+    });
+    if (!result) {
+      await reply('I need something to remember — try `remember dashboard rewrite started 2026-04-15`.');
+      return {
+        workflow: 'MINIOG_DOSSIER',
+        status: 'SKIPPED',
+        message: 'Remember rejected: empty text.',
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+    const lines = [`Got it — I'll remember: _${result.row.text}_ (id ${result.row.id}).`];
+    if (result.rotatedOut) {
+      lines.push(`Rotated out the oldest entry to stay under your ${50}-fact cap: _${result.rotatedOut.text}_.`);
+    }
+    await reply(lines.join('\n'));
+    logStep?.({
+      stage: 'miniog.dossier.remember',
+      message: 'Pinned fact added.',
+      data: { id: result.row.id, rotatedOutId: result.rotatedOut?.id ?? null },
+    });
+    return {
+      workflow: 'MINIOG_DOSSIER',
+      status: 'SUCCESS',
+      message: 'Pinned fact added.',
+      notifyDesktop: false,
+      slackPosted: true,
+    };
+  }
+
+  if (sub.kind === 'memories') {
+    const facts = dossiers.listPinnedFacts(userId);
+    if (facts.length === 0) {
+      await reply("You haven't asked me to remember anything yet — try `remember <something>`.");
+      return {
+        workflow: 'MINIOG_DOSSIER',
+        status: 'SUCCESS',
+        message: 'Empty memories.',
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+    const body = [
+      "Here's what you've asked me to remember:",
+      ...facts.map(f => `[${f.id}] ${f.text}`),
+      '',
+      'Forget any with `forget memory <id>`.',
+    ].join('\n');
+    await reply(body);
+    return {
+      workflow: 'MINIOG_DOSSIER',
+      status: 'SUCCESS',
+      message: `Listed ${facts.length} pinned facts.`,
+      notifyDesktop: false,
+      slackPosted: true,
+    };
+  }
+
+  if (sub.kind === 'forget-memory') {
+    const removed = dossiers.removePinnedFact(userId, sub.id);
+    if (!removed) {
+      await reply(`No pinned fact with id ${sub.id} for you. Try \`memories\` to see your ids.`);
+      return {
+        workflow: 'MINIOG_DOSSIER',
+        status: 'SKIPPED',
+        message: `Pinned fact ${sub.id} not found.`,
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+    await reply(`Forgot pinned fact ${sub.id}.`);
+    logStep?.({
+      stage: 'miniog.dossier.forget_memory',
+      message: `Removed pinned fact ${sub.id}`,
+      data: { id: sub.id },
+    });
+    return {
+      workflow: 'MINIOG_DOSSIER',
+      status: 'SUCCESS',
+      message: `Removed pinned fact ${sub.id}.`,
+      notifyDesktop: false,
+      slackPosted: true,
+    };
+  }
+
   return {
     workflow: 'MINIOG_DOSSIER',
     status: 'SKIPPED',
