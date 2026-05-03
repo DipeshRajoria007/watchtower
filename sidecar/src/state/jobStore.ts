@@ -1888,13 +1888,15 @@ export class JobStore {
     status: JobRecord['status'];
     correctionApplied: boolean;
     errorKind?: string;
+    personalityMode?: PersonalityMode;
+    repo?: string;
   }): void {
     this.db
       .prepare(
         `INSERT INTO learning_signals(
            job_id, event_id, channel_id, user_id, workflow, status, intent,
-           correction_applied, personality_mode, error_kind, created_at
-         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           correction_applied, personality_mode, error_kind, repo, created_at
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.jobId,
@@ -1905,8 +1907,9 @@ export class JobStore {
         input.status,
         input.intent,
         input.correctionApplied ? 1 : 0,
-        'normal',
+        input.personalityMode ?? 'normal',
         input.errorKind ?? null,
+        input.repo ?? null,
         new Date().toISOString(),
       );
   }

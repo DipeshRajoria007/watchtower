@@ -1,5 +1,14 @@
 import type Database from 'better-sqlite3';
 import type { DossierForgetField, DossierRole, PersonalityMode } from '../types/contracts.js';
+import {
+  computeActiveHours,
+  computeFailureFingerprint,
+  computeIntentMix,
+  computeProjectAffinity,
+  computeResponseStyle,
+  rollupWindowStart,
+  type LearningSignalRow,
+} from './dossierBuilder.js';
 
 export interface DossierProfile {
   userId: string;
@@ -100,6 +109,14 @@ export interface DossierStore {
 }
 
 const PROFILE_REFRESH_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Rollups recompute when (a) any new signal exists since the last rollup, or
+ * (b) the last rollup is older than this many ms. The TTL guard catches
+ * dossiers that have stale rollups but no recent signals — so a new repo
+ * affinity from a colleague's history doesn't outlive its 30-day window.
+ */
+const ROLLUP_TTL_MS = 24 * 60 * 60 * 1000;
 
 export function createDossierStore(db: Database.Database): DossierStore {
   const cache = new TtlLru<UserDossier>();
@@ -210,6 +227,147 @@ export function createDossierStore(db: Database.Database): DossierStore {
      LIMIT 500`,
   );
 
+  // --- Lazy rollup support (Phase 1) -------------------------------------
+
+  const probeNewSignal = db.prepare(
+    `SELECT 1 AS hit
+     FROM learning_signals
+     WHERE user_id = ? AND created_at > ?
+     LIMIT 1`,
+  );
+
+  const selectSignalsWindow = db.prepare(
+    `SELECT job_id AS jobId,
+            channel_id AS channelId,
+            user_id AS userId,
+            workflow,
+            intent,
+            status,
+            correction_applied AS correctionApplied,
+            personality_mode AS personalityMode,
+            error_kind AS errorKind,
+            repo,
+            created_at AS createdAt
+     FROM learning_signals
+     WHERE user_id = ? AND created_at >= ?
+     ORDER BY created_at DESC`,
+  );
+
+  const lastSignalAt = db.prepare(
+    `SELECT MAX(created_at) AS lastAt
+     FROM learning_signals
+     WHERE user_id = ?`,
+  );
+
+  const upsertAffinityStmt = db.prepare(
+    `INSERT INTO user_project_affinity(
+       user_id, repo, hits, successes, failures, last_used_at, computed_at
+     ) VALUES(@userId, @repo, @hits, @successes, @failures, @lastUsedAt, @computedAt)
+     ON CONFLICT(user_id, repo) DO UPDATE SET
+       hits = excluded.hits,
+       successes = excluded.successes,
+       failures = excluded.failures,
+       last_used_at = excluded.last_used_at,
+       computed_at = excluded.computed_at`,
+  );
+
+  /** Drop affinity rows for repos that no longer appear in the 30-day window. */
+  const deleteStaleAffinityStmt = db.prepare(
+    `DELETE FROM user_project_affinity WHERE user_id = @userId AND computed_at < @cutoff`,
+  );
+
+  const upsertMetricStmt = db.prepare(
+    `INSERT INTO user_metrics(user_id, metric_key, metric_value, computed_at)
+     VALUES(@userId, @metricKey, @metricValue, @computedAt)
+     ON CONFLICT(user_id, metric_key) DO UPDATE SET
+       metric_value = excluded.metric_value,
+       computed_at = excluded.computed_at`,
+  );
+
+  const minComputedAtStmt = db.prepare(
+    `SELECT MIN(computed_at) AS minAt FROM (
+       SELECT computed_at FROM user_project_affinity WHERE user_id = ?
+       UNION ALL
+       SELECT computed_at FROM user_metrics WHERE user_id = ?
+     )`,
+  );
+
+  function rollupUserNow(userId: string, now: Date): void {
+    const windowStart = rollupWindowStart(now).toISOString();
+    const computedAt = now.toISOString();
+
+    const rows = selectSignalsWindow.all(userId, windowStart) as LearningSignalRow[];
+
+    const affinity = computeProjectAffinity(rows);
+    const failureFingerprint = computeFailureFingerprint(rows, now);
+    const intentMix = computeIntentMix(rows);
+    const responseStyle = computeResponseStyle(rows);
+    const activeHours = computeActiveHours(rows);
+
+    // Wipe rows older than this run, then UPSERT current ones. Together this
+    // ensures repos that fell out of the window are removed. SQLite WAL +
+    // single-statement writes are atomic; a partial failure here is harmless
+    // because the next getDossier call will recompute.
+    deleteStaleAffinityStmt.run({ userId, cutoff: computedAt });
+    for (const row of affinity) {
+      upsertAffinityStmt.run({
+        userId,
+        repo: row.repo,
+        hits: row.hits,
+        successes: row.successes,
+        failures: row.failures,
+        lastUsedAt: row.lastUsedAt ?? null,
+        computedAt,
+      });
+    }
+
+    for (const [metricKey, value] of [
+      ['failure_fingerprint', failureFingerprint],
+      ['intent_mix', intentMix],
+      ['response_style', responseStyle],
+      ['active_hours', activeHours],
+    ] as const) {
+      upsertMetricStmt.run({
+        userId,
+        metricKey,
+        metricValue: JSON.stringify(value),
+        computedAt,
+      });
+    }
+
+    // Honor operator-set tone: only write a passive-learn tone if the user
+    // has no existing personality_profiles row, or the existing row was
+    // itself written by passive learning. Operator sources (set-role,
+    // admin-edit) are never overwritten.
+    if (responseStyle.suggestedMode !== 'normal') {
+      const existing = selectTone.get(userId) as { source?: string } | undefined;
+      const existingSource = existing?.source ?? null;
+      const isOperatorSet = existingSource && existingSource !== 'passive-learn';
+      if (!isOperatorSet) {
+        setToneStmt.run({
+          userId,
+          mode: responseStyle.suggestedMode,
+          source: 'passive-learn',
+          now: computedAt,
+        });
+      }
+    }
+  }
+
+  function shouldRecompute(userId: string, now: Date): boolean {
+    const minRow = minComputedAtStmt.get(userId, userId) as { minAt?: string | null } | undefined;
+    const lastComputed = minRow?.minAt ?? null;
+    if (!lastComputed) {
+      // No rollups yet. Recompute only if there's at least one signal to feed
+      // them — avoids writing empty metric rows for unknown users.
+      const last = lastSignalAt.get(userId) as { lastAt?: string | null } | undefined;
+      return Boolean(last?.lastAt);
+    }
+    if (now.getTime() - new Date(lastComputed).getTime() >= ROLLUP_TTL_MS) return true;
+    const probe = probeNewSignal.get(userId, lastComputed) as { hit?: number } | undefined;
+    return Boolean(probe?.hit);
+  }
+
   function readDossier(userId: string): UserDossier {
     const profileRow = selectProfile.get(userId) as DossierProfile | undefined;
     const affinityRows = selectAffinity.all(userId) as DossierAffinityRow[];
@@ -259,6 +417,15 @@ export function createDossierStore(db: Database.Database): DossierStore {
     getDossier(userId) {
       const cached = cache.get(userId);
       if (cached) return cached;
+      const now = new Date();
+      if (shouldRecompute(userId, now)) {
+        try {
+          rollupUserNow(userId, now);
+        } catch {
+          // Recompute failures fall through to whatever rollup data is on disk;
+          // do not block the read. The next call will try again.
+        }
+      }
       const dossier = readDossier(userId);
       cache.set(userId, dossier);
       return dossier;
