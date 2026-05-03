@@ -1,6 +1,6 @@
 import type { WebClient } from '@slack/web-api';
 import type { NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
-import { formatDossierForPrompt } from '../state/dossierStore.js';
+import { formatDossierForHuman } from '../state/dossierStore.js';
 import type { JobStore } from '../state/jobStore.js';
 
 export async function runMiniogDossierWorkflow(params: {
@@ -53,10 +53,8 @@ export async function runMiniogDossierWorkflow(params: {
     }
 
     const dossier = dossiers.getDossier(userId);
-    const summary = formatDossierForPrompt(dossier);
-    const body = summary
-      ? `Here's what I know about you:\n\`\`\`\n${summary}\n\`\`\``
-      : "I don't have a dossier for you yet — interact with me a bit and try again.";
+    const body =
+      formatDossierForHuman(dossier) ?? "I don't have a dossier for you yet — interact with me a bit and try again.";
     await reply(body);
 
     logStep?.({
