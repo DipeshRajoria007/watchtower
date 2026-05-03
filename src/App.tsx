@@ -12,6 +12,7 @@ import { PerformancePage } from './pages/PerformancePage';
 import { LaunchpadPage } from './pages/LaunchpadPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { RunsPage } from './pages/RunsPage';
+import { DossierPage } from './pages/DossierPage';
 import { ReviewPage } from './pages/ReviewPage';
 import { SettingsPage } from './pages/SettingsPage';
 import type {
@@ -546,6 +547,8 @@ function App() {
       {view === 'performance' ? (
         <PerformancePage onSelectRun={setSelectedRunId} onNavigateRuns={() => navigateToView('runs')} />
       ) : null}
+
+      {view === 'dossiers' ? <DossierPage /> : null}
 
       {view === 'diagnostics' ? (
         <div className="page-stack">

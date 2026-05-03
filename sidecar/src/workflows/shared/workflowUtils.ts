@@ -10,6 +10,10 @@ import { getActiveBackendId } from '../../codex/runCodex.js';
 import { resolveGithubTokenForCodex } from '../../github/githubAuth.js';
 import { resolveWorkspace } from '../../workspaces/workspaceManager.js';
 import { resolveRepoOrAsk } from './repoResolver.js';
+import type { DossierStore } from '../../state/dossierStore.js';
+
+/** Minimal slice of JobStore needed for first-seen capture; keeps PipelineStore callers compatible. */
+type DossierAware = { dossierStore?: () => DossierStore };
 
 export interface ThreadMessage {
   text: string;
@@ -217,8 +221,9 @@ export async function prepareWorkflowContext(params: {
   slack: WebClient;
   logStep?: WorkflowStepLogger;
   resolveRepo?: boolean;
+  store?: DossierAware;
 }): Promise<WorkflowContext> {
-  const { task, config, slack, logStep, resolveRepo = true } = params;
+  const { task, config, slack, logStep, resolveRepo = true, store } = params;
   const isOwnerAuthor = config.ownerSlackUserIds.includes(task.event.userId);
 
   // Resolve Slack display name
@@ -236,6 +241,25 @@ export async function prepareWorkflowContext(params: {
         stage: 'workflow.user.resolve',
         message: `Could not resolve display name for Slack user ${task.event.userId}`,
       });
+    }
+    // Piggyback on the users.info we already paid for: capture the user into the dossier.
+    if (store?.dossierStore && task.event.userId) {
+      try {
+        store.dossierStore().firstSeen({
+          userId: task.event.userId,
+          displayName: userInfo.user?.profile?.display_name || undefined,
+          realName: userInfo.user?.real_name || userInfo.user?.profile?.real_name || undefined,
+          tz: userInfo.user?.tz || undefined,
+          email: userInfo.user?.profile?.email || undefined,
+        });
+      } catch (err) {
+        logStep?.({
+          stage: 'workflow.dossier.first_seen_failed',
+          level: 'WARN',
+          message: 'Failed to record first-seen dossier entry.',
+          data: { error: (err as Error).message },
+        });
+      }
     }
   } catch (err) {
     logStep?.({

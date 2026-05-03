@@ -564,7 +564,11 @@ pub fn run() {
             create_pr_from_job,
             cancel_job,
             get_job_cost_summary,
-            get_performance_overview
+            get_performance_overview,
+            list_dossiers,
+            get_dossier,
+            save_dossier_field,
+            forget_dossier_field
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -1221,6 +1225,336 @@ async fn cancel_job(job_id: String, state: State<'_, AppState>) -> Result<(), St
         )
         .map_err(|err| format!("db insert cancel request failed: {err}"))?;
 
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DossierSummary {
+    user_id: String,
+    display_name: Option<String>,
+    real_name: Option<String>,
+    role: Option<String>,
+    tz: Option<String>,
+    updated_at: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DossierAffinityRow {
+    repo: String,
+    hits: i64,
+    successes: i64,
+    failures: i64,
+    last_used_at: Option<String>,
+    computed_at: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DossierMetricRow {
+    metric_key: String,
+    metric_value: String,
+    computed_at: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DossierDetail {
+    user_id: String,
+    display_name: Option<String>,
+    real_name: Option<String>,
+    tz: Option<String>,
+    email: Option<String>,
+    role: Option<String>,
+    notes: Option<String>,
+    source: Option<String>,
+    first_seen_at: Option<String>,
+    updated_at: Option<String>,
+    tone: Option<String>,
+    tone_source: Option<String>,
+    affinity: Vec<DossierAffinityRow>,
+    metrics: Vec<DossierMetricRow>,
+}
+
+#[tauri::command]
+async fn list_dossiers(state: State<'_, AppState>) -> Result<Vec<DossierSummary>, String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    let mut stmt = connection
+        .prepare(
+            "SELECT user_id, display_name, real_name, role, tz, updated_at
+             FROM user_dossiers
+             ORDER BY updated_at DESC
+             LIMIT 500",
+        )
+        .map_err(|err| format!("db prepare failed: {err}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(DossierSummary {
+                user_id: row.get(0)?,
+                display_name: row.get(1)?,
+                real_name: row.get(2)?,
+                role: row.get(3)?,
+                tz: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })
+        .map_err(|err| format!("db query failed: {err}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|err| format!("db row failed: {err}"))?);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn get_dossier(user_id: String, state: State<'_, AppState>) -> Result<DossierDetail, String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+
+    let profile = connection
+        .query_row(
+            "SELECT user_id, display_name, real_name, tz, email, role, notes, source, first_seen_at, updated_at
+             FROM user_dossiers WHERE user_id = ? LIMIT 1",
+            params![user_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|err| format!("db query failed: {err}"))?;
+
+    let (profile_user_id, display_name, real_name, tz, email, role, notes, source, first_seen_at, updated_at) =
+        match profile {
+            Some(p) => (
+                p.0,
+                p.1,
+                p.2,
+                p.3,
+                p.4,
+                p.5,
+                p.6,
+                p.7,
+                Some(p.8),
+                Some(p.9),
+            ),
+            None => (
+                user_id.clone(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+        };
+
+    let mut affinity = Vec::new();
+    {
+        let mut stmt = connection
+            .prepare(
+                "SELECT repo, hits, successes, failures, last_used_at, computed_at
+                 FROM user_project_affinity WHERE user_id = ? ORDER BY hits DESC",
+            )
+            .map_err(|err| format!("db prepare failed: {err}"))?;
+        let rows = stmt
+            .query_map(params![user_id], |row| {
+                Ok(DossierAffinityRow {
+                    repo: row.get(0)?,
+                    hits: row.get(1)?,
+                    successes: row.get(2)?,
+                    failures: row.get(3)?,
+                    last_used_at: row.get(4)?,
+                    computed_at: row.get(5)?,
+                })
+            })
+            .map_err(|err| format!("db query failed: {err}"))?;
+        for row in rows {
+            affinity.push(row.map_err(|err| format!("db row failed: {err}"))?);
+        }
+    }
+
+    let mut metrics = Vec::new();
+    {
+        let mut stmt = connection
+            .prepare(
+                "SELECT metric_key, metric_value, computed_at
+                 FROM user_metrics WHERE user_id = ?",
+            )
+            .map_err(|err| format!("db prepare failed: {err}"))?;
+        let rows = stmt
+            .query_map(params![user_id], |row| {
+                Ok(DossierMetricRow {
+                    metric_key: row.get(0)?,
+                    metric_value: row.get(1)?,
+                    computed_at: row.get(2)?,
+                })
+            })
+            .map_err(|err| format!("db query failed: {err}"))?;
+        for row in rows {
+            metrics.push(row.map_err(|err| format!("db row failed: {err}"))?);
+        }
+    }
+
+    let tone_row: Option<(String, Option<String>)> = connection
+        .query_row(
+            "SELECT mode, source FROM personality_profiles WHERE scope = 'user' AND scope_id = ? LIMIT 1",
+            params![user_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()
+        .map_err(|err| format!("db query failed: {err}"))?;
+
+    let (tone, tone_source) = match tone_row {
+        Some((mode, src)) => (Some(mode), src),
+        None => (None, None),
+    };
+
+    Ok(DossierDetail {
+        user_id: profile_user_id,
+        display_name,
+        real_name,
+        tz,
+        email,
+        role,
+        notes,
+        source,
+        first_seen_at,
+        updated_at,
+        tone,
+        tone_source,
+        affinity,
+        metrics,
+    })
+}
+
+#[tauri::command]
+async fn save_dossier_field(
+    user_id: String,
+    field: String,
+    value: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if field != "role" && field != "notes" {
+        return Err(format!("field '{field}' is not editable"));
+    }
+    if field == "role" {
+        if let Some(ref v) = value {
+            if !matches!(v.as_str(), "pm" | "dev" | "designer" | "ops") {
+                return Err(format!("role '{v}' is not allowed"));
+            }
+        }
+    }
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    let now = Utc::now().to_rfc3339();
+    let sql = format!(
+        "INSERT INTO user_dossiers(user_id, {field}, source, first_seen_at, updated_at)
+         VALUES(?, ?, 'admin-edit', ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           {field} = excluded.{field},
+           source = 'admin-edit',
+           updated_at = excluded.updated_at"
+    );
+    connection
+        .execute(&sql, params![user_id, value, now, now])
+        .map_err(|err| format!("db update failed: {err}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn forget_dossier_field(
+    user_id: String,
+    field: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    let now = Utc::now().to_rfc3339();
+    match field.as_str() {
+        "role" => {
+            connection
+                .execute(
+                    "UPDATE user_dossiers SET role = NULL, source = 'forget', updated_at = ? WHERE user_id = ?",
+                    params![now, user_id],
+                )
+                .map_err(|err| format!("db update failed: {err}"))?;
+        }
+        "notes" => {
+            connection
+                .execute(
+                    "UPDATE user_dossiers SET notes = NULL, source = 'forget', updated_at = ? WHERE user_id = ?",
+                    params![now, user_id],
+                )
+                .map_err(|err| format!("db update failed: {err}"))?;
+        }
+        "tone" => {
+            connection
+                .execute(
+                    "DELETE FROM personality_profiles WHERE scope = 'user' AND scope_id = ?",
+                    params![user_id],
+                )
+                .map_err(|err| format!("db delete failed: {err}"))?;
+        }
+        "project_affinity" => {
+            connection
+                .execute(
+                    "DELETE FROM user_project_affinity WHERE user_id = ?",
+                    params![user_id],
+                )
+                .map_err(|err| format!("db delete failed: {err}"))?;
+        }
+        "metrics" => {
+            connection
+                .execute(
+                    "DELETE FROM user_metrics WHERE user_id = ?",
+                    params![user_id],
+                )
+                .map_err(|err| format!("db delete failed: {err}"))?;
+        }
+        "all" => {
+            connection
+                .execute(
+                    "DELETE FROM personality_profiles WHERE scope = 'user' AND scope_id = ?",
+                    params![user_id],
+                )
+                .map_err(|err| format!("db delete failed: {err}"))?;
+            connection
+                .execute(
+                    "DELETE FROM user_project_affinity WHERE user_id = ?",
+                    params![user_id],
+                )
+                .map_err(|err| format!("db delete failed: {err}"))?;
+            connection
+                .execute(
+                    "DELETE FROM user_metrics WHERE user_id = ?",
+                    params![user_id],
+                )
+                .map_err(|err| format!("db delete failed: {err}"))?;
+            connection
+                .execute(
+                    "DELETE FROM user_dossiers WHERE user_id = ?",
+                    params![user_id],
+                )
+                .map_err(|err| format!("db delete failed: {err}"))?;
+        }
+        other => return Err(format!("field '{other}' is not a valid forget target")),
+    }
     Ok(())
 }
 
