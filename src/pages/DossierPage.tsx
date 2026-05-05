@@ -6,13 +6,23 @@ import { Timestamp } from '../components/Timestamp';
 import type { DossierDetail, DossierForgetField, DossierRole, DossierSummary, PinnedFact, UserMemory } from '../types';
 
 const ROLES: DossierRole[] = ['pm', 'dev', 'designer', 'ops'];
-const FORGET_FIELDS: Array<{ value: DossierForgetField; label: string }> = [
-  { value: 'role', label: 'Role' },
-  { value: 'tone', label: 'Tone' },
-  { value: 'notes', label: 'Notes' },
-  { value: 'project_affinity', label: 'Project affinity' },
-  { value: 'metrics', label: 'Metrics' },
-  { value: 'all', label: 'Everything' },
+
+type DetailTab = 'overview' | 'memory' | 'notes' | 'activity' | 'danger';
+
+const TABS: Array<{ id: DetailTab; label: string }> = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'memory', label: 'Memory' },
+  { id: 'notes', label: 'Notes' },
+  { id: 'activity', label: 'Activity' },
+  { id: 'danger', label: 'Danger' },
+];
+
+const FORGET_FIELDS: Array<{ value: Exclude<DossierForgetField, 'all'>; label: string; hint: string }> = [
+  { value: 'role', label: 'Role', hint: 'Clear assigned role' },
+  { value: 'tone', label: 'Tone', hint: 'Reset tone preference' },
+  { value: 'notes', label: 'Notes', hint: 'Wipe operator notes' },
+  { value: 'project_affinity', label: 'Project affinity', hint: 'Clear repo usage history' },
+  { value: 'metrics', label: 'Metrics', hint: 'Drop computed metric snapshot' },
 ];
 
 export function DossierPage() {
@@ -29,6 +39,7 @@ export function DossierPage() {
   const [memories, setMemories] = useState<UserMemory[]>([]);
   const [pinnedDraft, setPinnedDraft] = useState('');
   const [savingPinned, setSavingPinned] = useState(false);
+  const [activeTab, setActiveTab] = useState<DetailTab>('overview');
 
   const loadList = useCallback(async () => {
     setLoadingList(true);
@@ -71,8 +82,10 @@ export function DossierPage() {
   }, [loadList]);
 
   useEffect(() => {
-    if (selectedUserId) void loadDetail(selectedUserId);
-    else {
+    if (selectedUserId) {
+      setActiveTab('overview');
+      void loadDetail(selectedUserId);
+    } else {
       setDetail(null);
       setNotesDraft('');
       setPinnedFacts([]);
@@ -155,319 +168,511 @@ export function DossierPage() {
     }
   }
 
+  const totalActivity = useMemo(() => {
+    if (!detail) return 0;
+    return detail.affinity.reduce((sum, a) => sum + a.hits, 0);
+  }, [detail]);
+
+  const topRepo = useMemo(() => {
+    if (!detail || detail.affinity.length === 0) return null;
+    return [...detail.affinity].sort((a, b) => b.hits - a.hits)[0];
+  }, [detail]);
+
   return (
-    <div className="page page-dossiers">
+    <div className="page-stack">
       <PageIntro
         eyebrow="Memory"
         title="Dossiers"
         description="Per-Slack-user identity, project affinity, and tone preferences that miniOG accumulates over time."
         actions={
-          <button type="button" className="btn-secondary" onClick={() => void loadList()} disabled={loadingList}>
+          <button type="button" className="ghost-button" onClick={() => void loadList()} disabled={loadingList}>
             {loadingList ? 'Refreshing…' : 'Refresh'}
           </button>
         }
       />
 
-      {error ? (
-        <div className="callout callout-warning" role="alert">
-          {error}
-        </div>
-      ) : null}
+      {error ? <div className="inline-error-banner">{error}</div> : null}
 
-      <div
-        className="dossier-layout"
-        style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) 2fr', gap: '1.25rem' }}
-      >
+      <div className="dossier-workspace">
         <GlowCard>
-          <section className="surface-card">
+          <section className="surface-card dossier-sidebar">
             <div className="section-head">
-              <h2>Users</h2>
-              <span className="muted">{filtered.length}</span>
+              <div className="section-heading-copy">
+                <div className="section-title-row">
+                  <h2>Users</h2>
+                  <span className="section-count">{filtered.length}</span>
+                </div>
+                <p className="muted">Filter by name, id, or role.</p>
+              </div>
             </div>
-            <div style={{ padding: '0 1rem 0.75rem' }}>
-              <input
-                type="search"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Filter by name, id, or role"
-                className="input"
-                style={{ width: '100%' }}
-              />
+
+            <div className="dossier-search">
+              <input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…" />
             </div>
-            <ul
-              className="dossier-list"
-              style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: '60vh', overflowY: 'auto' }}
-            >
+
+            <div className="dossier-user-list">
               {filtered.length === 0 ? (
-                <li className="muted" style={{ padding: '1rem' }}>
-                  {loadingList ? 'Loading…' : 'No dossiers yet.'}
-                </li>
+                <p className="empty-state">{loadingList ? 'Loading…' : 'No dossiers yet.'}</p>
               ) : (
-                filtered.map(d => {
-                  const active = selectedUserId === d.userId;
-                  return (
-                    <li key={d.userId}>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedUserId(d.userId)}
-                        className={active ? 'list-item list-item-active' : 'list-item'}
-                        style={{
-                          width: '100%',
-                          textAlign: 'left',
-                          padding: '0.6rem 1rem',
-                          background: active ? 'var(--surface-emphasis, rgba(255,255,255,0.06))' : 'transparent',
-                          border: 'none',
-                          color: 'inherit',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
-                          <strong>{d.displayName ?? d.realName ?? d.userId}</strong>
-                          {d.role ? <span className="badge">{d.role}</span> : null}
-                        </div>
-                        <div className="muted" style={{ fontSize: '0.75rem' }}>
-                          <span>{d.userId}</span>
-                          {d.tz ? <span> · {d.tz}</span> : null}
-                          <span> · </span>
-                          <Timestamp value={d.updatedAt} />
-                        </div>
-                      </button>
-                    </li>
-                  );
-                })
+                <ul className="run-list">
+                  {filtered.map(d => {
+                    const active = selectedUserId === d.userId;
+                    const name = d.displayName ?? d.realName ?? d.userId;
+                    return (
+                      <li key={d.userId}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedUserId(d.userId)}
+                          className={active ? 'run-card selected' : 'run-card'}
+                        >
+                          <div className="run-card-copy">
+                            <div className="dossier-card-header">
+                              <span className="run-card-title">{name}</span>
+                              {d.role ? <span className="status-badge info">{d.role}</span> : null}
+                            </div>
+                            <div className="run-card-meta">
+                              <span>{d.userId}</span>
+                              <span> · </span>
+                              <Timestamp value={d.updatedAt} />
+                            </div>
+                          </div>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
-            </ul>
+            </div>
           </section>
         </GlowCard>
 
         <GlowCard>
-          <section className="surface-card">
-            <div className="section-head">
-              <h2>Detail</h2>
-              {detail ? <span className="muted">{detail.userId}</span> : null}
-            </div>
-            <div style={{ padding: '1rem' }}>
-              {!selectedUserId ? (
-                <p className="muted">Select a user from the left to inspect their dossier.</p>
-              ) : loadingDetail || !detail ? (
-                <p className="muted">Loading…</p>
-              ) : (
-                <div style={{ display: 'grid', gap: '1rem' }}>
-                  <div>
-                    <h3 style={{ marginBottom: '0.4rem' }}>{detail.displayName ?? detail.realName ?? detail.userId}</h3>
-                    <div className="muted" style={{ fontSize: '0.85rem' }}>
-                      {detail.email ? <span>{detail.email} · </span> : null}
-                      {detail.tz ? <span>{detail.tz} · </span> : null}
-                      {detail.firstSeenAt ? (
-                        <span>
-                          first seen <Timestamp value={detail.firstSeenAt} />
-                        </span>
+          <section className="surface-card dossier-detail">
+            {!selectedUserId ? (
+              <p className="empty-state">Select a user from the left to inspect their dossier.</p>
+            ) : loadingDetail || !detail ? (
+              <p className="empty-state">Loading…</p>
+            ) : (
+              <>
+                <header className="dossier-hero">
+                  <div className="dossier-hero-copy">
+                    <span className="eyebrow">{detail.role ?? 'no role'}</span>
+                    <h1>{detail.displayName ?? detail.realName ?? detail.userId}</h1>
+                    <p className="dossier-hero-meta">
+                      <span className="mono">{detail.userId}</span>
+                      {detail.email ? (
+                        <>
+                          <span className="dot">·</span>
+                          <span>{detail.email}</span>
+                        </>
                       ) : null}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="muted" style={{ display: 'block', marginBottom: '0.3rem' }}>
-                      Role
-                    </label>
-                    <select
-                      value={detail.role ?? ''}
-                      onChange={e => void saveField('role', e.target.value || null)}
-                      disabled={savingField === 'role'}
-                      className="input"
-                    >
-                      <option value="">— none —</option>
-                      {ROLES.map(role => (
-                        <option key={role} value={role}>
-                          {role}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="muted" style={{ display: 'block', marginBottom: '0.3rem' }}>
-                      Notes
-                    </label>
-                    <textarea
-                      value={notesDraft}
-                      onChange={e => setNotesDraft(e.target.value)}
-                      placeholder="Operator notes (visible only in Watchtower)"
-                      rows={3}
-                      className="input"
-                      style={{ width: '100%' }}
-                    />
-                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        onClick={() => void saveField('notes', notesDraft)}
-                        disabled={savingField === 'notes'}
-                      >
-                        {savingField === 'notes' ? 'Saving…' : 'Save notes'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h4>Tone</h4>
-                    <p className="muted" style={{ fontSize: '0.85rem' }}>
-                      {detail.tone ?? 'normal'} {detail.toneSource ? <span>· source: {detail.toneSource}</span> : null}
+                      {detail.firstSeenAt ? (
+                        <>
+                          <span className="dot">·</span>
+                          <span>
+                            first seen <Timestamp value={detail.firstSeenAt} />
+                          </span>
+                        </>
+                      ) : null}
                     </p>
                   </div>
+                </header>
 
+                <div className="detail-grid dossier-stats">
                   <div>
-                    <h4>Project affinity</h4>
-                    {detail.affinity.length === 0 ? (
-                      <p className="muted">No data yet.</p>
-                    ) : (
-                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr>
-                            <th align="left">Repo</th>
-                            <th align="right">Hits</th>
-                            <th align="right">Success</th>
-                            <th align="right">Fail</th>
-                            <th align="left">Last used</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {detail.affinity.map(a => (
-                            <tr key={a.repo}>
-                              <td>{a.repo}</td>
-                              <td align="right">{a.hits}</td>
-                              <td align="right">{a.successes}</td>
-                              <td align="right">{a.failures}</td>
-                              <td>{a.lastUsedAt ? <Timestamp value={a.lastUsedAt} /> : '—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
+                    <span>Role</span>
+                    <strong>{detail.role ?? '—'}</strong>
                   </div>
-
                   <div>
-                    <h4>Metrics</h4>
-                    {detail.metrics.length === 0 ? (
-                      <p className="muted">No metrics yet.</p>
-                    ) : (
-                      <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                        {detail.metrics.map(m => (
-                          <li key={m.metricKey} style={{ marginBottom: '0.5rem' }}>
-                            <strong>{m.metricKey}</strong>
-                            <pre style={{ margin: '0.2rem 0 0', fontSize: '0.75rem', overflowX: 'auto' }}>
-                              {prettyJson(m.metricValue)}
-                            </pre>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                    <span>Tone</span>
+                    <strong>{detail.tone ?? 'normal'}</strong>
                   </div>
-
                   <div>
-                    <h4>Things to remember (pinned facts)</h4>
-                    {pinnedFacts.length === 0 ? (
-                      <p className="muted">No pinned facts.</p>
-                    ) : (
-                      <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                        {pinnedFacts.map(f => (
-                          <li
-                            key={f.id}
-                            style={{
-                              display: 'flex',
-                              gap: '0.5rem',
-                              alignItems: 'center',
-                              padding: '0.3rem 0',
-                            }}
-                          >
-                            <span style={{ flex: 1 }}>
-                              <strong>[{f.id}]</strong> {f.text}
-                              <span className="muted" style={{ fontSize: '0.75rem', marginLeft: '0.5rem' }}>
-                                · {f.source} · <Timestamp value={f.createdAt} />
-                              </span>
-                            </span>
-                            <button type="button" className="btn-secondary" onClick={() => void removePinnedFact(f.id)}>
-                              Remove
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                      <input
-                        type="text"
-                        className="input"
-                        style={{ flex: 1 }}
-                        placeholder="Add a fact for miniOG to remember about this user…"
-                        value={pinnedDraft}
-                        onChange={e => setPinnedDraft(e.target.value)}
-                        maxLength={280}
-                      />
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        onClick={() => void addPinnedFact()}
-                        disabled={savingPinned || !pinnedDraft.trim()}
-                      >
-                        {savingPinned ? 'Pinning…' : 'Pin'}
-                      </button>
-                    </div>
+                    <span>Activity</span>
+                    <strong>
+                      {totalActivity} hit{totalActivity === 1 ? '' : 's'}
+                    </strong>
                   </div>
-
                   <div>
-                    <h4>Recent work</h4>
-                    {memories.length === 0 ? (
-                      <p className="muted">No tracked interactions yet.</p>
-                    ) : (
-                      <ul style={{ listStyle: 'none', padding: 0, margin: 0, maxHeight: '40vh', overflowY: 'auto' }}>
-                        {memories.map(m => (
-                          <li
-                            key={m.id}
-                            style={{ padding: '0.4rem 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
-                          >
-                            <div className="muted" style={{ fontSize: '0.75rem' }}>
-                              <Timestamp value={m.createdAt} /> · {m.workflow ?? 'WORK'} · {m.status ?? '?'}
-                              {m.repo ? ` · ${m.repo}` : ''}
-                              {m.product ? ` · ${m.product}` : ''}
-                            </div>
-                            <div style={{ marginTop: '0.2rem' }}>
-                              {m.summary}
-                              {m.prUrl ? (
-                                <>
-                                  {' '}
-                                  <a href={m.prUrl} target="_blank" rel="noreferrer">
-                                    [PR]
-                                  </a>
-                                </>
-                              ) : null}
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                    <span>Top repo</span>
+                    <strong>{topRepo ? topRepo.repo : '—'}</strong>
                   </div>
-
                   <div>
-                    <h4>Forget</h4>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      {FORGET_FIELDS.map(({ value, label }) => (
-                        <button
-                          key={value}
-                          type="button"
-                          className={value === 'all' ? 'btn-danger' : 'btn-secondary'}
-                          onClick={() => void forgetField(value)}
-                          disabled={savingField === `forget:${value}`}
-                        >
-                          {savingField === `forget:${value}` ? '…' : label}
-                        </button>
-                      ))}
-                    </div>
+                    <span>Pinned facts</span>
+                    <strong>{pinnedFacts.length}</strong>
+                  </div>
+                  <div>
+                    <span>Memories</span>
+                    <strong>{memories.length}</strong>
                   </div>
                 </div>
-              )}
-            </div>
+
+                <nav className="tab-bar dossier-tabs" role="tablist" aria-label="Dossier sections">
+                  {TABS.map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={activeTab === tab.id}
+                      className={activeTab === tab.id ? 'tab-button active' : 'tab-button'}
+                      onClick={() => setActiveTab(tab.id)}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </nav>
+
+                <div className="dossier-tab-panel">
+                  {activeTab === 'overview' ? (
+                    <OverviewTab
+                      detail={detail}
+                      role={detail.role}
+                      onChangeRole={value => void saveField('role', value || null)}
+                      savingRole={savingField === 'role'}
+                    />
+                  ) : null}
+
+                  {activeTab === 'memory' ? (
+                    <MemoryTab
+                      pinnedFacts={pinnedFacts}
+                      pinnedDraft={pinnedDraft}
+                      onPinnedDraftChange={setPinnedDraft}
+                      onAdd={() => void addPinnedFact()}
+                      onRemove={id => void removePinnedFact(id)}
+                      saving={savingPinned}
+                    />
+                  ) : null}
+
+                  {activeTab === 'notes' ? (
+                    <NotesTab
+                      notesDraft={notesDraft}
+                      onChange={setNotesDraft}
+                      onSave={() => void saveField('notes', notesDraft)}
+                      saving={savingField === 'notes'}
+                    />
+                  ) : null}
+
+                  {activeTab === 'activity' ? <ActivityTab memories={memories} /> : null}
+
+                  {activeTab === 'danger' ? (
+                    <DangerTab busyField={savingField} onForget={field => void forgetField(field)} />
+                  ) : null}
+                </div>
+              </>
+            )}
           </section>
         </GlowCard>
+      </div>
+    </div>
+  );
+}
+
+function OverviewTab({
+  detail,
+  role,
+  onChangeRole,
+  savingRole,
+}: {
+  detail: DossierDetail;
+  role: DossierRole | null;
+  onChangeRole: (value: string) => void;
+  savingRole: boolean;
+}) {
+  return (
+    <div className="dossier-tab-stack">
+      <div className="dossier-field">
+        <label className="dossier-field-label">Role</label>
+        <select
+          className="dossier-input"
+          value={role ?? ''}
+          onChange={e => onChangeRole(e.target.value)}
+          disabled={savingRole}
+        >
+          <option value="">— none —</option>
+          {ROLES.map(r => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+        {detail.toneSource ? <p className="muted dossier-field-hint">tone source: {detail.toneSource}</p> : null}
+      </div>
+
+      <div className="dossier-subsection">
+        <div className="section-title-row">
+          <h3>Project affinity</h3>
+          <span className="section-count">{detail.affinity.length}</span>
+        </div>
+        {detail.affinity.length === 0 ? (
+          <p className="empty-state">No project usage tracked yet.</p>
+        ) : (
+          <div className="dossier-table-wrap">
+            <table className="dossier-table">
+              <thead>
+                <tr>
+                  <th>Repo</th>
+                  <th className="num">Hits</th>
+                  <th className="num">Success</th>
+                  <th className="num">Fail</th>
+                  <th>Last used</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detail.affinity.map(a => (
+                  <tr key={a.repo}>
+                    <td>{a.repo}</td>
+                    <td className="num">{a.hits}</td>
+                    <td className="num">{a.successes}</td>
+                    <td className="num">{a.failures}</td>
+                    <td>{a.lastUsedAt ? <Timestamp value={a.lastUsedAt} /> : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="dossier-subsection">
+        <div className="section-title-row">
+          <h3>Metrics</h3>
+          <span className="section-count">{detail.metrics.length}</span>
+        </div>
+        {detail.metrics.length === 0 ? (
+          <p className="empty-state">No metrics computed yet.</p>
+        ) : (
+          <ul className="dossier-metric-list">
+            {detail.metrics.map(m => (
+              <li key={m.metricKey} className="dossier-metric">
+                <span className="dossier-metric-key">{m.metricKey}</span>
+                <pre className="dossier-metric-value">{prettyJson(m.metricValue)}</pre>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MemoryTab({
+  pinnedFacts,
+  pinnedDraft,
+  onPinnedDraftChange,
+  onAdd,
+  onRemove,
+  saving,
+}: {
+  pinnedFacts: PinnedFact[];
+  pinnedDraft: string;
+  onPinnedDraftChange: (value: string) => void;
+  onAdd: () => void;
+  onRemove: (id: number) => void;
+  saving: boolean;
+}) {
+  return (
+    <div className="dossier-tab-stack">
+      <div className="dossier-subsection">
+        <div className="section-title-row">
+          <h3>Things to remember</h3>
+          <span className="section-count">{pinnedFacts.length}</span>
+        </div>
+        <p className="muted">Pinned facts miniOG always recalls when answering this user.</p>
+      </div>
+
+      <form
+        className="dossier-pin-form"
+        onSubmit={e => {
+          e.preventDefault();
+          onAdd();
+        }}
+      >
+        <input
+          type="text"
+          className="dossier-input"
+          placeholder="Add a fact for miniOG to remember…"
+          value={pinnedDraft}
+          onChange={e => onPinnedDraftChange(e.target.value)}
+          maxLength={280}
+        />
+        <button type="submit" className="primary-button" disabled={saving || !pinnedDraft.trim()}>
+          {saving ? 'Pinning…' : 'Pin'}
+        </button>
+      </form>
+
+      {pinnedFacts.length === 0 ? (
+        <p className="empty-state">
+          No pinned facts yet. Add one above, or run <code>remember</code> in Slack.
+        </p>
+      ) : (
+        <ul className="dossier-pin-list">
+          {pinnedFacts.map(f => (
+            <li key={f.id} className="dossier-pin-item">
+              <div className="dossier-pin-body">
+                <p className="dossier-pin-text">{f.text}</p>
+                <p className="dossier-pin-meta">
+                  <span className="mono">#{f.id}</span>
+                  <span className="dot">·</span>
+                  <span>{f.source}</span>
+                  <span className="dot">·</span>
+                  <Timestamp value={f.createdAt} />
+                </p>
+              </div>
+              <button type="button" className="ghost-button" onClick={() => onRemove(f.id)}>
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function NotesTab({
+  notesDraft,
+  onChange,
+  onSave,
+  saving,
+}: {
+  notesDraft: string;
+  onChange: (value: string) => void;
+  onSave: () => void;
+  saving: boolean;
+}) {
+  return (
+    <div className="dossier-tab-stack">
+      <div className="dossier-subsection">
+        <div className="section-title-row">
+          <h3>Operator notes</h3>
+        </div>
+        <p className="muted">Private to Watchtower. miniOG does not see these.</p>
+      </div>
+
+      <textarea
+        className="dossier-textarea"
+        value={notesDraft}
+        onChange={e => onChange(e.target.value)}
+        placeholder="Anything you want to remember about this user (visible only here)"
+        rows={6}
+      />
+      <div className="dossier-action-row">
+        <button type="button" className="primary-button" onClick={onSave} disabled={saving}>
+          {saving ? 'Saving…' : 'Save notes'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ActivityTab({ memories }: { memories: UserMemory[] }) {
+  return (
+    <div className="dossier-tab-stack">
+      <div className="dossier-subsection">
+        <div className="section-title-row">
+          <h3>Recent work</h3>
+          <span className="section-count">{memories.length}</span>
+        </div>
+        <p className="muted">Last 30 interactions miniOG handled for this user.</p>
+      </div>
+
+      {memories.length === 0 ? (
+        <p className="empty-state">No tracked interactions yet.</p>
+      ) : (
+        <ul className="dossier-memory-list">
+          {memories.map(m => (
+            <li key={m.id} className="dossier-memory-item">
+              <div className="dossier-memory-meta">
+                <Timestamp value={m.createdAt} />
+                <span className="dot">·</span>
+                <span className="status-badge info">{m.workflow ?? 'WORK'}</span>
+                {m.status ? (
+                  <span
+                    className={`status-badge ${m.status === 'SUCCESS' ? 'success' : m.status === 'FAILED' ? 'failed' : 'info'}`}
+                  >
+                    {m.status}
+                  </span>
+                ) : null}
+                {m.repo ? (
+                  <>
+                    <span className="dot">·</span>
+                    <span className="mono">{m.repo}</span>
+                  </>
+                ) : null}
+                {m.product ? (
+                  <>
+                    <span className="dot">·</span>
+                    <span>{m.product}</span>
+                  </>
+                ) : null}
+              </div>
+              <p className="dossier-memory-summary">
+                {m.summary}
+                {m.prUrl ? (
+                  <>
+                    {' '}
+                    <a href={m.prUrl} target="_blank" rel="noreferrer">
+                      [PR]
+                    </a>
+                  </>
+                ) : null}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function DangerTab({
+  busyField,
+  onForget,
+}: {
+  busyField: string | null;
+  onForget: (field: DossierForgetField) => void;
+}) {
+  return (
+    <div className="dossier-tab-stack">
+      <div className="dossier-subsection">
+        <div className="section-title-row">
+          <h3>Forget</h3>
+        </div>
+        <p className="muted">Reset individual fields, or wipe the entire dossier.</p>
+      </div>
+
+      <ul className="dossier-forget-list">
+        {FORGET_FIELDS.map(({ value, label, hint }) => (
+          <li key={value} className="dossier-forget-row">
+            <div>
+              <strong>{label}</strong>
+              <p className="muted">{hint}</p>
+            </div>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => onForget(value)}
+              disabled={busyField === `forget:${value}`}
+            >
+              {busyField === `forget:${value}` ? '…' : 'Forget'}
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      <div className="dossier-danger-zone">
+        <div>
+          <strong>Wipe everything</strong>
+          <p className="muted">Removes the entire dossier, pinned facts, and memory rows. Cannot be undone.</p>
+        </div>
+        <button
+          type="button"
+          className="dossier-danger-button"
+          onClick={() => onForget('all')}
+          disabled={busyField === 'forget:all'}
+        >
+          {busyField === 'forget:all' ? '…' : 'Forget everything'}
+        </button>
       </div>
     </div>
   );
