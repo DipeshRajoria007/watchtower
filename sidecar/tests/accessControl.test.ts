@@ -222,6 +222,84 @@ describe('access control evaluator', () => {
     expect(config.accessControl?.groups.admin.resolvedUserIds).toEqual(['UOWNER1', 'UADMIN', 'UADMIN2']);
   });
 
+  describe('denial reasons', () => {
+    it('returns NOT_ON_ACCESS_LIST when the user is in no group', () => {
+      const config = makeConfig();
+      const decision = evaluateAccess({
+        config,
+        userId: 'UNKNOWN',
+        channelId: 'C-VIEW',
+        requiredLevel: 'viewer',
+      });
+
+      expect(decision.allowed).toBe(false);
+      expect(decision.denyReason).toBe('NOT_ON_ACCESS_LIST');
+      expect(decision.reason).toBe("Sorry, you're not on the access list. Please ask an admin to add you.");
+    });
+
+    it('returns INSUFFICIENT_ROLE when the user is in a group but rank is too low', () => {
+      const config = makeConfig();
+      const decision = evaluateAccess({
+        config,
+        userId: 'UVIEWER',
+        channelId: 'C-VIEW',
+        requiredLevel: 'builder',
+      });
+
+      expect(decision.allowed).toBe(false);
+      expect(decision.denyReason).toBe('INSUFFICIENT_ROLE');
+      expect(decision.reason).toBe(
+        'Sorry, this kind of request needs a higher access level than your role allows. Please contact an admin.',
+      );
+    });
+
+    it('returns CHANNEL_NOT_ENABLED with channel copy when role qualifies but channel is not in the role list', () => {
+      const config = makeConfig();
+      const decision = evaluateAccess({
+        config,
+        userId: 'UBUILDER',
+        channelId: 'C-VIEW',
+        requiredLevel: 'builder',
+      });
+
+      expect(decision.allowed).toBe(false);
+      expect(decision.denyReason).toBe('CHANNEL_NOT_ENABLED');
+      expect(decision.reason).toBe(
+        "Sorry, I'm not enabled for this kind of request in this channel. Please contact an admin.",
+      );
+    });
+
+    it('returns CHANNEL_NOT_ENABLED with DM copy when role qualifies but IM is disabled for the role', () => {
+      const config = makeConfig();
+      const decision = evaluateAccess({
+        config,
+        userId: 'UBUILDER',
+        channelId: 'D123',
+        channelType: 'im',
+        requiredLevel: 'builder',
+      });
+
+      expect(decision.allowed).toBe(false);
+      expect(decision.denyReason).toBe('CHANNEL_NOT_ENABLED');
+      expect(decision.reason).toBe("Sorry, DMs aren't enabled for your role. Please contact an admin.");
+    });
+
+    it('owner bypass wins over every denial branch', () => {
+      const config = makeConfig();
+      const decision = evaluateAccess({
+        config,
+        userId: 'UOWNER1',
+        channelId: 'C-UNLISTED',
+        requiredLevel: 'admin',
+      });
+
+      expect(decision.allowed).toBe(true);
+      expect(decision.ownerBypass).toBe(true);
+      expect(decision.denyReason).toBeUndefined();
+      expect(decision.reason).toBeUndefined();
+    });
+  });
+
   it('seeds legacy builder and admin permissions from previous config', () => {
     const accessControl = buildLegacyAccessControlConfig({
       ownerSlackUserIds: ['UOWNER1'],
