@@ -96,9 +96,6 @@ export interface SubmitPrReviewResult {
 }
 
 function determineReviewEvent(findings: AgentFinding[]): ReviewEvent {
-  const hasCritical = findings.some(f => f.severity === 'critical');
-  const hasHigh = findings.some(f => f.severity === 'high');
-  if (hasCritical || hasHigh) return 'REQUEST_CHANGES';
   if (findings.length > 0) return 'COMMENT';
   return 'APPROVE';
 }
