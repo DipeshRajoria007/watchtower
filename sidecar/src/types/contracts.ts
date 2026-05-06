@@ -173,6 +173,12 @@ export interface NormalizedTask {
    * no per-user override is set; downstream prompts honor this.
    */
   toneMode?: PersonalityMode;
+  /**
+   * Asker's dossier role, populated by the router. Conversational prompts
+   * adapt their explanation depth and code-snippet density based on this
+   * (non-dev roles get plain-language, low-code answers).
+   */
+  dossierRole?: DossierRole;
 }
 
 export interface RepoClassificationResult {

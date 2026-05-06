@@ -1,4 +1,4 @@
-import type { NormalizedTask, PersonalityMode, WorkflowIntent } from '../types/contracts.js';
+import type { DossierRole, NormalizedTask, PersonalityMode, WorkflowIntent } from '../types/contracts.js';
 
 type MentionPromptWorkflow = Exclude<WorkflowIntent, 'DEV_ASSIST'>;
 
@@ -31,8 +31,10 @@ export function buildMentionSystemPrompt(params: {
   workflow: MentionPromptWorkflow;
   /** Optional dossier-derived tone override; defaults to 'normal'. */
   toneMode?: PersonalityMode;
+  /** Optional asker role from the dossier; shapes Q&A explanation depth. */
+  dossierRole?: DossierRole;
 }): string {
-  const { task, workflow, toneMode = 'normal' } = params;
+  const { task, workflow, toneMode = 'normal', dossierRole } = params;
   const seriousContext = isSeriousContext(task, workflow);
   const toneLine = toneLineFor(toneMode);
   const lines: string[] = [
@@ -51,6 +53,10 @@ export function buildMentionSystemPrompt(params: {
     '- Safety baseline: no hate, no abuse, no threats.',
     '- Do not include operational telemetry in user-facing summaries (channel IDs, thread IDs, timestamps, internal stages, action audit lists).',
   ];
+
+  for (const guidanceLine of roleGuidanceLines(workflow, dossierRole)) {
+    lines.push(guidanceLine);
+  }
 
   if (task.isOwnerAuthor) {
     lines.push(
@@ -72,4 +78,21 @@ function toneLineFor(mode: PersonalityMode): string {
     default:
       return '- Use plain, natural wording.';
   }
+}
+
+const NON_DEV_ROLES: ReadonlyArray<DossierRole> = ['pm', 'designer', 'ops'];
+
+function roleGuidanceLines(workflow: MentionPromptWorkflow, role: DossierRole | undefined): string[] {
+  if (workflow !== 'CONVERSATIONAL') {
+    return [];
+  }
+  const lines = [
+    "- Lead with the explanation. Walk through the flow in plain language and only quote code, file paths, or util names when they're load-bearing for the answer. Avoid dumping multiple code blocks just to show what was inspected.",
+  ];
+  if (role && NON_DEV_ROLES.includes(role)) {
+    lines.push(
+      `- The asker is a ${role} — not an engineer. Avoid jargon and implementation detail. Skip code blocks unless one is genuinely necessary; if you must include one, quote it from the actual codebase rather than synthesising pseudocode. When it helps understanding, give a short concrete example or analogy. Format the reply so it's easy to skim — short paragraphs, with a heading or bullets if there are distinct points.`,
+    );
+  }
+  return lines;
 }
