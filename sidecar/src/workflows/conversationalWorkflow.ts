@@ -56,7 +56,7 @@ export async function runConversationalWorkflow(params: {
   const threadContext = formatThreadContext(task, threadMessages);
 
   const prompt = `
-${buildMentionSystemPrompt({ task, workflow: 'CONVERSATIONAL', toneMode: task.toneMode })}
+${buildMentionSystemPrompt({ task, workflow: 'CONVERSATIONAL', toneMode: task.toneMode, dossierRole: task.dossierRole })}
 
 Context:
 - You are miniOG, a developer assistant bot in a Slack workspace.

@@ -64,4 +64,61 @@ describe('mentionSystemPrompt', () => {
     });
     expect(prompt).toContain('This is a serious work context. Keep the reply especially direct and unembellished.');
   });
+
+  describe('role-aware conversational guidance', () => {
+    it('adds the explanation-first baseline for any conversational reply', () => {
+      const prompt = buildMentionSystemPrompt({
+        task: makeTask(),
+        workflow: 'CONVERSATIONAL',
+      });
+      expect(prompt).toContain('Lead with the explanation.');
+      expect(prompt).not.toContain('not an engineer');
+    });
+
+    it('does not emit the explanation-first baseline outside conversational workflows', () => {
+      const prompt = buildMentionSystemPrompt({
+        task: makeTask(),
+        workflow: 'IMPLEMENTATION',
+        dossierRole: 'pm',
+      });
+      expect(prompt).not.toContain('Lead with the explanation.');
+      expect(prompt).not.toContain('not an engineer');
+    });
+
+    it('layers non-dev guidance on top for PMs in a conversational reply', () => {
+      const prompt = buildMentionSystemPrompt({
+        task: makeTask(),
+        workflow: 'CONVERSATIONAL',
+        dossierRole: 'pm',
+      });
+      expect(prompt).toContain('Lead with the explanation.');
+      expect(prompt).toContain('asker is a pm — not an engineer');
+    });
+
+    it('treats designer and ops as non-dev', () => {
+      const designer = buildMentionSystemPrompt({
+        task: makeTask(),
+        workflow: 'CONVERSATIONAL',
+        dossierRole: 'designer',
+      });
+      expect(designer).toContain('asker is a designer — not an engineer');
+
+      const ops = buildMentionSystemPrompt({
+        task: makeTask(),
+        workflow: 'CONVERSATIONAL',
+        dossierRole: 'ops',
+      });
+      expect(ops).toContain('asker is a ops — not an engineer');
+    });
+
+    it('does not emit non-dev guidance for dev role', () => {
+      const prompt = buildMentionSystemPrompt({
+        task: makeTask(),
+        workflow: 'CONVERSATIONAL',
+        dossierRole: 'dev',
+      });
+      expect(prompt).toContain('Lead with the explanation.');
+      expect(prompt).not.toContain('not an engineer');
+    });
+  });
 });

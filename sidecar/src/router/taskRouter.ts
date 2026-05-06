@@ -3,6 +3,7 @@ import type { WebClient } from '@slack/web-api';
 import type {
   AppConfig,
   CodexRunRequest,
+  DossierRole,
   NormalizedTask,
   WorkflowIntent,
   WorkflowResult,
@@ -54,6 +55,16 @@ export async function routeTask(params: {
       });
     } catch {
       // tone lookup is advisory; default 'normal' on any failure
+    }
+  }
+
+  let dossierRole: DossierRole | undefined;
+  if (task.event.userId) {
+    try {
+      const dossier = store.dossierStore().getDossier(task.event.userId);
+      dossierRole = dossier.profile?.role ?? undefined;
+    } catch {
+      // role lookup is advisory; leave undefined on any failure
     }
   }
 
@@ -112,7 +123,9 @@ export async function routeTask(params: {
   }
 
   const routedTask: NormalizedTask =
-    resolvedIntent !== task.intent || toneMode !== task.toneMode ? { ...task, intent: resolvedIntent, toneMode } : task;
+    resolvedIntent !== task.intent || toneMode !== task.toneMode || dossierRole !== task.dossierRole
+      ? { ...task, intent: resolvedIntent, toneMode, dossierRole }
+      : task;
 
   // NONE = classifier determined this is human-to-human conversation, miniOG should stay silent
   if (resolvedIntent === 'NONE') {
