@@ -65,25 +65,28 @@ describe('mentionSystemPrompt', () => {
     expect(prompt).toContain('This is a serious work context. Keep the reply especially direct and unembellished.');
   });
 
-  describe('role-aware conversational guidance', () => {
-    it('adds the explanation-first baseline for any conversational reply', () => {
-      const prompt = buildMentionSystemPrompt({
-        task: makeTask(),
-        workflow: 'CONVERSATIONAL',
-      });
-      expect(prompt).toContain('Lead with the explanation.');
-      expect(prompt).not.toContain('not an engineer');
-    });
+  describe('role-aware explanation guidance', () => {
+    it.each(['CONVERSATIONAL', 'INFORMATIONAL', 'INVESTIGATION'] as const)(
+      'adds the explanation-first baseline for %s replies',
+      workflow => {
+        const prompt = buildMentionSystemPrompt({ task: makeTask(), workflow });
+        expect(prompt).toContain('Lead with the explanation.');
+        expect(prompt).not.toContain('not an engineer');
+      },
+    );
 
-    it('does not emit the explanation-first baseline outside conversational workflows', () => {
-      const prompt = buildMentionSystemPrompt({
-        task: makeTask(),
-        workflow: 'IMPLEMENTATION',
-        dossierRole: 'pm',
-      });
-      expect(prompt).not.toContain('Lead with the explanation.');
-      expect(prompt).not.toContain('not an engineer');
-    });
+    it.each(['IMPLEMENTATION', 'PR_REVIEW', 'DEPLOY', 'OWNER_AUTOPILOT', 'UNKNOWN'] as const)(
+      'does not emit the explanation-first baseline for %s',
+      workflow => {
+        const prompt = buildMentionSystemPrompt({
+          task: makeTask(),
+          workflow,
+          dossierRole: 'pm',
+        });
+        expect(prompt).not.toContain('Lead with the explanation.');
+        expect(prompt).not.toContain('not an engineer');
+      },
+    );
 
     it('layers non-dev guidance on top for PMs in a conversational reply', () => {
       const prompt = buildMentionSystemPrompt({
@@ -93,6 +96,15 @@ describe('mentionSystemPrompt', () => {
       });
       expect(prompt).toContain('Lead with the explanation.');
       expect(prompt).toContain('asker is a pm — not an engineer');
+    });
+
+    it('layers non-dev guidance on informational replies too', () => {
+      const prompt = buildMentionSystemPrompt({
+        task: makeTask(),
+        workflow: 'INFORMATIONAL',
+        dossierRole: 'designer',
+      });
+      expect(prompt).toContain('asker is a designer — not an engineer');
     });
 
     it('treats designer and ops as non-dev', () => {
