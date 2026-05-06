@@ -276,9 +276,6 @@ function deriveReviewEvent(
   summaryNotesCount = 0,
 ): ReviewEvent | undefined {
   if (reviewEvent) return reviewEvent;
-  if (findings.some(finding => finding.severity === 'critical' || finding.severity === 'high')) {
-    return 'REQUEST_CHANGES';
-  }
   if (findings.length > 0 || summaryNotesCount > 0) {
     return 'COMMENT';
   }

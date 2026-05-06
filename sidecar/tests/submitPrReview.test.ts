@@ -21,7 +21,7 @@ describe('submitPrReview', () => {
     line,
   });
 
-  it('submits REQUEST_CHANGES when critical findings exist', async () => {
+  it('submits COMMENT when critical findings exist', async () => {
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response('{}', { status: 200 }));
 
     const result = await submitPrReview({
@@ -35,7 +35,7 @@ describe('submitPrReview', () => {
     });
 
     expect(result.submitted).toBe(true);
-    expect(result.event).toBe('REQUEST_CHANGES');
+    expect(result.event).toBe('COMMENT');
     expect(result.attemptedComments).toBe(1);
     expect(result.commentsPosted).toBe(1);
     expect(result.submissionMode).toBe('inline');
@@ -43,13 +43,13 @@ describe('submitPrReview', () => {
 
     const fetchCall = vi.mocked(globalThis.fetch).mock.calls[0];
     const body = JSON.parse(fetchCall[1]?.body as string);
-    expect(body.event).toBe('REQUEST_CHANGES');
+    expect(body.event).toBe('COMMENT');
     expect(body.comments).toHaveLength(1);
     expect(body.comments[0].path).toBe('src/auth.ts');
     expect(body.comments[0].line).toBe(10);
   });
 
-  it('submits REQUEST_CHANGES when high findings exist', async () => {
+  it('submits COMMENT when high findings exist', async () => {
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response('{}', { status: 200 }));
 
     const result = await submitPrReview({
@@ -62,7 +62,7 @@ describe('submitPrReview', () => {
       githubToken: 'ghp_test',
     });
 
-    expect(result.event).toBe('REQUEST_CHANGES');
+    expect(result.event).toBe('COMMENT');
   });
 
   it('submits COMMENT when only medium/low findings exist', async () => {
