@@ -17,6 +17,8 @@ const ACCESS_RANK: Record<AccessLevel, number> = {
   admin: 3,
 };
 
+export type AccessDenyReason = 'NOT_ON_ACCESS_LIST' | 'INSUFFICIENT_ROLE' | 'CHANNEL_NOT_ENABLED';
+
 export type AccessDecision = {
   allowed: boolean;
   ownerBypass: boolean;
@@ -24,6 +26,7 @@ export type AccessDecision = {
   matchedGroups: AccessGroupKey[];
   userGroups: AccessGroupKey[];
   reason?: string;
+  denyReason?: AccessDenyReason;
 };
 
 export function createDefaultAccessGroupSettings(): AccessGroupSettings {
@@ -242,13 +245,24 @@ export function evaluateAccess(params: {
   const allowed = matchedGroups.some(key => ACCESS_RANK[key] >= ACCESS_RANK[requiredLevel]);
 
   let reason: string | undefined;
+  let denyReason: AccessDenyReason | undefined;
   if (!allowed) {
-    const channelEnabledForAnyGroup = ACCESS_GROUP_KEYS.some(key =>
-      channelAllowed(accessControl.groups[key], channelId, channelType),
-    );
-    reason = channelEnabledForAnyGroup
-      ? "Sorry, you're not on the access list for this channel. Please contact an admin."
-      : "Sorry, I don't have access to help in this channel. Please reach out to an admin.";
+    const isDM = channelType === 'im' || channelType === 'mpim';
+    const userMaxRank = userGroups.reduce((max, key) => Math.max(max, ACCESS_RANK[key]), -1);
+
+    if (userGroups.length === 0) {
+      denyReason = 'NOT_ON_ACCESS_LIST';
+      reason = "Sorry, you're not on the access list. Please ask an admin to add you.";
+    } else if (userMaxRank < ACCESS_RANK[requiredLevel]) {
+      denyReason = 'INSUFFICIENT_ROLE';
+      reason =
+        'Sorry, this kind of request needs a higher access level than your role allows. Please contact an admin.';
+    } else {
+      denyReason = 'CHANNEL_NOT_ENABLED';
+      reason = isDM
+        ? "Sorry, DMs aren't enabled for your role. Please contact an admin."
+        : "Sorry, I'm not enabled for this kind of request in this channel. Please contact an admin.";
+    }
   }
 
   return {
@@ -258,5 +272,6 @@ export function evaluateAccess(params: {
     matchedGroups,
     userGroups,
     reason,
+    denyReason,
   };
 }

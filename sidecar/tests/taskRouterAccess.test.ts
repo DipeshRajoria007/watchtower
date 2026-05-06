@@ -263,7 +263,7 @@ describe('routeTask access control', () => {
     expect(runPrReviewWorkflow).not.toHaveBeenCalled();
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Sorry, you're not on the access list for this channel. Please contact an admin.",
+        text: 'Sorry, this kind of request needs a higher access level than your role allows. Please contact an admin.',
       }),
     );
   });
@@ -310,7 +310,7 @@ describe('routeTask access control', () => {
     expect(slack.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: 'D-REVIEW',
-        text: "Sorry about this — you don't currently have access to DM me. Please contact an admin.",
+        text: "Sorry, DMs aren't enabled for your role. Please contact an admin.",
       }),
     );
     expect(logStep).toHaveBeenCalledWith(

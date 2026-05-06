@@ -179,6 +179,7 @@ export async function routeTask(params: {
         requiredLevel,
         userGroups: accessDecision.userGroups,
         matchedGroups: accessDecision.matchedGroups,
+        denyReason: accessDecision.denyReason,
         userId: task.event.userId,
         channelId: task.event.channelId,
         channelType: task.event.channelType,
@@ -186,9 +187,7 @@ export async function routeTask(params: {
     });
 
     if (shouldBlock) {
-      const denialText = isDirectMessage
-        ? "Sorry about this — you don't currently have access to DM me. Please contact an admin."
-        : (accessDecision.reason ?? "Sorry, you're not on the access list for this channel. Please contact an admin.");
+      const denialText = accessDecision.reason ?? "Sorry, you're not on the access list. Please contact an admin.";
 
       await slack.chat.postMessage({
         channel: task.event.channelId,
