@@ -76,7 +76,7 @@ export async function runInvestigationWorkflow(params: {
   }
 
   const investigatorPrompt = `${recallBlock}${`
-${buildMentionSystemPrompt({ task, workflow: 'INVESTIGATION', toneMode: task.toneMode })}
+${buildMentionSystemPrompt({ task, workflow: 'INVESTIGATION', toneMode: task.toneMode, dossierRole: task.dossierRole })}
 
 You are the INVESTIGATOR agent.
 

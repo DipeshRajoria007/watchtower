@@ -82,12 +82,18 @@ function toneLineFor(mode: PersonalityMode): string {
 
 const NON_DEV_ROLES: ReadonlyArray<DossierRole> = ['pm', 'designer', 'ops'];
 
+const EXPLANATION_WORKFLOWS: ReadonlyArray<MentionPromptWorkflow> = [
+  'CONVERSATIONAL',
+  'INFORMATIONAL',
+  'INVESTIGATION',
+];
+
 function roleGuidanceLines(workflow: MentionPromptWorkflow, role: DossierRole | undefined): string[] {
-  if (workflow !== 'CONVERSATIONAL') {
+  if (!EXPLANATION_WORKFLOWS.includes(workflow)) {
     return [];
   }
   const lines = [
-    "- Lead with the explanation. Walk through the flow in plain language and only quote code, file paths, or util names when they're load-bearing for the answer. Avoid dumping multiple code blocks just to show what was inspected.",
+    "- Lead with the explanation. Walk through the flow in plain language and only quote code, file paths, or util names when they're load-bearing for the answer. Avoid dumping multiple code blocks just to show what was inspected — at most one or two short snippets when they meaningfully clarify the answer.",
   ];
   if (role && NON_DEV_ROLES.includes(role)) {
     lines.push(
