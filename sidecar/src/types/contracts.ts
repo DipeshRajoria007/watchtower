@@ -18,7 +18,7 @@ export type WorkflowStatus = 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED' | 'CANC
 export type JobLogLevel = 'INFO' | 'WARN' | 'ERROR';
 export type PersonalityMode = 'normal' | 'terse' | 'technical' | 'casual';
 
-export type DossierRole = 'pm' | 'dev' | 'designer' | 'ops';
+export type DossierRole = 'pm' | 'dev' | 'designer' | 'ops' | 'analyst';
 export type DossierForgetField = 'role' | 'tone' | 'notes' | 'project_affinity' | 'metrics' | 'all';
 
 export type MiniogSubcommand =

@@ -100,5 +100,10 @@ function roleGuidanceLines(workflow: MentionPromptWorkflow, role: DossierRole | 
       `- The asker is a ${role} — not an engineer. Avoid jargon and implementation detail. Skip code blocks unless one is genuinely necessary; if you must include one, quote it from the actual codebase rather than synthesising pseudocode. When it helps understanding, give a short concrete example or analogy. Format the reply so it's easy to skim — short paragraphs, with a heading or bullets if there are distinct points.`,
     );
   }
+  if (role === 'analyst') {
+    lines.push(
+      "- The asker is a business analyst. They primarily query Postgres directly and want to understand the *business logic* and *data lifecycle* in newton-api, not React internals. Structure the answer as: (1) the user-facing action / frontend trigger that kicks off this flow (name the screen and the action — no React internals), (2) the newton-api file/function that handles it, quoted with file:line, (3) which Postgres tables and columns get inserted/updated and under what conditions, (4) reference migration files only when a column's recent history is load-bearing for the answer. Skip auth/middleware boilerplate and React-component implementation detail unless directly asked.",
+    );
+  }
   return lines;
 }

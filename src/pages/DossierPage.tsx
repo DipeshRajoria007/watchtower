@@ -5,7 +5,7 @@ import { PageIntro } from '../components/primitives';
 import { Timestamp } from '../components/Timestamp';
 import type { DossierDetail, DossierForgetField, DossierRole, DossierSummary, PinnedFact, UserMemory } from '../types';
 
-const ROLES: DossierRole[] = ['pm', 'dev', 'designer', 'ops'];
+const ROLES: DossierRole[] = ['pm', 'dev', 'designer', 'ops', 'analyst'];
 
 type DetailTab = 'overview' | 'memory' | 'notes' | 'activity' | 'danger';
 

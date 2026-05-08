@@ -132,5 +132,29 @@ describe('mentionSystemPrompt', () => {
       expect(prompt).toContain('Lead with the explanation.');
       expect(prompt).not.toContain('not an engineer');
     });
+
+    it.each(['CONVERSATIONAL', 'INFORMATIONAL', 'INVESTIGATION'] as const)(
+      'adds analyst guidance for %s replies',
+      workflow => {
+        const prompt = buildMentionSystemPrompt({
+          task: makeTask(),
+          workflow,
+          dossierRole: 'analyst',
+        });
+        expect(prompt).toContain('asker is a business analyst');
+        expect(prompt).toContain('Postgres');
+        expect(prompt).toContain('newton-api');
+        expect(prompt).not.toContain('not an engineer');
+      },
+    );
+
+    it('does not emit analyst guidance on non-explanation workflows', () => {
+      const prompt = buildMentionSystemPrompt({
+        task: makeTask(),
+        workflow: 'IMPLEMENTATION',
+        dossierRole: 'analyst',
+      });
+      expect(prompt).not.toContain('asker is a business analyst');
+    });
   });
 });

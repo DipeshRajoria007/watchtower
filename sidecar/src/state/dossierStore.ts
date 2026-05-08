@@ -62,7 +62,7 @@ export interface DossierSummary {
   updatedAt: string;
 }
 
-const ROLES: ReadonlySet<string> = new Set(['pm', 'dev', 'designer', 'ops']);
+const ROLES: ReadonlySet<string> = new Set(['pm', 'dev', 'designer', 'ops', 'analyst']);
 const FORGET_FIELDS: ReadonlySet<string> = new Set(['role', 'tone', 'notes', 'project_affinity', 'metrics', 'all']);
 
 export function isDossierRole(value: string): value is DossierRole {
