@@ -7,7 +7,7 @@ import type { DossierRole } from '../types/contracts.js';
 import { parsePinnedListFromAutoBody, splitAutoBlock } from './vaultRenderer.js';
 import { scheduleVaultRender } from './vaultWriter.js';
 
-const VALID_ROLES: ReadonlySet<DossierRole> = new Set<DossierRole>(['pm', 'dev', 'designer', 'ops']);
+const VALID_ROLES: ReadonlySet<DossierRole> = new Set<DossierRole>(['pm', 'dev', 'designer', 'ops', 'analyst']);
 const NOTES_MAX_LEN = 2048;
 
 export interface ParsedFrontmatter {
