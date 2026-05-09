@@ -160,6 +160,12 @@ export async function resolveRepoOrAsk(params: {
       reason: 'no admin reply within idle window',
     };
   }
+  if (choice.outcome === 'paused') {
+    // Someone said "wait" mid-clarification. Treat as cancellation here — no
+    // plan state has been built yet, so resume on the next mention is just a
+    // fresh task with full thread context.
+    return { outcome: 'cancelled' };
+  }
 
   return resolved(choice.outcome, config, 'admin-choice');
 }

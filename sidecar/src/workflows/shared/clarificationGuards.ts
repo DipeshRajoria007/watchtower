@@ -5,12 +5,24 @@ import type { WorkflowStepLogger } from '../../types/contracts.js';
 export type ClarificationOutcome =
   | { outcome: 'answered'; answer: string; answererId: string }
   | { outcome: 'timeout' }
-  | { outcome: 'cancelled' };
+  | { outcome: 'cancelled' }
+  | { outcome: 'paused'; userReply: string; pauserId: string };
 
 export const DEFAULT_IDLE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 export const DEFAULT_NUDGE_AFTER_MS = 30 * 60 * 1000;
 
 const CANCEL_WORDS = new Set(['cancel', 'stop', 'abort', 'nevermind', 'never mind', 'skip']);
+
+// Mirrors PAUSE_PATTERNS in pipeline.ts. Anyone in the thread can park miniOG
+// during a clarification wait by saying "wait", "hold on", "pause", etc.
+const PAUSE_PATTERNS =
+  /^(wait|hold on|hold up|pause|brb|one sec|one moment|stand by|i'?ll get back to you|(give me|gimme) (a )?(sec|second|minute|moment|min)|pause for (now|a bit|a sec)|stop for now)[.! ]*$/i;
+
+export function isPauseReply(text: string): boolean {
+  const cleaned = stripSlackNoise(text);
+  if (!cleaned) return false;
+  return PAUSE_PATTERNS.test(cleaned);
+}
 
 function stripSlackNoise(text: string): string {
   // Slack apps can append footers like "*Sent using* <@U...>" when a message
@@ -95,9 +107,20 @@ export async function waitForClarificationWithIdle(params: {
 
     const candidates = messages.filter(m => m.ts > promptTs && m.user !== botUserId);
     for (const reply of candidates) {
-      if (!allowedUserIds.includes(reply.user)) continue;
       const answer = reply.text.trim();
       if (!answer) continue;
+
+      // Pause is allowed from anyone in the thread, not just allowedUserIds.
+      // The clarification gate is "waiting on a human"; any human can say wait.
+      if (isPauseReply(answer)) {
+        logStep({
+          stage: 'pipeline.clarification.paused',
+          message: `<@${reply.user}> asked miniOG to wait: "${answer}"`,
+        });
+        return { outcome: 'paused', userReply: answer, pauserId: reply.user };
+      }
+
+      if (!allowedUserIds.includes(reply.user)) continue;
 
       if (isCancelReply(answer)) {
         logStep({

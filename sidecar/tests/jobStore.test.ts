@@ -245,7 +245,7 @@ describe('activeJobForThread', () => {
     store.close();
   });
 
-  it('returns the active job when status is PAUSED', () => {
+  it('does NOT return PAUSED jobs from activeJobForThread (slot is freed); pausedJobForThread returns it instead', () => {
     const store = new JobStore(tempDbPath());
     store.createJob({
       id: 'job-pause',
@@ -257,10 +257,11 @@ describe('activeJobForThread', () => {
       payload: {},
     });
     store.markJob('job-pause', 'PAUSED');
-    const active = store.activeJobForThread('C1', 'T2');
-    expect(active).toBeDefined();
-    expect(active?.id).toBe('job-pause');
-    expect(active?.status).toBe('PAUSED');
+    expect(store.activeJobForThread('C1', 'T2')).toBeUndefined();
+    const paused = store.pausedJobForThread('C1', 'T2');
+    expect(paused).toBeDefined();
+    expect(paused?.id).toBe('job-pause');
+    expect(paused?.workflow).toBe('IMPLEMENTATION');
     store.close();
   });
 
@@ -327,6 +328,87 @@ describe('activeJobForThread', () => {
     });
     const active = store.activeJobForThread('C1', 'T-multi');
     expect(active?.id).toBe('job-new');
+    store.close();
+  });
+});
+
+describe('pause / resume lifecycle', () => {
+  function makePausedJob(store: JobStore, id: string, threadTs: string): void {
+    store.createJob({
+      id,
+      eventId: `e-${id}`,
+      dedupeKey: `C1:${threadTs}:e-${id}:IMPLEMENTATION`,
+      workflow: 'IMPLEMENTATION',
+      channelId: 'C1',
+      threadTs,
+      payload: {},
+    });
+  }
+
+  it('persists a resumeContext into result_json on PAUSED transition and reads it back via loadResumeContext', () => {
+    const store = new JobStore(tempDbPath());
+    makePausedJob(store, 'job-resume-1', 'T-r1');
+    const ctx = {
+      workflow: 'OWNER_AUTOPILOT' as const,
+      stage: 'awaiting_approval' as const,
+      iteration: 2,
+      feedbackRounds: 1,
+      planSteps: ['step a', 'step b'],
+      planAffectedFiles: ['src/foo.ts'],
+      planScope: 'medium',
+      plannerSessionId: 'sess-abc',
+      plannerOutput: { plan: ['step a', 'step b'] },
+      planMessageTs: '1700000000.000001',
+      approvalPromptTs: '1700000010.000002',
+      pipelineCwd: '/tmp/wt-workspace',
+      pauseCount: 1,
+    };
+    store.markJob('job-resume-1', 'PAUSED', { result: ctx });
+    const loaded = store.loadResumeContext('job-resume-1');
+    expect(loaded).toBeDefined();
+    if (loaded?.stage === 'awaiting_approval') {
+      expect(loaded.iteration).toBe(2);
+      expect(loaded.planSteps).toEqual(['step a', 'step b']);
+      expect(loaded.plannerSessionId).toBe('sess-abc');
+      expect(loaded.pauseCount).toBe(1);
+    } else {
+      throw new Error('expected awaiting_approval stage');
+    }
+    store.close();
+  });
+
+  it('returns undefined for loadResumeContext when result_json is malformed', () => {
+    const store = new JobStore(tempDbPath());
+    makePausedJob(store, 'job-resume-bad', 'T-bad');
+    // Persist a non-resume payload (e.g. an old-style result without the discriminated stage)
+    store.markJob('job-resume-bad', 'SUCCESS', { result: { prUrl: 'https://example.com/pr/1' } });
+    expect(store.loadResumeContext('job-resume-bad')).toBeUndefined();
+    store.close();
+  });
+
+  it('markJobRunning flips PAUSED -> RUNNING and clears result_json', () => {
+    const store = new JobStore(tempDbPath());
+    makePausedJob(store, 'job-flip', 'T-flip');
+    store.markJob('job-flip', 'PAUSED', { result: { stage: 'awaiting_approval', dummy: true } });
+    store.markJobRunning('job-flip');
+    // After the flip the row should be RUNNING again, and resume context should be cleared.
+    expect(store.activeJobForThread('C1', 'T-flip')?.id).toBe('job-flip');
+    expect(store.loadResumeContext('job-flip')).toBeUndefined();
+    store.close();
+  });
+
+  it('stalePausedJobs only returns paused rows older than the threshold', () => {
+    const store = new JobStore(tempDbPath());
+    makePausedJob(store, 'job-young', 'T-young');
+    makePausedJob(store, 'job-old', 'T-old');
+    store.markJob('job-young', 'PAUSED');
+    store.markJob('job-old', 'PAUSED');
+    // Backdate one of them well past the threshold.
+    store['db'].prepare("UPDATE jobs SET updated_at = datetime('now', '-30 hours') WHERE id = ?").run('job-old');
+    const stale = store.stalePausedJobs(24 * 60);
+    const ids = stale.map(j => j.id);
+    expect(ids).toContain('job-old');
+    expect(ids).not.toContain('job-young');
     store.close();
   });
 });

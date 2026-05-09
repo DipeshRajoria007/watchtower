@@ -289,7 +289,63 @@ export interface WorkflowResult {
   notifyDesktop: boolean;
   slackPosted: boolean;
   result?: Record<string, unknown>;
+  /**
+   * Set when status === 'PAUSED' to capture the workflow's wait-stage state so a
+   * later @miniOG mention in the same thread can resume execution at the same
+   * point. Persisted into jobs.result_json by the dispatcher and reloaded on resume.
+   */
+  resumeContext?: ResumeContext;
 }
+
+/**
+ * Implementation workflow paused at the plan-approval gate, waiting for either
+ * an admin approve/reject/feedback OR (now) a "wait" + later @-mention to resume.
+ */
+export interface ImplementationApprovalResume {
+  workflow: 'IMPLEMENTATION' | 'OWNER_AUTOPILOT';
+  stage: 'awaiting_approval';
+  iteration: number;
+  feedbackRounds: number;
+  planSteps: string[];
+  planAffectedFiles: string[];
+  planScope: string;
+  plannerSessionId?: string;
+  plannerOutput?: Record<string, unknown>;
+  planMessageTs?: string;
+  approvalPromptTs?: string;
+  pipelineCwd: string;
+  pauseCount: number;
+}
+
+/** Implementation workflow paused after a reject prompt asking "want to revise?". */
+export interface ImplementationRevisionChoiceResume {
+  workflow: 'IMPLEMENTATION' | 'OWNER_AUTOPILOT';
+  stage: 'awaiting_revision_choice';
+  iteration: number;
+  feedbackRounds: number;
+  planSteps: string[];
+  planAffectedFiles: string[];
+  planScope: string;
+  plannerSessionId?: string;
+  plannerOutput?: Record<string, unknown>;
+  planMessageTs?: string;
+  askReviseTs?: string;
+  pipelineCwd: string;
+  pauseCount: number;
+}
+
+/** Implementation workflow paused at the repo-choice clarification gate. */
+export interface ImplementationRepoChoiceResume {
+  workflow: 'IMPLEMENTATION' | 'OWNER_AUTOPILOT';
+  stage: 'awaiting_repo_choice';
+  promptTs?: string;
+  pauseCount: number;
+}
+
+export type ResumeContext =
+  | ImplementationApprovalResume
+  | ImplementationRevisionChoiceResume
+  | ImplementationRepoChoiceResume;
 
 export interface JobRecord {
   id: string;
