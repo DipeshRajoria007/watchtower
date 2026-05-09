@@ -785,7 +785,13 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         if (result.status === 'SUCCESS') {
           store.markJob(jobId, 'SUCCESS', { result: result.result });
         } else if (result.status === 'PAUSED') {
-          store.markJob(jobId, 'PAUSED', { result: result.result });
+          // For PAUSED jobs the workflow's resumeContext (if it set one) is the
+          // payload that matters — it's what loadResumeContext + the sweeper
+          // read. Fall back to result.result for legacy callers that PAUSE
+          // without a resume context (e.g. desktop-routing on uncertain repo).
+          store.markJob(jobId, 'PAUSED', {
+            result: (result.resumeContext as Record<string, unknown> | undefined) ?? result.result,
+          });
         } else if (result.status === 'SKIPPED') {
           store.markJob(jobId, 'SKIPPED', { result: result.result });
         } else {
