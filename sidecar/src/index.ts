@@ -1181,6 +1181,32 @@ async function main(): Promise<void> {
     }
   }, 2000);
 
+  // Sweep stale PAUSED jobs every 5 minutes. A job that's been paused for >24h
+  // without a resume mention is treated as abandoned: marked FAILED so it
+  // stops counting in dashboards / occupying paused-job listings. The
+  // workspace under workspaces/<thread_ts> is left alone (it's per-thread, not
+  // per-job, and a future task in the same thread may want to reuse it).
+  const PAUSED_MAX_AGE_MIN = 24 * 60;
+  setInterval(
+    () => {
+      try {
+        const stale = store.stalePausedJobs(PAUSED_MAX_AGE_MIN);
+        for (const job of stale) {
+          store.markJob(job.id, 'FAILED', {
+            errorMessage: `Idle timeout — paused for >${PAUSED_MAX_AGE_MIN / 60}h without a resume mention.`,
+          });
+          logger.info(
+            { jobId: job.id, channelId: job.channelId, threadTs: job.threadTs },
+            'stale PAUSED job swept to FAILED',
+          );
+        }
+      } catch (err) {
+        logger.warn({ err: String(err) }, 'paused-job sweeper tick failed');
+      }
+    },
+    5 * 60 * 1000,
+  );
+
   startMentionCatchup({
     webClient: client.webClient,
     config,

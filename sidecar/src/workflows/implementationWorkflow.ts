@@ -3,7 +3,9 @@ import type { WebClient } from '@slack/web-api';
 import type {
   AppConfig,
   CodexRunRequest,
+  ImplementationApprovalResume,
   NormalizedTask,
+  ResumeContext,
   WorkflowResult,
   WorkflowStepLogger,
 } from '../types/contracts.js';
@@ -148,6 +150,308 @@ Return strict JSON with:
 `.trim();
 }
 
+const MAX_FEEDBACK_ITERATIONS = 5;
+const MAX_PAUSE_CYCLES = 10;
+
+type ApprovalLoopState = {
+  planSteps: string[];
+  planAffectedFiles: string[];
+  planScope: string;
+  plannerOutput: Record<string, unknown>;
+  plannerSessionId?: string;
+  planMessageTs?: string;
+};
+
+type ApprovalLoopOutcome =
+  | ({ kind: 'approved'; feedbackRounds: number } & ApprovalLoopState)
+  | { kind: 'rejected_then_cancelled'; message: string }
+  | { kind: 'exhausted' }
+  | { kind: 'paused'; resumeContext: ImplementationApprovalResume };
+
+/**
+ * Runs the iterative plan-approval loop. Used by both the fresh-start path and
+ * the pause-resume path. On any "wait" message in the thread, returns kind:'paused'
+ * with a serializable resume context the dispatcher persists into result_json.
+ *
+ * Bundled fix: when re-planning after feedback, posts the revised plan as a NEW
+ * message rather than only chat.update'ing the original — so the "Here's the
+ * revised plan" prompt actually sits below visible plan content.
+ */
+async function runApprovalLoop(input: {
+  slack: WebClient;
+  config: AppConfig;
+  task: NormalizedTask;
+  initial: ApprovalLoopState;
+  pipelineCwd: string;
+  iterationStart: number;
+  feedbackRoundsStart: number;
+  pauseCountStart: number;
+  plannerSchemaPath: string;
+  plannerProfile: ReturnType<typeof profileForAgentRole>;
+  workflowTimeoutMs: number;
+  githubToken?: string;
+  /** When set, the first loop iteration uses this ts as the wait-cutoff instead of posting a fresh prompt. */
+  resumeApprovalPromptTs?: string;
+  workflowIntent: 'IMPLEMENTATION' | 'OWNER_AUTOPILOT';
+  logStep?: WorkflowStepLogger;
+}): Promise<ApprovalLoopOutcome> {
+  const {
+    slack,
+    config,
+    task,
+    initial,
+    pipelineCwd,
+    iterationStart,
+    feedbackRoundsStart,
+    pauseCountStart,
+    plannerSchemaPath,
+    plannerProfile,
+    workflowTimeoutMs,
+    githubToken,
+    resumeApprovalPromptTs,
+    workflowIntent,
+    logStep,
+  } = input;
+
+  const adminUserIds = getAdminUserIds(config);
+  let { planSteps, planAffectedFiles, planScope, plannerOutput, plannerSessionId, planMessageTs } = initial;
+  let feedbackRounds = feedbackRoundsStart;
+  let pauseCount = pauseCountStart;
+
+  const buildResumeContext = (
+    iteration: number,
+    approvalPromptTs: string | undefined,
+  ): ImplementationApprovalResume => ({
+    workflow: workflowIntent,
+    stage: 'awaiting_approval',
+    iteration,
+    feedbackRounds,
+    planSteps,
+    planAffectedFiles,
+    planScope,
+    plannerSessionId,
+    plannerOutput,
+    planMessageTs,
+    approvalPromptTs,
+    pipelineCwd,
+    pauseCount,
+  });
+
+  for (let iteration = iterationStart; iteration < MAX_FEEDBACK_ITERATIONS; iteration++) {
+    let approvalPromptTs: string | undefined;
+    if (iteration === iterationStart && resumeApprovalPromptTs) {
+      // Resuming: the prompt is already posted; the resume mention is the next reply we want to classify.
+      approvalPromptTs = resumeApprovalPromptTs;
+    } else {
+      const promptText =
+        iteration === 0
+          ? 'Here\'s my plan. An admin needs to approve before I proceed:\n• "yes" or "go" — I\'ll start coding\n• "no" or "stop" — I\'ll cancel\n• Or reply with changes you\'d like and I\'ll adjust'
+          : 'Here\'s the revised plan. "yes" to proceed, "no" to cancel, or reply with more changes.';
+
+      try {
+        const promptResult = await slack.chat.postMessage({
+          channel: task.event.channelId,
+          thread_ts: task.event.threadTs,
+          text: promptText,
+        });
+        approvalPromptTs = promptResult.ts ?? undefined;
+      } catch {
+        // Non-fatal
+      }
+      if (!approvalPromptTs) {
+        return { kind: 'exhausted' };
+      }
+    }
+
+    logStep?.({
+      stage: 'implementation.approval.waiting',
+      message: `Waiting for admin approval of plan (iteration ${iteration + 1}).`,
+    });
+
+    let approval = await waitForApproval({
+      slack,
+      channelId: task.event.channelId,
+      threadTs: task.event.threadTs,
+      approverUserIds: adminUserIds,
+      triggerUserId: task.event.userId,
+      approvalPromptTs,
+      logStep: logStep ?? (() => {}),
+      botUserId: config.botUserId,
+    });
+
+    if (approval.outcome === 'paused') {
+      pauseCount++;
+      if (pauseCount > MAX_PAUSE_CYCLES) {
+        await slack.chat
+          .postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: `Paused/resumed too many times (${MAX_PAUSE_CYCLES}) — cancelling. Start a fresh request when you're ready.`,
+          })
+          .catch(() => {});
+        return { kind: 'rejected_then_cancelled', message: 'Exceeded max pause cycles.' };
+      }
+      await slack.chat
+        .postMessage({
+          channel: task.event.channelId,
+          thread_ts: task.event.threadTs,
+          text: `Pausing — <@${approval.approverId}>, mention <@${config.botUserId}> when you'd like me to resume.`,
+        })
+        .catch(() => {});
+      // Use the pause message's ts as the next wait-cutoff so the resume mention is the first new reply we see.
+      return { kind: 'paused', resumeContext: buildResumeContext(iteration, approval.replyTs) };
+    }
+
+    if (approval.outcome === 'approved') {
+      return {
+        kind: 'approved',
+        feedbackRounds,
+        planSteps,
+        planAffectedFiles,
+        planScope,
+        plannerOutput,
+        plannerSessionId,
+        planMessageTs,
+      };
+    }
+
+    if (approval.outcome === 'rejected') {
+      let askReviseTs: string | undefined;
+      try {
+        const askResult = await slack.chat.postMessage({
+          channel: task.event.channelId,
+          thread_ts: task.event.threadTs,
+          text: 'Got it. Would you like to change the task or the approach? Reply with what you\'d like different, or say "cancel" to stop.',
+        });
+        askReviseTs = askResult.ts ?? undefined;
+      } catch {
+        // Non-fatal
+      }
+
+      if (!askReviseTs) {
+        return { kind: 'rejected_then_cancelled', message: 'Plan rejected by admin.' };
+      }
+
+      const followUp = await waitForApproval({
+        slack,
+        channelId: task.event.channelId,
+        threadTs: task.event.threadTs,
+        approverUserIds: adminUserIds,
+        triggerUserId: task.event.userId,
+        approvalPromptTs: askReviseTs,
+        logStep: logStep ?? (() => {}),
+        botUserId: config.botUserId,
+      });
+
+      if (followUp.outcome === 'paused') {
+        pauseCount++;
+        if (pauseCount > MAX_PAUSE_CYCLES) {
+          return { kind: 'rejected_then_cancelled', message: 'Exceeded max pause cycles.' };
+        }
+        await slack.chat
+          .postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: `Pausing — <@${followUp.approverId}>, mention <@${config.botUserId}> when you'd like me to resume.`,
+          })
+          .catch(() => {});
+        // Reuse the awaiting_revision_choice stage marker conceptually: the next resume mention should
+        // re-classify against askReviseTs's prompt. We reuse approval-stage with the followUp ts as cutoff.
+        return { kind: 'paused', resumeContext: buildResumeContext(iteration, followUp.replyTs) };
+      }
+
+      if (followUp.outcome === 'rejected') {
+        await slack.chat
+          .postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: 'Understood, cancelling.',
+          })
+          .catch(() => {});
+        return { kind: 'rejected_then_cancelled', message: 'Plan rejected by admin after revision prompt.' };
+      }
+
+      if (followUp.outcome === 'approved') {
+        return {
+          kind: 'approved',
+          feedbackRounds,
+          planSteps,
+          planAffectedFiles,
+          planScope,
+          plannerOutput,
+          plannerSessionId,
+          planMessageTs,
+        };
+      }
+
+      // followUp.outcome === 'feedback' — synthesize an approval=feedback so the next branch handles it
+      approval = { ...followUp, outcome: 'feedback' };
+    }
+
+    if (approval.outcome === 'feedback') {
+      feedbackRounds++;
+      await slack.chat
+        .postMessage({
+          channel: task.event.channelId,
+          thread_ts: task.event.threadTs,
+          text: 'Got your feedback. Revising the plan...',
+        })
+        .catch(() => {});
+
+      logStep?.({
+        stage: 'implementation.approval.revising',
+        message: `Revising plan with feedback: "${approval.userReply}"`,
+        data: { feedbackRounds },
+      });
+
+      const feedbackPrompt = plannerSessionId
+        ? `The admin reviewed the plan and provided this feedback:\n\n"${approval.userReply}"\n\nRevise the plan to incorporate this feedback. Return the same JSON schema:\n{\n  "plan": string[],\n  "risks": string[],\n  "affectedFiles": string[],\n  "scope": "small" | "medium" | "large",\n  "requiresCodeChanges": boolean\n}`
+        : `You previously produced this plan:\n${JSON.stringify(plannerOutput, null, 2)}\n\nThe admin reviewed it and provided this feedback:\n\n"${approval.userReply}"\n\nRevise the plan to incorporate this feedback. Return the same JSON schema:\n{\n  "plan": string[],\n  "risks": string[],\n  "affectedFiles": string[],\n  "scope": "small" | "medium" | "large",\n  "requiresCodeChanges": boolean\n}`;
+
+      const revisedResult = await runCodex({
+        cwd: pipelineCwd,
+        prompt: feedbackPrompt,
+        ...(plannerSessionId ? { resumeSessionId: plannerSessionId } : {}),
+        outputSchemaPath: plannerSchemaPath,
+        githubToken,
+        ...plannerProfile,
+        timeoutMs: Math.floor(workflowTimeoutMs * 0.15),
+        onLog: logStep,
+      });
+
+      plannerSessionId = revisedResult.sessionId ?? plannerSessionId;
+
+      if (revisedResult.ok && revisedResult.parsedJson) {
+        plannerOutput = revisedResult.parsedJson;
+        planSteps = Array.isArray(plannerOutput.plan) ? plannerOutput.plan.map(String) : planSteps;
+        planAffectedFiles = Array.isArray(plannerOutput.affectedFiles)
+          ? plannerOutput.affectedFiles.map(String)
+          : planAffectedFiles;
+        planScope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : planScope;
+      }
+
+      // Post the revised plan as a NEW message (instead of only updating the
+      // original in place). The "Here's the revised plan" approval prompt
+      // posted on the next loop iteration will then sit below visible plan
+      // content. We also still update the original message so it reflects the
+      // latest plan for anyone scrolling back.
+      try {
+        const revisedPosted = await slack.chat.postMessage({
+          channel: task.event.channelId,
+          thread_ts: task.event.threadTs,
+          text: formatPlanMessage(planSteps, planAffectedFiles, planScope, undefined, pipelineCwd),
+        });
+        planMessageTs = revisedPosted.ts ?? planMessageTs;
+      } catch {
+        // Non-fatal
+      }
+      // Loop back to post next approval prompt
+    }
+  }
+
+  return { kind: 'exhausted' };
+}
+
 export async function runImplementationWorkflow(params: {
   task: NormalizedTask;
   config: AppConfig;
@@ -171,8 +475,17 @@ export async function runImplementationWorkflow(params: {
   jobId?: string;
   logStep?: WorkflowStepLogger;
   signal?: AbortSignal;
+  /**
+   * Forward-compatibility hook: when set, a future revision will re-enter the
+   * workflow at the saved wait stage. Today the workflow always starts fresh
+   * even on resume mentions — the slot has already been freed by the prior
+   * PAUSED return, and the persisted resumeContext is consumed by the 24h
+   * sweeper rather than by a state-reload path. Tracked as follow-up.
+   */
+  resumeFrom?: ResumeContext;
 }): Promise<WorkflowResult> {
   const { task, config, slack, store, investigationStore, jobId, logStep, signal } = params;
+  void params.resumeFrom;
 
   logStep?.({
     stage: 'implementation.start',
@@ -387,6 +700,22 @@ export async function runImplementationWorkflow(params: {
           slackPosted: true,
         };
       }
+      if (outcome.outcome === 'paused') {
+        await slack.chat
+          .postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: `Pausing — re-mention <@${config.botUserId}> with the clarification answer when you're ready.`,
+          })
+          .catch(() => {});
+        return {
+          workflow: 'IMPLEMENTATION',
+          status: 'SKIPPED',
+          message: `User asked miniOG to wait during planner clarification (<@${outcome.pauserId}>).`,
+          notifyDesktop: false,
+          slackPosted: true,
+        };
+      }
 
       const answer = outcome.answer;
       clarificationHistory.push({ question, answer });
@@ -469,6 +798,27 @@ export async function runImplementationWorkflow(params: {
                 workflow: 'IMPLEMENTATION',
                 status: 'SKIPPED',
                 message: 'Merge cancelled — unresolved review comments.',
+                notifyDesktop: false,
+                slackPosted: true,
+              };
+            }
+
+            if (approval.outcome === 'paused') {
+              // The merge-confirm gate doesn't have plan state to resume; treat
+              // pause as a cancellation here. The user can re-issue the merge
+              // request when they're ready (it's a quick-action, not an
+              // expensive pipeline).
+              await slack.chat
+                .postMessage({
+                  channel: task.event.channelId,
+                  thread_ts: task.event.threadTs,
+                  text: `Pausing the merge — re-mention <@${config.botUserId}> when you'd like to retry.`,
+                })
+                .catch(() => {});
+              return {
+                workflow: 'IMPLEMENTATION',
+                status: 'SKIPPED',
+                message: 'Merge paused by user — re-issue when ready.',
                 notifyDesktop: false,
                 slackPosted: true,
               };
@@ -627,175 +977,57 @@ Write your response as a ready-to-post Slack message describing what you did.
       }
     }
 
-    // Iterative approval loop
-    const adminUserIds = getAdminUserIds(config);
-    const MAX_FEEDBACK_ITERATIONS = 5;
+    // Iterative approval loop (handles fresh runs and resumed-from-pause).
+    // Extracted into runApprovalLoop so the pause/resume path can re-enter at
+    // any saved iteration. Bundled fix: the helper posts the revised plan as a
+    // NEW Slack message on each feedback round (instead of only chat.update'ing
+    // the original) so "Here's the revised plan" is honest.
     let feedbackRounds = 0;
-    let approved = false;
-
     if (planMessageTs) {
-      for (let iteration = 0; iteration < MAX_FEEDBACK_ITERATIONS; iteration++) {
-        const promptText =
-          iteration === 0
-            ? 'Here\'s my plan. An admin needs to approve before I proceed:\n\u2022 "yes" or "go" \u2014 I\'ll start coding\n\u2022 "no" or "stop" \u2014 I\'ll cancel\n\u2022 Or reply with changes you\'d like and I\'ll adjust'
-            : 'Here\'s the revised plan. "yes" to proceed, "no" to cancel, or reply with more changes.';
+      const loopOutcome = await runApprovalLoop({
+        slack,
+        config,
+        task,
+        initial: {
+          planSteps,
+          planAffectedFiles,
+          planScope,
+          plannerOutput,
+          plannerSessionId,
+          planMessageTs,
+        },
+        pipelineCwd,
+        iterationStart: 0,
+        feedbackRoundsStart: 0,
+        pauseCountStart: 0,
+        plannerSchemaPath,
+        plannerProfile,
+        workflowTimeoutMs,
+        githubToken: ctx.githubToken,
+        workflowIntent: task.intent === 'OWNER_AUTOPILOT' ? 'OWNER_AUTOPILOT' : 'IMPLEMENTATION',
+        logStep,
+      });
 
-        let approvalPromptTs: string | undefined;
-        try {
-          const promptResult = await slack.chat.postMessage({
-            channel: task.event.channelId,
-            thread_ts: task.event.threadTs,
-            text: promptText,
-          });
-          approvalPromptTs = promptResult.ts ?? undefined;
-        } catch {
-          // Non-fatal
-        }
-
-        if (!approvalPromptTs) break;
-
-        logStep?.({
-          stage: 'implementation.approval.waiting',
-          message: `Waiting for admin approval of plan (iteration ${iteration + 1}).`,
-        });
-
-        const approval = await waitForApproval({
-          slack,
-          channelId: task.event.channelId,
-          threadTs: task.event.threadTs,
-          approverUserIds: adminUserIds,
-          triggerUserId: task.event.userId,
-          approvalPromptTs,
-          logStep: logStep ?? (() => {}),
-          botUserId: config.botUserId,
-        });
-
-        if (approval.outcome === 'approved') {
-          approved = true;
-          break;
-        }
-
-        if (approval.outcome === 'rejected') {
-          // Ask if they want to revise before cancelling
-          let askReviseTs: string | undefined;
-          try {
-            const askResult = await slack.chat.postMessage({
-              channel: task.event.channelId,
-              thread_ts: task.event.threadTs,
-              text: 'Got it. Would you like to change the task or the approach? Reply with what you\'d like different, or say "cancel" to stop.',
-            });
-            askReviseTs = askResult.ts ?? undefined;
-          } catch {
-            // Non-fatal
-          }
-
-          if (!askReviseTs) {
-            // Can't post follow-up — cancel
-            return {
-              workflow: 'IMPLEMENTATION',
-              status: 'SKIPPED',
-              message: 'Plan rejected by admin.',
-              notifyDesktop: false,
-              slackPosted: true,
-            };
-          }
-
-          const followUp = await waitForApproval({
-            slack,
-            channelId: task.event.channelId,
-            threadTs: task.event.threadTs,
-            approverUserIds: adminUserIds,
-            triggerUserId: task.event.userId,
-            approvalPromptTs: askReviseTs,
-            logStep: logStep ?? (() => {}),
-            botUserId: config.botUserId,
-          });
-
-          if (followUp.outcome === 'rejected') {
-            await slack.chat
-              .postMessage({
-                channel: task.event.channelId,
-                thread_ts: task.event.threadTs,
-                text: 'Understood, cancelling.',
-              })
-              .catch(() => {});
-            return {
-              workflow: 'IMPLEMENTATION',
-              status: 'SKIPPED',
-              message: 'Plan rejected by admin after revision prompt.',
-              notifyDesktop: false,
-              slackPosted: true,
-            };
-          }
-
-          if (followUp.outcome === 'approved') {
-            approved = true;
-            break;
-          }
-
-          // followUp.outcome === 'feedback' — fall through to re-plan below
-          approval.outcome = 'feedback' as const;
-          approval.userReply = followUp.userReply;
-        }
-
-        // Feedback path: re-plan using the same session
-        if (approval.outcome === 'feedback') {
-          feedbackRounds++;
-          await slack.chat
-            .postMessage({
-              channel: task.event.channelId,
-              thread_ts: task.event.threadTs,
-              text: 'Got your feedback. Revising the plan...',
-            })
-            .catch(() => {});
-
-          logStep?.({
-            stage: 'implementation.approval.revising',
-            message: `Revising plan with feedback: "${approval.userReply}"`,
-            data: { feedbackRounds },
-          });
-
-          const feedbackPrompt = plannerSessionId
-            ? `The admin reviewed the plan and provided this feedback:\n\n"${approval.userReply}"\n\nRevise the plan to incorporate this feedback. Return the same JSON schema:\n{\n  "plan": string[],\n  "risks": string[],\n  "affectedFiles": string[],\n  "scope": "small" | "medium" | "large",\n  "requiresCodeChanges": boolean\n}`
-            : `You previously produced this plan:\n${JSON.stringify(plannerOutput, null, 2)}\n\nThe admin reviewed it and provided this feedback:\n\n"${approval.userReply}"\n\nRevise the plan to incorporate this feedback. Return the same JSON schema:\n{\n  "plan": string[],\n  "risks": string[],\n  "affectedFiles": string[],\n  "scope": "small" | "medium" | "large",\n  "requiresCodeChanges": boolean\n}`;
-
-          const revisedResult = await runCodex({
-            cwd: ctx.cwd,
-            prompt: feedbackPrompt,
-            ...(plannerSessionId ? { resumeSessionId: plannerSessionId } : {}),
-            outputSchemaPath: plannerSchemaPath,
-            githubToken: ctx.githubToken,
-            ...plannerProfile,
-            timeoutMs: Math.floor(workflowTimeoutMs * 0.15),
-            onLog: logStep,
-          });
-
-          plannerSessionId = revisedResult.sessionId ?? plannerSessionId;
-
-          if (revisedResult.ok && revisedResult.parsedJson) {
-            plannerOutput = revisedResult.parsedJson;
-            planSteps = Array.isArray(plannerOutput.plan) ? plannerOutput.plan.map(String) : planSteps;
-            planAffectedFiles = Array.isArray(plannerOutput.affectedFiles)
-              ? plannerOutput.affectedFiles.map(String)
-              : planAffectedFiles;
-            planScope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : planScope;
-          }
-
-          // Update the plan message in-place
-          if (planMessageTs) {
-            await slack.chat
-              .update({
-                channel: task.event.channelId,
-                ts: planMessageTs,
-                text: formatPlanMessage(planSteps, planAffectedFiles, planScope, undefined, pipelineCwd),
-              })
-              .catch(() => {});
-          }
-          // Loop back to post revised approval prompt
-        }
+      if (loopOutcome.kind === 'paused') {
+        return {
+          workflow: loopOutcome.resumeContext.workflow,
+          status: 'PAUSED',
+          message: 'Paused \u2014 awaiting next mention to resume.',
+          notifyDesktop: false,
+          slackPosted: true,
+          resumeContext: loopOutcome.resumeContext,
+        };
       }
-
-      if (!approved) {
+      if (loopOutcome.kind === 'rejected_then_cancelled') {
+        return {
+          workflow: 'IMPLEMENTATION',
+          status: 'SKIPPED',
+          message: loopOutcome.message,
+          notifyDesktop: false,
+          slackPosted: true,
+        };
+      }
+      if (loopOutcome.kind === 'exhausted') {
         await slack.chat
           .postMessage({
             channel: task.event.channelId,
@@ -811,6 +1043,14 @@ Write your response as a ready-to-post Slack message describing what you did.
           slackPosted: true,
         };
       }
+      // loopOutcome.kind === 'approved' \u2014 refresh outer state with possibly-revised plan and continue.
+      planSteps = loopOutcome.planSteps;
+      planAffectedFiles = loopOutcome.planAffectedFiles;
+      planScope = loopOutcome.planScope;
+      plannerOutput = loopOutcome.plannerOutput;
+      plannerSessionId = loopOutcome.plannerSessionId;
+      planMessageTs = loopOutcome.planMessageTs;
+      feedbackRounds = loopOutcome.feedbackRounds;
     }
 
     // Build the plannerStep for downstream consumption
@@ -921,6 +1161,22 @@ Write your response as a ready-to-post Slack message describing what you did.
           workflow: 'IMPLEMENTATION',
           status: 'PAUSED',
           message: 'No reply within the idle window — paused. Reply in the thread to resume.',
+          notifyDesktop: false,
+          slackPosted: true,
+        };
+      }
+      if (clarification.outcome === 'paused') {
+        await slack.chat
+          .postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: `Pausing — re-mention <@${config.botUserId}> with the requested info when you're ready.`,
+          })
+          .catch(() => {});
+        return {
+          workflow: 'IMPLEMENTATION',
+          status: 'SKIPPED',
+          message: `User asked miniOG to wait during needs-input loop (<@${clarification.pauserId}>).`,
           notifyDesktop: false,
           slackPosted: true,
         };

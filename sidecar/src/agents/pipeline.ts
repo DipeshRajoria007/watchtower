@@ -162,11 +162,31 @@ export function formatPlanMessage(
 
 const APPROVE_PATTERNS = /^(yes|go|proceed|do it|go ahead|ship it|lgtm)$/i;
 const REJECT_PATTERNS = /^(no|stop|cancel|abort|nevermind|never mind)\b/i;
+// Strict pause patterns: pause word must be the entire message (modulo punctuation).
+// "wait, that's wrong" / "wait, also include X" → feedback, not pause.
+const PAUSE_PATTERNS =
+  /^(wait|hold on|hold up|pause|brb|one sec|one moment|stand by|i'?ll get back to you|(give me|gimme) (a )?(sec|second|minute|moment|min)|pause for (now|a bit|a sec)|stop for now)[.! ]*$/i;
 
-export type ApprovalOutcome = 'approved' | 'rejected' | 'feedback';
-export type ApprovalResult = { outcome: ApprovalOutcome; userReply: string; approverId: string };
+export type ApprovalOutcome = 'approved' | 'rejected' | 'feedback' | 'paused';
+export type ApprovalResult = {
+  outcome: ApprovalOutcome;
+  userReply: string;
+  approverId: string;
+  /** Slack ts of the reply that produced this outcome — used by resume to set the next wait-cutoff. */
+  replyTs: string;
+};
 
-type ApprovalIntent = 'approve' | 'feedback' | 'reject' | 'unrelated';
+type ApprovalIntent = 'approve' | 'feedback' | 'reject' | 'pause' | 'unrelated';
+
+/**
+ * Runs on every non-bot reply during a wait gate. Anyone — requester, approver,
+ * any participant — can park miniOG with a "wait"-style message. Cheap regex
+ * first; falls through to the wait gate's classifier (which now also recognizes
+ * 'pause') when the message is more nuanced.
+ */
+export function isQuickPauseMessage(text: string): boolean {
+  return PAUSE_PATTERNS.test(text.trim());
+}
 
 async function classifyApprovalIntent(
   message: string,
@@ -175,13 +195,15 @@ async function classifyApprovalIntent(
 ): Promise<ApprovalIntent> {
   const prompt = `You are a classifier for a developer bot called miniOG. miniOG just posted a plan in a Slack thread and asked for admin approval ("yes"/"go" to proceed, "no"/"stop" to cancel, or reply with feedback).
 
-A new message appeared in the thread. Classify the message into one of four categories:
+A new message appeared in the thread. Classify the message into one of five categories:
 
 "approve" — The message is approving the plan and telling miniOG to proceed. Examples: "looks good, go ahead", "yes do it", "approved, start coding", "go ahead but also handle X" (approval WITH extra notes).
 
 "feedback" — The message is directed at miniOG with instructions, changes, or additional context for the plan, but does NOT explicitly approve it. Examples: "also make sure X", "change the approach to Y", "use the existing middleware instead", "don't forget to handle edge case Z". The user wants the plan revised, not executed as-is.
 
 "reject" — The message is telling miniOG to stop or cancel. Examples: "no", "stop", "don't do this", "cancel it".
+
+"pause" — The message tells miniOG to wait / hold / pause without rejecting. The user explicitly wants miniOG to STOP working for now and resume later when tagged. Examples: "wait", "hold on", "pause", "gimme a minute", "I'll get back to you", "wait for me", "stop for now, I need to check something". CRITICAL: a "wait" used as filler before a real instruction (e.g. "wait, that's wrong" or "wait, also include X") is FEEDBACK, not pause — the user is still actively giving direction.
 
 "unrelated" — The message is NOT directed at miniOG. It's a human-to-human conversation. Examples: messages addressing another user by @mention, asking another human for URLs/details, continuing a debugging discussion.
 
@@ -195,7 +217,7 @@ New message to classify:
 
 Return strict JSON:
 {
-  "intent": "approve" | "feedback" | "reject" | "unrelated",
+  "intent": "approve" | "feedback" | "reject" | "pause" | "unrelated",
   "reasoning": "one sentence explaining why"
 }`;
 
@@ -219,7 +241,7 @@ Return strict JSON:
     }
 
     const raw = result.parsedJson as { intent?: string; reasoning?: string };
-    const validIntents: ApprovalIntent[] = ['approve', 'feedback', 'reject', 'unrelated'];
+    const validIntents: ApprovalIntent[] = ['approve', 'feedback', 'reject', 'pause', 'unrelated'];
     const intent: ApprovalIntent = validIntents.includes(raw.intent as ApprovalIntent)
       ? (raw.intent as ApprovalIntent)
       : 'unrelated';
@@ -254,6 +276,9 @@ export async function waitForApproval(params: {
   const { slack, channelId, threadTs, approverUserIds, approvalPromptTs, logStep, botUserId } = params;
   const pollIntervalMs = 5_000;
   const notifiedUsers = new Set<string>();
+  // Per-call cache: messages we've already classified (and got non-actionable
+  // intent for) — avoids re-classifying the same ts every 5s poll cycle.
+  const classifiedTs = new Set<string>();
 
   while (true) {
     await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
@@ -272,6 +297,17 @@ export async function waitForApproval(params: {
     for (const reply of candidateReplies) {
       const text = reply.text.trim();
       const isApprover = approverUserIds.includes(reply.user);
+
+      // Pause detection runs on EVERY non-bot reply (not admin-gated). Anyone in
+      // the thread can park miniOG with a "wait" message; the workflow returns
+      // PAUSED, releases its slot, and resumes on the next @miniOG mention.
+      if (isQuickPauseMessage(text)) {
+        logStep({
+          stage: 'pipeline.approval.paused',
+          message: `<@${reply.user}> asked miniOG to wait: "${text}"`,
+        });
+        return { outcome: 'paused', userReply: text, approverId: reply.user, replyTs: reply.ts };
+      }
 
       if (APPROVE_PATTERNS.test(text)) {
         if (!isApprover) {
@@ -296,7 +332,7 @@ export async function waitForApproval(params: {
           stage: 'pipeline.approval.approved',
           message: `Core-dev member <@${reply.user}> approved the plan: "${text}"`,
         });
-        return { outcome: 'approved', userReply: text, approverId: reply.user };
+        return { outcome: 'approved', userReply: text, approverId: reply.user, replyTs: reply.ts };
       }
 
       if (REJECT_PATTERNS.test(text)) {
@@ -317,11 +353,13 @@ export async function waitForApproval(params: {
           stage: 'pipeline.approval.rejected',
           message: `Core-dev member <@${reply.user}> rejected the plan: "${text}"`,
         });
-        return { outcome: 'rejected', userReply: text, approverId: reply.user };
+        return { outcome: 'rejected', userReply: text, approverId: reply.user, replyTs: reply.ts };
       }
 
-      // Non-pattern text from an approver — classify intent
+      // Non-pattern text from an approver — classify intent (approve/feedback/reject/pause/unrelated)
       if (isApprover) {
+        if (classifiedTs.has(reply.ts)) continue;
+        classifiedTs.add(reply.ts);
         const recentThread = messages.slice(-6).map(m => m.text.trim());
         const intent = await classifyApprovalIntent(text, recentThread, logStep);
         if (intent === 'approve') {
@@ -329,21 +367,28 @@ export async function waitForApproval(params: {
             stage: 'pipeline.approval.approved',
             message: `Core-dev member <@${reply.user}> approved the plan: "${text}"`,
           });
-          return { outcome: 'approved', userReply: text, approverId: reply.user };
+          return { outcome: 'approved', userReply: text, approverId: reply.user, replyTs: reply.ts };
         }
         if (intent === 'feedback') {
           logStep({
             stage: 'pipeline.approval.feedback',
             message: `Core-dev member <@${reply.user}> provided feedback: "${text}"`,
           });
-          return { outcome: 'feedback', userReply: text, approverId: reply.user };
+          return { outcome: 'feedback', userReply: text, approverId: reply.user, replyTs: reply.ts };
         }
         if (intent === 'reject') {
           logStep({
             stage: 'pipeline.approval.rejected',
             message: `Core-dev member <@${reply.user}> rejected the plan: "${text}"`,
           });
-          return { outcome: 'rejected', userReply: text, approverId: reply.user };
+          return { outcome: 'rejected', userReply: text, approverId: reply.user, replyTs: reply.ts };
+        }
+        if (intent === 'pause') {
+          logStep({
+            stage: 'pipeline.approval.paused',
+            message: `Core-dev member <@${reply.user}> asked miniOG to wait: "${text}"`,
+          });
+          return { outcome: 'paused', userReply: text, approverId: reply.user, replyTs: reply.ts };
         }
         logStep({
           stage: 'pipeline.approval.ignored',
@@ -352,7 +397,22 @@ export async function waitForApproval(params: {
         });
         continue;
       }
-      // Non-pattern text from non-approver — ignore silently
+      // Non-pattern text from non-approver — classifier still gets a shot at
+      // pause detection so a requester (or anyone in the thread) can park miniOG
+      // with a nuanced wait message that the cheap regex missed. Cached per-ts.
+      if (classifiedTs.has(reply.ts)) continue;
+      classifiedTs.add(reply.ts);
+      const recentThread = messages.slice(-6).map(m => m.text.trim());
+      const intent = await classifyApprovalIntent(text, recentThread, logStep);
+      if (intent === 'pause') {
+        logStep({
+          stage: 'pipeline.approval.paused',
+          message: `<@${reply.user}> asked miniOG to wait: "${text}"`,
+        });
+        return { outcome: 'paused', userReply: text, approverId: reply.user, replyTs: reply.ts };
+      }
+      // Anything else from a non-approver: silently ignore — admins still drive
+      // approve/feedback/reject.
     }
   }
 }
@@ -366,8 +426,14 @@ export async function waitForApproval(params: {
  * admins in-thread "which repo?" and wait for an answer.
  * ---------------------------------------------------------------------- */
 
-export type RepoChoiceOutcome = 'newton-web' | 'newton-api' | 'cancelled' | 'timeout';
-export type RepoChoiceResult = { outcome: RepoChoiceOutcome; userReply: string; approverId: string };
+export type RepoChoiceOutcome = 'newton-web' | 'newton-api' | 'cancelled' | 'timeout' | 'paused';
+export type RepoChoiceResult = {
+  outcome: RepoChoiceOutcome;
+  userReply: string;
+  approverId: string;
+  /** Slack ts of the reply that resolved the gate; '' for cancelled/timeout (no reply). */
+  replyTs: string;
+};
 
 type RepoIntent = 'web' | 'api' | 'cancel' | 'unclear';
 
@@ -490,7 +556,7 @@ export async function waitForRepoChoice(params: {
 
   while (true) {
     if (signal?.aborted) {
-      return { outcome: 'cancelled', userReply: '', approverId: '' };
+      return { outcome: 'cancelled', userReply: '', approverId: '', replyTs: '' };
     }
     const elapsed = Date.now() - startedAt;
     if (elapsed >= idleTimeoutMs) {
@@ -499,7 +565,7 @@ export async function waitForRepoChoice(params: {
         message: `No admin reply within ${Math.round(idleTimeoutMs / 60_000)} min — routing to desktop.`,
         level: 'WARN',
       });
-      return { outcome: 'timeout', userReply: '', approverId: '' };
+      return { outcome: 'timeout', userReply: '', approverId: '', replyTs: '' };
     }
     if (!nudged && elapsed >= nudgeAfterMs && nudgeText) {
       try {
@@ -524,6 +590,16 @@ export async function waitForRepoChoice(params: {
     for (const reply of candidateReplies) {
       const text = reply.text.trim();
       const isApprover = approverUserIds.includes(reply.user);
+
+      // Anyone can park miniOG with a "wait" — including non-admins.
+      if (isQuickPauseMessage(text)) {
+        logStep({
+          stage: 'pipeline.repo_choice.paused',
+          message: `<@${reply.user}> asked miniOG to wait: "${text}"`,
+        });
+        return { outcome: 'paused', userReply: text, approverId: reply.user, replyTs: reply.ts };
+      }
+
       if (!isApprover) {
         // Nudge non-admins once so they know why they were ignored.
         if (!notifiedUsers.has(reply.user)) {
@@ -547,21 +623,21 @@ export async function waitForRepoChoice(params: {
           stage: 'pipeline.repo_choice.resolved',
           message: `Admin <@${reply.user}> chose newton-web: "${text}"`,
         });
-        return { outcome: 'newton-web', userReply: text, approverId: reply.user };
+        return { outcome: 'newton-web', userReply: text, approverId: reply.user, replyTs: reply.ts };
       }
       if (intent === 'api') {
         logStep({
           stage: 'pipeline.repo_choice.resolved',
           message: `Admin <@${reply.user}> chose newton-api: "${text}"`,
         });
-        return { outcome: 'newton-api', userReply: text, approverId: reply.user };
+        return { outcome: 'newton-api', userReply: text, approverId: reply.user, replyTs: reply.ts };
       }
       if (intent === 'cancel') {
         logStep({
           stage: 'pipeline.repo_choice.cancelled',
           message: `Admin <@${reply.user}> cancelled the task: "${text}"`,
         });
-        return { outcome: 'cancelled', userReply: text, approverId: reply.user };
+        return { outcome: 'cancelled', userReply: text, approverId: reply.user, replyTs: reply.ts };
       }
 
       // intent === 'unclear' → keep waiting, don't echo into thread noise.

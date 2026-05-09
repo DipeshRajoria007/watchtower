@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { z } from 'zod';
 import type {
   AgentBackendId,
   AgentCallRecord,
@@ -12,6 +13,7 @@ import type {
   LaunchpadRequestStatus,
   PersonalityMode,
   LaunchpadTarget,
+  ResumeContext,
   WorkflowIntent,
 } from '../types/contracts.js';
 import { createInvestigationStore, type InvestigationStore } from './investigationStore.js';
@@ -19,6 +21,59 @@ import { createDossierStore, type DossierStore } from './dossierStore.js';
 
 function normalizeStoredPersonalityMode(mode: unknown): PersonalityMode {
   return mode === 'terse' || mode === 'technical' || mode === 'casual' ? mode : 'normal';
+}
+
+const implementationApprovalResumeSchema = z.object({
+  workflow: z.enum(['IMPLEMENTATION', 'OWNER_AUTOPILOT']),
+  stage: z.literal('awaiting_approval'),
+  iteration: z.number().int().min(0),
+  feedbackRounds: z.number().int().min(0),
+  planSteps: z.array(z.string()),
+  planAffectedFiles: z.array(z.string()),
+  planScope: z.string(),
+  plannerSessionId: z.string().optional(),
+  plannerOutput: z.record(z.string(), z.unknown()).optional(),
+  planMessageTs: z.string().optional(),
+  approvalPromptTs: z.string().optional(),
+  pipelineCwd: z.string(),
+  pauseCount: z.number().int().min(0),
+});
+
+const implementationRevisionChoiceResumeSchema = z.object({
+  workflow: z.enum(['IMPLEMENTATION', 'OWNER_AUTOPILOT']),
+  stage: z.literal('awaiting_revision_choice'),
+  iteration: z.number().int().min(0),
+  feedbackRounds: z.number().int().min(0),
+  planSteps: z.array(z.string()),
+  planAffectedFiles: z.array(z.string()),
+  planScope: z.string(),
+  plannerSessionId: z.string().optional(),
+  plannerOutput: z.record(z.string(), z.unknown()).optional(),
+  planMessageTs: z.string().optional(),
+  askReviseTs: z.string().optional(),
+  pipelineCwd: z.string(),
+  pauseCount: z.number().int().min(0),
+});
+
+const implementationRepoChoiceResumeSchema = z.object({
+  workflow: z.enum(['IMPLEMENTATION', 'OWNER_AUTOPILOT']),
+  stage: z.literal('awaiting_repo_choice'),
+  promptTs: z.string().optional(),
+  pauseCount: z.number().int().min(0),
+});
+
+const resumeContextSchema = z.discriminatedUnion('stage', [
+  implementationApprovalResumeSchema,
+  implementationRevisionChoiceResumeSchema,
+  implementationRepoChoiceResumeSchema,
+]);
+
+function parseResumeContext(raw: unknown): ResumeContext | undefined {
+  // Resume contexts are persisted as the top-level result_json. Tolerate
+  // earlier schema-less result payloads (e.g. { prUrl: '...' }) by returning
+  // undefined when parsing fails — the caller decides whether to fail the job.
+  const parsed = resumeContextSchema.safeParse(raw);
+  return parsed.success ? (parsed.data as ResumeContext) : undefined;
 }
 
 export class JobStore {
@@ -967,6 +1022,85 @@ export class JobStore {
     };
   }
 
+  /**
+   * Find a PAUSED job in this thread that should be resumed by the next
+   * @miniOG mention. Uses a wider stale window than activeJobForThread
+   * (24h vs 45min) since paused jobs can sit overnight waiting for the user.
+   */
+  pausedJobForThread(
+    channelId: string,
+    threadTs: string,
+    staleMinutes = 24 * 60,
+  ): { id: string; workflow: WorkflowIntent; updatedAt: string } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, workflow, updated_at
+         FROM jobs
+         WHERE channel_id = ?
+           AND thread_ts = ?
+           AND status = 'PAUSED'
+           AND updated_at > datetime('now', '-' || ? || ' minutes')
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+      )
+      .get(channelId, threadTs, staleMinutes) as
+      | { id?: string; workflow?: WorkflowIntent; updated_at?: string }
+      | undefined;
+
+    if (!row?.id || !row?.workflow || !row?.updated_at) {
+      return undefined;
+    }
+
+    return {
+      id: row.id,
+      workflow: row.workflow,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * Read a paused job's resume context from result_json. Returns undefined if
+   * the job has no result, or if the stored payload doesn't match the
+   * ResumeContext schema (caller should treat as a corrupt resume and fail
+   * the job rather than re-running blind).
+   */
+  loadResumeContext(jobId: string): ResumeContext | undefined {
+    const row = this.db.prepare('SELECT result_json FROM jobs WHERE id = ? LIMIT 1').get(jobId) as
+      | { result_json?: string }
+      | undefined;
+    if (!row?.result_json) return undefined;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(row.result_json);
+    } catch {
+      return undefined;
+    }
+    return parseResumeContext(raw);
+  }
+
+  /**
+   * Flip a PAUSED job back to RUNNING when a resume mention arrives.
+   * Clears result_json — the workflow will re-write it (with a new resume
+   * context if it pauses again, or workflow output on completion).
+   */
+  markJobRunning(jobId: string): void {
+    this.db
+      .prepare(
+        `UPDATE jobs
+         SET status = 'RUNNING', error_message = NULL, result_json = NULL, updated_at = ?
+         WHERE id = ? AND status = 'PAUSED'`,
+      )
+      .run(new Date().toISOString(), jobId);
+  }
+
+  /**
+   * Find the currently-RUNNING job in a thread (if any) — the one that's
+   * actively holding a worker slot. PAUSED jobs are intentionally NOT
+   * considered active here: they've released their slot and a new @miniOG
+   * mention should start a fresh job (a later PR can wire up "resume the
+   * paused job in place" using the persisted resumeContext; today the
+   * resumeContext is forward-compat groundwork + the sweeper's input).
+   */
   activeJobForThread(
     channelId: string,
     threadTs: string,
@@ -978,7 +1112,7 @@ export class JobStore {
          FROM jobs
          WHERE channel_id = ?
            AND thread_ts = ?
-           AND status IN ('RUNNING', 'PAUSED')
+           AND status = 'RUNNING'
            AND updated_at > datetime('now', '-' || ? || ' minutes')
          ORDER BY updated_at DESC
          LIMIT 1`,
@@ -1046,6 +1180,23 @@ export class JobStore {
          WHERE id = ?`,
       )
       .run(new Date().toISOString(), jobId);
+  }
+
+  /**
+   * Find PAUSED jobs older than `maxAgeMinutes` so the sweeper can fail them
+   * cleanly. Returns id + thread coords + cwd (so the caller can clean up the
+   * worktree if it persisted one in the resume context).
+   */
+  stalePausedJobs(maxAgeMinutes: number): Array<{ id: string; channelId: string; threadTs: string }> {
+    return this.db
+      .prepare(
+        `SELECT id, channel_id AS channelId, thread_ts AS threadTs
+         FROM jobs
+         WHERE status = 'PAUSED'
+           AND updated_at < datetime('now', '-' || ? || ' minutes')
+         ORDER BY updated_at ASC`,
+      )
+      .all(maxAgeMinutes) as Array<{ id: string; channelId: string; threadTs: string }>;
   }
 
   /**
