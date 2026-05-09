@@ -188,11 +188,19 @@ export function isQuickPauseMessage(text: string): boolean {
   return PAUSE_PATTERNS.test(text.trim());
 }
 
+/**
+ * Returns null on transient failure (runCodex error / non-JSON output) so the
+ * caller can decide whether to retry on the next poll tick. Returning
+ * 'unrelated' on failure used to combine with the per-call ts cache to
+ * permanently swallow a message after one flaky classification — pre-existing
+ * behavior pre-cache; broken once we added caching for cost. The fix: caller
+ * caches only when this function succeeds.
+ */
 async function classifyApprovalIntent(
   message: string,
   recentThread: string[],
   logStep: WorkflowStepLogger,
-): Promise<ApprovalIntent> {
+): Promise<ApprovalIntent | null> {
   const prompt = `You are a classifier for a developer bot called miniOG. miniOG just posted a plan in a Slack thread and asked for admin approval ("yes"/"go" to proceed, "no"/"stop" to cancel, or reply with feedback).
 
 A new message appeared in the thread. Classify the message into one of five categories:
@@ -234,10 +242,10 @@ Return strict JSON:
     if (!result.ok || !result.parsedJson) {
       logStep({
         stage: 'pipeline.approval.classify.fallback',
-        message: 'Approval-intent classifier failed — defaulting to unrelated.',
+        message: 'Approval-intent classifier failed — will retry on next poll.',
         level: 'WARN',
       });
-      return 'unrelated';
+      return null;
     }
 
     const raw = result.parsedJson as { intent?: string; reasoning?: string };
@@ -256,10 +264,10 @@ Return strict JSON:
   } catch (error) {
     logStep({
       stage: 'pipeline.approval.classify.error',
-      message: `Approval-intent classifier threw: ${String(error)} — defaulting to unrelated.`,
+      message: `Approval-intent classifier threw: ${String(error)} — will retry on next poll.`,
       level: 'WARN',
     });
-    return 'unrelated';
+    return null;
   }
 }
 
@@ -359,9 +367,15 @@ export async function waitForApproval(params: {
       // Non-pattern text from an approver — classify intent (approve/feedback/reject/pause/unrelated)
       if (isApprover) {
         if (classifiedTs.has(reply.ts)) continue;
-        classifiedTs.add(reply.ts);
         const recentThread = messages.slice(-6).map(m => m.text.trim());
         const intent = await classifyApprovalIntent(text, recentThread, logStep);
+        if (intent === null) {
+          // Transient classifier failure — retry on the next 5s poll tick.
+          // Do NOT cache the ts here, otherwise one flaky call permanently
+          // ignores this reply.
+          continue;
+        }
+        classifiedTs.add(reply.ts);
         if (intent === 'approve') {
           logStep({
             stage: 'pipeline.approval.approved',
@@ -399,11 +413,13 @@ export async function waitForApproval(params: {
       }
       // Non-pattern text from non-approver — classifier still gets a shot at
       // pause detection so a requester (or anyone in the thread) can park miniOG
-      // with a nuanced wait message that the cheap regex missed. Cached per-ts.
+      // with a nuanced wait message that the cheap regex missed. Cached per-ts
+      // only on a successful classify, so transient failures can retry next poll.
       if (classifiedTs.has(reply.ts)) continue;
-      classifiedTs.add(reply.ts);
       const recentThread = messages.slice(-6).map(m => m.text.trim());
       const intent = await classifyApprovalIntent(text, recentThread, logStep);
+      if (intent === null) continue;
+      classifiedTs.add(reply.ts);
       if (intent === 'pause') {
         logStep({
           stage: 'pipeline.approval.paused',
