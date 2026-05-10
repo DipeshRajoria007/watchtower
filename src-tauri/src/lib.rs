@@ -1538,6 +1538,10 @@ async fn forget_dossier_field(
                 .map_err(|err| format!("db delete failed: {err}"))?;
         }
         "all" => {
+            // The Dossier UI promises this action removes the entire dossier,
+            // pinned facts, and memory rows. Skipping user_pinned_facts /
+            // user_memories here would leak supposedly-forgotten data back
+            // into recall assembly the next time the user is mentioned.
             connection
                 .execute(
                     "DELETE FROM personality_profiles WHERE scope = 'user' AND scope_id = ?",
@@ -1559,6 +1563,18 @@ async fn forget_dossier_field(
             connection
                 .execute(
                     "DELETE FROM user_dossiers WHERE user_id = ?",
+                    params![user_id],
+                )
+                .map_err(|err| format!("db delete failed: {err}"))?;
+            connection
+                .execute(
+                    "DELETE FROM user_pinned_facts WHERE user_id = ?",
+                    params![user_id],
+                )
+                .map_err(|err| format!("db delete failed: {err}"))?;
+            connection
+                .execute(
+                    "DELETE FROM user_memories WHERE user_id = ?",
                     params![user_id],
                 )
                 .map_err(|err| format!("db delete failed: {err}"))?;
