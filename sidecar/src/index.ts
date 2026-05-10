@@ -858,14 +858,17 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
 
         unregisterActiveJob(jobId);
 
-        // Swap :eyes: for outcome reaction
+        // Swap :eyes: for outcome reaction. PAUSED gets a distinct emoji so a
+        // glance at the thread tells you "parked, mention me to resume" rather
+        // than the misleading :x: it used to share with cancelled/failed jobs.
         await removeReaction(client, event.channelId, event.eventTs, 'eyes');
-        await addReaction(
-          client,
-          event.channelId,
-          event.eventTs,
-          result.status === 'SUCCESS' || result.status === 'SKIPPED' ? 'white_check_mark' : 'x',
-        );
+        const outcomeReaction =
+          result.status === 'SUCCESS' || result.status === 'SKIPPED'
+            ? 'white_check_mark'
+            : result.status === 'PAUSED'
+              ? 'zzz'
+              : 'x';
+        await addReaction(client, event.channelId, event.eventTs, outcomeReaction);
 
         return;
       } catch (error) {
