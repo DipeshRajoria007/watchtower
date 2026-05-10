@@ -555,6 +555,28 @@ export async function runImplementationWorkflow(params: {
 
   const ctx = await prepareWorkflowContext({ task, config, slack, store, logStep });
 
+  // Fail closed when prepareWorkflowContext could not pin down the target
+  // repo: it sets ctx.cwd = os.tmpdir() and ctx.desktopOnly. Without this
+  // gate the legacy single-agent path below (and the multi-agent fallback)
+  // would happily launch Codex against /tmp instead of stopping for human
+  // triage. Mirrors the pattern used by investigationWorkflow.
+  if (ctx.desktopOnly) {
+    await slack.chat
+      .postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: `I couldn't pin down which repo to implement against (${ctx.desktopOnly.reason}) — routing this to the desktop queue instead of running in /tmp.`,
+      })
+      .catch(() => {});
+    return {
+      workflow: 'IMPLEMENTATION',
+      status: ctx.desktopOnly.cancelled ? 'CANCELLED' : 'PAUSED',
+      message: `Routed to desktop (${ctx.desktopOnly.reason}).`,
+      notifyDesktop: !ctx.desktopOnly.cancelled,
+      slackPosted: true,
+    };
+  }
+
   // Thread-scoped investigation findings: if a prior INVESTIGATION ran in
   // this same thread, seed the planner with its diagnosis so vague follow-up
   // messages like "yes fix it" land on a concrete plan instead of re-asking.
