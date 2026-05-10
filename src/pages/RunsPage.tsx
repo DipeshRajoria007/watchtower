@@ -28,7 +28,7 @@ type RunsPageProps = {
 
 export function RunsPage({
   data,
-  onReviewChanges,
+  onReviewChanges: _onReviewChanges,
   onSelectRun,
   onRefresh,
   selectedRunId,
@@ -159,11 +159,13 @@ export function RunsPage({
               </div>
               <div className="run-detail-header-actions">
                 <StatusBadge label={selectedRun.status} tone={getStatusTone(selectedRun.status)} />
-                {selectedRun.status === 'SUCCESS' && onReviewChanges ? (
-                  <button className="primary-button" type="button" onClick={() => onReviewChanges(selectedRun.id)}>
-                    Review Changes
-                  </button>
-                ) : null}
+                {/*
+                 * Review Changes button is intentionally omitted: nothing in
+                 * the codebase calls JobStore.saveDiff(), so job_diffs is
+                 * never populated and ReviewPage hits a guaranteed no-diff
+                 * dead-end. Re-add this entry point once successful
+                 * code-producing jobs persist their diff.
+                 */}
               </div>
             </div>
 
