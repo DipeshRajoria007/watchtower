@@ -1191,6 +1191,18 @@ async function main(): Promise<void> {
     logger.warn({ orphaned }, 'cleaned up orphaned RUNNING jobs from previous session');
   }
 
+  // Revert launchpad requests stranded in CLAIMED/QUEUED back to PENDING so
+  // the intake poller picks them up again. Without this, a sidecar crash
+  // between claim and job-link leaves the desktop-originated request
+  // silently never executing and never recovering.
+  const strandedLaunchpad = store.recoverStrandedLaunchpadRequests();
+  if (strandedLaunchpad > 0) {
+    logger.warn(
+      { strandedLaunchpad },
+      'reverted launchpad requests stranded in CLAIMED/QUEUED back to PENDING for retry',
+    );
+  }
+
   const client = new SocketSlackClient(
     config,
     async (event, webClient) => {

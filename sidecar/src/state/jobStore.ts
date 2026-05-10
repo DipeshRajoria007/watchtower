@@ -1261,6 +1261,30 @@ export class JobStore {
     return result.changes;
   }
 
+  /**
+   * On startup, revert any launchpad requests stranded in CLAIMED or QUEUED
+   * back to PENDING so the next intake poll picks them up. These rows can
+   * stick if the sidecar crashes after claiming a request but before
+   * linking it to a job (the only state that flips them to RUNNING).
+   * Without this, desktop-originated launchpad jobs would silently never
+   * execute and never recover. Returns the number of rows reset.
+   */
+  recoverStrandedLaunchpadRequests(): number {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE launchpad_requests
+         SET status = 'PENDING',
+             slack_channel_id = NULL,
+             anchor_ts = NULL,
+             error_message = NULL,
+             updated_at = ?
+         WHERE status IN ('CLAIMED', 'QUEUED') AND job_id IS NULL`,
+      )
+      .run(now);
+    return result.changes;
+  }
+
   markJob(
     jobId: string,
     status: JobRecord['status'],
