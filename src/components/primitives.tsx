@@ -257,7 +257,7 @@ export function RunList({
 
 export function RunInspector({
   logs,
-  onReviewChanges,
+  onReviewChanges: _onReviewChanges,
   run,
 }: {
   logs: JobLogEntry[];
@@ -316,11 +316,13 @@ export function RunInspector({
           </div>
         ) : null}
 
-        {run.status === 'SUCCESS' && onReviewChanges ? (
-          <button className="primary-button" type="button" onClick={() => onReviewChanges(run.id)}>
-            Review Changes
-          </button>
-        ) : null}
+        {/*
+         * Review Changes button is intentionally omitted: nothing in the
+         * codebase calls JobStore.saveDiff(), so job_diffs is never
+         * populated and ReviewPage hits a guaranteed no-diff dead-end.
+         * Re-add this entry point once successful code-producing jobs
+         * persist their diff.
+         */}
       </article>
 
       <SectionCard title="Execution Trace" subtitle={`Persisted trace for ${run.id}`} count={logs.length}>
