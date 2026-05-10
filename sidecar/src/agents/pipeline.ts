@@ -8,6 +8,7 @@ import type { WorkflowStepLogger } from '../types/contracts.js';
 import { buildPromptForRole } from './prompts.js';
 import { lightweightProfile, profileForAgentRole } from '../codex/modelProfiles.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
+import { normalizePlannerOutput, type NormalizedPlannerOutput } from './normalizePlannerOutput.js';
 import { withAgentCallContext } from '../state/runContext.js';
 import { fetchThreadContext } from '../slack/threadContext.js';
 import { currentHead, checkCoderProducedChanges } from '../workspaces/gitState.js';
@@ -140,24 +141,19 @@ function stripRepoPrefix(filePath: string, repoPath: string): string {
 }
 
 export function formatPlanMessage(
-  planSteps: string[],
+  planMarkdown: string,
   affectedFiles: string[],
   scope: string,
-  completedSteps?: Set<number>,
   repoPath?: string,
+  completed?: boolean,
 ): string {
   const header = `*Plan* (scope: ${scope}, ${affectedFiles.length} files affected)`;
-  const stepLines = planSteps.map((step, i) => {
-    const num = `${i + 1}.`;
-    if (completedSteps?.has(i)) {
-      return `~${num} ${step}~`;
-    }
-    return `${num} ${step}`;
-  });
   const displayFiles = repoPath ? affectedFiles.map(f => stripRepoPrefix(f, repoPath)) : affectedFiles;
   const filesSection =
     displayFiles.length > 0 ? `\n\n*Affected files:*\n${displayFiles.map(f => `• \`${f}\``).join('\n')}` : '';
-  return `${header}\n${stepLines.join('\n')}${filesSection}`;
+  const body = planMarkdown.trim();
+  const completedSuffix = completed ? '\n\n_✅ Plan executed._' : '';
+  return `${header}${body ? `\n${body}` : ''}${filesSection}${completedSuffix}`;
 }
 
 const APPROVE_PATTERNS = /^(yes|go|proceed|do it|go ahead|ship it|lgtm)$/i;
@@ -729,26 +725,22 @@ function buildPipelineIntroMessage(agents: AgentRole[], customIntro?: string): s
   return `Running ${agents.join(', ')}.`;
 }
 
-export function buildApprovalMessage(feedbackRounds: number, stepCount: number): string {
+export function buildApprovalMessage(feedbackRounds: number): string {
   const prefix = feedbackRounds > 0 ? `After ${feedbackRounds} revision${feedbackRounds > 1 ? 's' : ''}, plan` : 'Plan';
-  const steps =
-    stepCount > 2
-      ? `I'll work through the ${stepCount} steps, then review and verify.`
-      : "I'll code it up, then review and verify.";
-
-  return `${prefix} approved \u2014 ${steps}`;
+  return `${prefix} approved \u2014 I'll code it up, then review and verify.`;
 }
 export function buildCoderFollowUpQuestion(
   ctx: AgentContext,
-  planSteps: string[],
+  planMarkdown: string,
   planAffectedFiles: string[],
 ): string {
-  const firstStep = planSteps[0]?.trim();
+  const trimmed = planMarkdown.trim();
+  const preview = trimmed.length > 200 ? `${trimmed.slice(0, 200).trim()}…` : trimmed;
   const filePreview = planAffectedFiles.slice(0, 3).join(', ');
 
   const lines = ["I couldn't pin down a concrete change from the info I have, so I haven't touched any files."];
-  if (firstStep) {
-    lines.push(`The plan opened with: _${firstStep}_`);
+  if (preview) {
+    lines.push(`The plan opened with: _${preview}_`);
   }
   if (filePreview) {
     lines.push(`Suspected files: \`${filePreview}\`${planAffectedFiles.length > 3 ? ' …' : ''}`);
@@ -813,11 +805,9 @@ export async function runAgentPipeline(params: {
   const introText = buildPipelineIntroMessage(agents, introMessage);
   await postSlackProgress({ slack, ctx, text: introText });
 
-  // Track plan message so we can update it with strikethroughs during execution
+  // Track plan message so we can append a completion marker after the coder runs.
   let planMessageTs: string | undefined;
-  let planSteps: string[] = [];
-  let planAffectedFiles: string[] = [];
-  let planScope = 'unknown';
+  let plannerNormalized: NormalizedPlannerOutput | undefined;
 
   // Captured just-in-time before the first coder run; reused to diff against
   // the worktree afterwards so a hallucinated coder JSON can't pass the guard.
@@ -857,9 +847,15 @@ export async function runAgentPipeline(params: {
       previousSteps: steps,
     });
 
-    const profile = profileForAgentRole(role, getActiveBackendId());
+    const backendId = getActiveBackendId();
+    const profile = profileForAgentRole(role, backendId);
+    const planMode = role === 'planner' && backendId === 'claude-code';
     const schemaFile = SCHEMA_MAP[role];
-    const schemaPath = schemaFile ? path.resolve(process.cwd(), `schemas/${schemaFile}`) : undefined;
+    const schemaPath = planMode
+      ? undefined
+      : schemaFile
+        ? path.resolve(process.cwd(), `schemas/${schemaFile}`)
+        : undefined;
 
     if (role === 'coder' && coderBaseSha === undefined) {
       try {
@@ -875,6 +871,7 @@ export async function runAgentPipeline(params: {
         prompt,
         outputSchemaPath: schemaPath,
         githubToken: ctx.githubToken,
+        planMode,
         ...profile,
         // timeoutMs: perAgentTimeoutMs,
         onLog: logStep,
@@ -919,7 +916,11 @@ export async function runAgentPipeline(params: {
             },
           });
           pendingNeedsInput = true;
-          needsInputQuestion = buildCoderFollowUpQuestion(ctx, planSteps, planAffectedFiles);
+          needsInputQuestion = buildCoderFollowUpQuestion(
+            ctx,
+            plannerNormalized?.planMarkdown ?? '',
+            plannerNormalized?.affectedFiles ?? [],
+          );
         } else {
           output.filesChanged = changes.filesChanged;
         }
@@ -956,17 +957,28 @@ export async function runAgentPipeline(params: {
       text: `[${i + 1}/${agents.length}] ${buildCompletionMessage(role, status, nextRole)}`,
     });
 
-    // After planner completes: post the plan as a formatted message
-    if (role === 'planner' && status === 'passed' && output.plan) {
-      planSteps = Array.isArray(output.plan) ? output.plan.map(String) : [];
-      planAffectedFiles = Array.isArray(output.affectedFiles) ? output.affectedFiles.map(String) : [];
-      planScope = typeof output.scope === 'string' ? output.scope : 'unknown';
+    // After planner completes: normalize the output and post the plan as a formatted message
+    if (role === 'planner' && status === 'passed') {
+      plannerNormalized = normalizePlannerOutput(output, backendId);
+      // Surface the normalized fields on the step output so downstream consumers
+      // (implementationWorkflow.ts, resume contexts, tests) can read a consistent shape
+      // regardless of which backend produced the plan.
+      output.planMarkdown = plannerNormalized.planMarkdown;
+      output.scope = plannerNormalized.scope;
+      output.requiresCodeChanges = plannerNormalized.requiresCodeChanges;
+      output.clarificationNeeded = plannerNormalized.clarificationNeeded;
+      output.affectedFiles = plannerNormalized.affectedFiles;
 
-      if (planSteps.length > 0) {
+      if (plannerNormalized.planMarkdown.length > 0) {
         planMessageTs = await postSlackProgress({
           slack,
           ctx,
-          text: formatPlanMessage(planSteps, planAffectedFiles, planScope, undefined, ctx.repoPath),
+          text: formatPlanMessage(
+            plannerNormalized.planMarkdown,
+            plannerNormalized.affectedFiles,
+            plannerNormalized.scope,
+            ctx.repoPath,
+          ),
         });
       }
 
@@ -1000,14 +1012,19 @@ export async function runAgentPipeline(params: {
       }
     }
 
-    // After coder completes: strike through all plan steps to show completion
-    if (role === 'coder' && planMessageTs && planSteps.length > 0) {
-      const allCompleted = new Set(planSteps.map((_, idx) => idx));
+    // After coder completes: append a completion marker to the plan message.
+    if (role === 'coder' && planMessageTs && plannerNormalized) {
       await updateSlackMessage({
         slack,
         ctx,
         ts: planMessageTs,
-        text: formatPlanMessage(planSteps, planAffectedFiles, planScope, allCompleted, ctx.repoPath),
+        text: formatPlanMessage(
+          plannerNormalized.planMarkdown,
+          plannerNormalized.affectedFiles,
+          plannerNormalized.scope,
+          ctx.repoPath,
+          true,
+        ),
       });
     }
 
@@ -1101,7 +1118,11 @@ export async function runAgentPipeline(params: {
                 data: { retryLoops },
               });
               pendingNeedsInput = true;
-              needsInputQuestion = buildCoderFollowUpQuestion(ctx, planSteps, planAffectedFiles);
+              needsInputQuestion = buildCoderFollowUpQuestion(
+                ctx,
+                plannerNormalized?.planMarkdown ?? '',
+                plannerNormalized?.affectedFiles ?? [],
+              );
             } else {
               coderOutput.filesChanged = changes.filesChanged;
             }

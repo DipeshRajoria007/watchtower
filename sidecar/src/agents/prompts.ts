@@ -1,5 +1,6 @@
 import type { AgentContext, AgentRole } from './types.js';
 import { sanitizeForBranch, buildSlackThreadLink } from '../workflows/shared/workflowUtils.js';
+import { getActiveBackendId } from '../codex/runCodex.js';
 
 function serializePreviousSteps(ctx: AgentContext): string {
   if (ctx.previousSteps.length === 0) return 'No previous agent steps.';
@@ -48,7 +49,6 @@ CLARIFICATION (\`clarificationNeeded\`):
 Return strict JSON:
 {
   "plan": string[],                  // ordered steps for execution
-  "risks": string[],                 // identified risks or concerns
   "affectedFiles": string[],         // files likely to be touched
   "scope": "small" | "medium" | "large",
   "requiresCodeChanges": boolean,
@@ -57,9 +57,40 @@ Return strict JSON:
 `.trim();
 }
 
+export function buildPlannerPlanModePrompt(ctx: AgentContext): string {
+  return `
+You are the PLANNER for a multi-agent coding pipeline. You are running in plan mode: explore the repo with read-only tools, then produce a concrete implementation plan via ExitPlanMode.
+
+Workflow: ${ctx.workflowIntent}
+Repository: ${ctx.repoPath}
+Policy: ${policyBlock(ctx)}
+
+Thread context:
+${ctx.threadContext}
+
+${ctx.prContext ? `PR context: ${ctx.prContext.url} (${ctx.prContext.owner}/${ctx.prContext.repo}#${ctx.prContext.number})` : ''}
+
+What to produce in your ExitPlanMode plan (markdown is fine; the downstream coder agent reads it verbatim):
+- A short summary of the user's intent.
+- The concrete files you expect to touch, with brief rationale per file.
+- An ordered list of implementation steps.
+- A scope tag on its own line, exactly one of: \`Scope: small\`, \`Scope: medium\`, or \`Scope: large\`. Treat anything under ~50 lines across 1–2 files as small; multi-file feature work as medium; cross-cutting refactors or new subsystems as large. Coder agent uses this to decide whether to include tests in the PR.
+- Anything the coder MUST avoid (existing patterns, deprecated APIs, owner conventions).
+
+Use the read tools (grep, file reads) to ground every claim — do not guess at file paths or function signatures. If the task is genuinely ambiguous and you cannot safely pick a direction, say so at the top of the plan with a short clarifying question; otherwise commit to a direction.
+`.trim();
+}
+
 export function buildCoderPrompt(ctx: AgentContext): string {
-  const plannerOutput = ctx.previousSteps.find(s => s.role === 'planner');
+  const plannerStep = ctx.previousSteps.find(s => s.role === 'planner');
   const reviewerFeedback = ctx.previousSteps.filter(s => s.role === 'reviewer');
+
+  const plannerOutput = (plannerStep?.output ?? {}) as Record<string, unknown>;
+  const planMarkdown = typeof plannerOutput.planMarkdown === 'string' ? plannerOutput.planMarkdown : '';
+  const scope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : 'medium';
+  const affectedFiles = Array.isArray(plannerOutput.affectedFiles)
+    ? (plannerOutput.affectedFiles as unknown[]).filter((f): f is string => typeof f === 'string')
+    : [];
 
   return `
 You are the CODER agent in a multi-agent pipeline.
@@ -68,9 +99,11 @@ Your role: Implement the plan from the planner agent. Write code, create tests, 
 
 Workflow: ${ctx.workflowIntent}
 Repository: ${ctx.repoPath}
+Plan scope: ${scope}
+${affectedFiles.length > 0 ? `Likely files to touch: ${affectedFiles.map(f => `\`${f}\``).join(', ')}` : ''}
 
-Planner output:
-${plannerOutput ? JSON.stringify(plannerOutput.output, null, 2) : 'No planner output available.'}
+Plan to implement:
+${planMarkdown || 'No plan markdown available.'}
 
 ${reviewerFeedback.length > 0 ? `Reviewer feedback (address these issues):\n${reviewerFeedback.map(r => r.findings.map(f => `- [${f.severity}] ${f.message}${f.suggestion ? ` → ${f.suggestion}` : ''}`).join('\n')).join('\n')}` : ''}
 
@@ -251,5 +284,8 @@ const PROMPT_BUILDERS: Record<AgentRole, (ctx: AgentContext) => string> = {
 };
 
 export function buildPromptForRole(role: AgentRole, ctx: AgentContext): string {
+  if (role === 'planner' && getActiveBackendId() === 'claude-code') {
+    return buildPlannerPlanModePrompt(ctx);
+  }
   return PROMPT_BUILDERS[role](ctx);
 }

@@ -353,7 +353,7 @@ describe('pause / resume lifecycle', () => {
       stage: 'awaiting_approval' as const,
       iteration: 2,
       feedbackRounds: 1,
-      planSteps: ['step a', 'step b'],
+      planMarkdown: '1. step a\n2. step b',
       planAffectedFiles: ['src/foo.ts'],
       planScope: 'medium',
       plannerSessionId: 'sess-abc',
@@ -368,7 +368,7 @@ describe('pause / resume lifecycle', () => {
     expect(loaded).toBeDefined();
     if (loaded?.stage === 'awaiting_approval') {
       expect(loaded.iteration).toBe(2);
-      expect(loaded.planSteps).toEqual(['step a', 'step b']);
+      expect(loaded.planMarkdown).toBe('1. step a\n2. step b');
       expect(loaded.plannerSessionId).toBe('sess-abc');
       expect(loaded.pauseCount).toBe(1);
     } else {
