@@ -388,10 +388,20 @@ export async function runAgent(request: CodexRunRequest, backend: AgentBackend):
         },
       });
     } else {
+      // Capture a bounded preview of the raw final message for post-mortem.
+      // Pre-fix this log carried no payload, making it impossible to tell
+      // whether the model returned prose, markdown, an HTTP error, or a
+      // truncated JSON without re-running. 2 KB is enough to see the shape
+      // without flooding job_logs.
+      const rawPreview = (lastMessage ?? '').slice(0, 2048);
       request.onLog?.({
         stage: 'agent.output.parse_failed',
         message: `${backend.displayName} final output is not valid JSON.`,
         level: 'WARN',
+        data: {
+          rawLength: (lastMessage ?? '').length,
+          rawPreview,
+        },
       });
     }
 
