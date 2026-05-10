@@ -6,6 +6,15 @@ export interface PausedJobSummary {
   workflow: WorkflowIntent;
 }
 
+/**
+ * Why the paused job is sitting there. Set by the caller from job_logs
+ * because jobs.workflow is too coarse — owner-mention work lands in the
+ * column as OWNER_AUTOPILOT even when the classifier later routes it to
+ * PR_REVIEW, so the column alone can't tell us what kind of follow-up to
+ * accept as a resume signal.
+ */
+export type PauseSignal = 'pr_review_awaiting_url' | undefined;
+
 export interface PausedResumeDecision {
   resume: boolean;
   reason: string;
@@ -29,20 +38,21 @@ export interface PausedResumeDecision {
  */
 export function decidePausedResume(params: {
   pausedJob: PausedJobSummary | undefined;
+  pauseSignal: PauseSignal;
   eventText: string;
 }): PausedResumeDecision {
-  const { pausedJob, eventText } = params;
+  const { pausedJob, pauseSignal, eventText } = params;
 
   if (!pausedJob) {
     return { resume: false, reason: 'no_paused_job' };
   }
 
-  if (pausedJob.workflow === 'PR_REVIEW') {
+  if (pauseSignal === 'pr_review_awaiting_url') {
     if (extractPrContext([eventText])) {
       return { resume: true, reason: 'pr_review_url_reply', paused: pausedJob };
     }
     return { resume: false, reason: 'pr_review_no_url_in_reply' };
   }
 
-  return { resume: false, reason: `unhandled_workflow:${pausedJob.workflow}` };
+  return { resume: false, reason: `unhandled_pause_signal:${pauseSignal ?? 'unknown'}` };
 }
