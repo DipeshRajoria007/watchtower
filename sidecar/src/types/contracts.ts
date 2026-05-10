@@ -207,6 +207,11 @@ export interface CodexRunRequest {
   sessionId?: string;
   /** Resume an existing Claude Code session (sends prompt as follow-up). */
   resumeSessionId?: string;
+  /**
+   * Run the backend in plan mode. Only honored by the claude-code backend
+   * (adds `--permission-mode plan`). Codex and Cursor backends ignore this.
+   */
+  planMode?: boolean;
 }
 
 export interface TokenUsage {
@@ -306,7 +311,7 @@ export interface ImplementationApprovalResume {
   stage: 'awaiting_approval';
   iteration: number;
   feedbackRounds: number;
-  planSteps: string[];
+  planMarkdown: string;
   planAffectedFiles: string[];
   planScope: string;
   plannerSessionId?: string;
@@ -323,7 +328,7 @@ export interface ImplementationRevisionChoiceResume {
   stage: 'awaiting_revision_choice';
   iteration: number;
   feedbackRounds: number;
-  planSteps: string[];
+  planMarkdown: string;
   planAffectedFiles: string[];
   planScope: string;
   plannerSessionId?: string;

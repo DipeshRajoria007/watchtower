@@ -98,6 +98,9 @@ export const claudeCodeBackend: AgentBackend = {
       args.push('-p', request.prompt);
     }
     args.push('--output-format', 'json', '--dangerously-skip-permissions');
+    if (request.planMode) {
+      args.push('--permission-mode', 'plan');
+    }
     if (request.sessionId) {
       args.push('--session-id', request.sessionId);
     }

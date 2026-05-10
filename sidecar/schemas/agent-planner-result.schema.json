@@ -1,12 +1,8 @@
 {
   "type": "object",
-  "required": ["plan", "risks", "affectedFiles", "scope", "requiresCodeChanges"],
+  "required": ["plan", "affectedFiles", "scope", "requiresCodeChanges"],
   "properties": {
     "plan": {
-      "type": "array",
-      "items": { "type": "string" }
-    },
-    "risks": {
       "type": "array",
       "items": { "type": "string" }
     },

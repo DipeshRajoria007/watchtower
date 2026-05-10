@@ -18,11 +18,12 @@ import { githubAuthModeHint } from '../github/githubAuth.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { getBackend } from '../backends/registry.js';
 import { runAgentPipeline, formatPlanMessage, waitForApproval, buildApprovalMessage } from '../agents/pipeline.js';
+import { normalizePlannerOutput } from '../agents/normalizePlannerOutput.js';
 import { resolveRepoOrAsk } from './shared/repoResolver.js';
 import { waitForClarificationWithIdle, detectClarificationLoop } from './shared/clarificationGuards.js';
 import type { ClarificationRound } from './shared/clarificationGuards.js';
 import { profileForAgentRole } from '../codex/modelProfiles.js';
-import { buildPlannerPrompt } from '../agents/prompts.js';
+import { buildPlannerPrompt, buildPlannerPlanModePrompt } from '../agents/prompts.js';
 import { resolveWorkspace } from '../workspaces/workspaceManager.js';
 import { createPrFromWorkspace } from '../github/postPipelinePr.js';
 import { fetchUnresolvedReviewThreadCount } from '../github/prReviewComments.js';
@@ -154,7 +155,7 @@ const MAX_FEEDBACK_ITERATIONS = 5;
 const MAX_PAUSE_CYCLES = 10;
 
 type ApprovalLoopState = {
-  planSteps: string[];
+  planMarkdown: string;
   planAffectedFiles: string[];
   planScope: string;
   plannerOutput: Record<string, unknown>;
@@ -214,7 +215,7 @@ async function runApprovalLoop(input: {
   } = input;
 
   const adminUserIds = getAdminUserIds(config);
-  let { planSteps, planAffectedFiles, planScope, plannerOutput, plannerSessionId, planMessageTs } = initial;
+  let { planMarkdown, planAffectedFiles, planScope, plannerOutput, plannerSessionId, planMessageTs } = initial;
   let feedbackRounds = feedbackRoundsStart;
   let pauseCount = pauseCountStart;
 
@@ -226,7 +227,7 @@ async function runApprovalLoop(input: {
     stage: 'awaiting_approval',
     iteration,
     feedbackRounds,
-    planSteps,
+    planMarkdown,
     planAffectedFiles,
     planScope,
     plannerSessionId,
@@ -316,7 +317,7 @@ async function runApprovalLoop(input: {
       return {
         kind: 'approved',
         feedbackRounds,
-        planSteps,
+        planMarkdown,
         planAffectedFiles,
         planScope,
         plannerOutput,
@@ -385,7 +386,7 @@ async function runApprovalLoop(input: {
         return {
           kind: 'approved',
           feedbackRounds,
-          planSteps,
+          planMarkdown,
           planAffectedFiles,
           planScope,
           plannerOutput,
@@ -434,7 +435,6 @@ Revise the plan to incorporate this feedback. Output rules — strict:
 - The JSON must match this exact schema (every key required, no extras):
 {
   "plan": string[],
-  "risks": string[],
   "affectedFiles": string[],
   "scope": "small" | "medium" | "large",
   "requiresCodeChanges": boolean
@@ -485,11 +485,13 @@ Return the JSON now.`;
       }
 
       plannerOutput = revisedResult.parsedJson;
-      planSteps = Array.isArray(plannerOutput.plan) ? plannerOutput.plan.map(String) : planSteps;
-      planAffectedFiles = Array.isArray(plannerOutput.affectedFiles)
-        ? plannerOutput.affectedFiles.map(String)
-        : planAffectedFiles;
-      planScope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : planScope;
+      // Revision prompts always demand structured JSON (regardless of original
+      // backend), so normalize as the codex JSON path here.
+      const revisedNormalized = normalizePlannerOutput(plannerOutput, 'codex');
+      planMarkdown = revisedNormalized.planMarkdown || planMarkdown;
+      planAffectedFiles =
+        revisedNormalized.affectedFiles.length > 0 ? revisedNormalized.affectedFiles : planAffectedFiles;
+      planScope = revisedNormalized.scope || planScope;
 
       // Post the revised plan as a NEW message (instead of only updating the
       // original in place). The "Here's the revised plan" approval prompt
@@ -500,7 +502,7 @@ Return the JSON now.`;
         const revisedPosted = await slack.chat.postMessage({
           channel: task.event.channelId,
           thread_ts: task.event.threadTs,
-          text: formatPlanMessage(planSteps, planAffectedFiles, planScope, undefined, pipelineCwd),
+          text: formatPlanMessage(planMarkdown, planAffectedFiles, planScope, pipelineCwd),
         });
         planMessageTs = revisedPosted.ts ?? planMessageTs;
       } catch {
@@ -649,7 +651,8 @@ export async function runImplementationWorkflow(params: {
         })
       : getActiveBackendId();
     const plannerProfile = profileForAgentRole('planner', plannerBackend);
-    let plannerPrompt = buildPlannerPrompt(plannerCtx);
+    const plannerPlanMode = plannerBackend === 'claude-code';
+    let plannerPrompt = plannerPlanMode ? buildPlannerPlanModePrompt(plannerCtx) : buildPlannerPrompt(plannerCtx);
     if (store?.dossierStore && store.recentSignalsForUser && task.event.userId) {
       try {
         const recall = await assembleRecall({
@@ -682,8 +685,9 @@ export async function runImplementationWorkflow(params: {
     let plannerRunResult = await runCodex({
       cwd: ctx.cwd,
       prompt: plannerPrompt,
-      outputSchemaPath: plannerSchemaPath,
+      outputSchemaPath: plannerPlanMode ? undefined : plannerSchemaPath,
       githubToken: ctx.githubToken,
+      planMode: plannerPlanMode,
       ...plannerProfile,
       timeoutMs: Math.floor(workflowTimeoutMs * 0.15),
       onLog: logStep,
@@ -691,6 +695,22 @@ export async function runImplementationWorkflow(params: {
 
     let plannerSessionId = plannerRunResult.sessionId;
     let plannerOutput: Record<string, unknown> = plannerRunResult.parsedJson ?? {};
+
+    if (plannerPlanMode) {
+      // Plan mode produces free-form markdown via ExitPlanMode. Pre-normalize so the
+      // clarificationNeeded / requiresCodeChanges gates below see consistent defaults
+      // (requiresCodeChanges=true, clarificationNeeded=null) and downstream consumers
+      // can read planMarkdown/scope/affectedFiles directly from plannerOutput.
+      const normalized = normalizePlannerOutput(plannerOutput, plannerBackend);
+      plannerOutput = {
+        ...plannerOutput,
+        planMarkdown: normalized.planMarkdown,
+        scope: normalized.scope,
+        affectedFiles: normalized.affectedFiles,
+        requiresCodeChanges: normalized.requiresCodeChanges,
+        clarificationNeeded: normalized.clarificationNeeded,
+      };
+    }
 
     // Planner-clarification loop: unbounded — keeps asking until the planner
     // produces a concrete plan (no clarificationNeeded), the user goes silent
@@ -968,10 +988,22 @@ Write your response as a ready-to-post Slack message describing what you did.
       };
     }
 
-    // Full pipeline path: code changes are needed
-    let planSteps = Array.isArray(plannerOutput.plan) ? plannerOutput.plan.map(String) : [];
-    let planAffectedFiles = Array.isArray(plannerOutput.affectedFiles) ? plannerOutput.affectedFiles.map(String) : [];
-    let planScope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : 'unknown';
+    // Full pipeline path: code changes are needed. Normalize the planner
+    // output once so the downstream coder, Slack rendering, and resume contexts
+    // all see a consistent shape regardless of which backend produced the plan.
+    const plannerNormalized = normalizePlannerOutput(plannerOutput, plannerBackend);
+    // Surface the normalized fields on plannerOutput so the coder prompt (built
+    // later by buildCoderPrompt) and any other plannerOutput consumers read a
+    // consistent shape.
+    plannerOutput.planMarkdown = plannerNormalized.planMarkdown;
+    plannerOutput.scope = plannerNormalized.scope;
+    plannerOutput.affectedFiles = plannerNormalized.affectedFiles;
+    plannerOutput.requiresCodeChanges = plannerNormalized.requiresCodeChanges;
+    plannerOutput.clarificationNeeded = plannerNormalized.clarificationNeeded;
+
+    let planMarkdown = plannerNormalized.planMarkdown;
+    let planAffectedFiles = plannerNormalized.affectedFiles;
+    let planScope: string = plannerNormalized.scope;
 
     // Resolve workspace for the coder agent. Single entry point:
     // resolveRepoOrAsk cascades through file hints → text mentions → extension
@@ -1048,12 +1080,12 @@ Write your response as a ready-to-post Slack message describing what you did.
     // Post initial plan
     let planMessageTs: string | undefined;
     let planPostError: unknown;
-    if (planSteps.length > 0) {
+    if (planMarkdown.length > 0) {
       try {
         const planResult = await slack.chat.postMessage({
           channel: task.event.channelId,
           thread_ts: task.event.threadTs,
-          text: formatPlanMessage(planSteps, planAffectedFiles, planScope, undefined, pipelineCwd),
+          text: formatPlanMessage(planMarkdown, planAffectedFiles, planScope, pipelineCwd),
         });
         planMessageTs = planResult.ts ?? undefined;
       } catch (error) {
@@ -1063,20 +1095,20 @@ Write your response as a ready-to-post Slack message describing what you did.
 
     // Fail closed: admin approval is mandatory for fresh implementation runs,
     // and the only thread the admin can react to is the plan message. If the
-    // planner produced no steps, or the plan post failed, we have no
+    // planner produced no plan content, or the plan post failed, we have no
     // reviewable artifact and no approval prompt \u2014 proceeding would let the
     // coder/reviewer/verifier write code unsupervised.
     if (!planMessageTs) {
       const reason =
-        planSteps.length === 0
-          ? 'Planner returned no plan steps \u2014 cannot proceed without a reviewable plan.'
+        planMarkdown.length === 0
+          ? 'Planner returned no plan content \u2014 cannot proceed without a reviewable plan.'
           : 'Failed to post the plan to Slack \u2014 cannot proceed without an admin approval prompt.';
       logStep?.({
         stage: 'implementation.approval.unreachable',
         message: reason,
         level: 'ERROR',
         data: {
-          planStepCount: planSteps.length,
+          planMarkdownLength: planMarkdown.length,
           planPostError: planPostError ? String(planPostError) : undefined,
         },
       });
@@ -1107,7 +1139,7 @@ Write your response as a ready-to-post Slack message describing what you did.
       config,
       task,
       initial: {
-        planSteps,
+        planMarkdown,
         planAffectedFiles,
         planScope,
         plannerOutput,
@@ -1162,7 +1194,7 @@ Write your response as a ready-to-post Slack message describing what you did.
       };
     }
     // loopOutcome.kind === 'approved' \u2014 refresh outer state with possibly-revised plan and continue.
-    planSteps = loopOutcome.planSteps;
+    planMarkdown = loopOutcome.planMarkdown;
     planAffectedFiles = loopOutcome.planAffectedFiles;
     planScope = loopOutcome.planScope;
     plannerOutput = loopOutcome.plannerOutput;
@@ -1179,7 +1211,7 @@ Write your response as a ready-to-post Slack message describing what you did.
       durationMs: plannerRunResult.durationMs,
     };
 
-    const introMsg = buildApprovalMessage(feedbackRounds, planSteps.length);
+    const introMsg = buildApprovalMessage(feedbackRounds);
 
     // Run the execution pipeline (coder -> reviewer -> verifier)
     const fullPipelineConfig: PipelineConfig = {
