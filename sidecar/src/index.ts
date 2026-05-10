@@ -75,6 +75,16 @@ const INCIDENT_CADENCE_MINUTES = 30;
 
 const nonActionableSubtypes = new Set(['message_changed', 'message_deleted', 'bot_message']);
 
+/**
+ * In-memory in-flight claim keyed by `${channelId}:${eventTs}` (i.e. the
+ * underlying Slack message identity, not the eventId — live socket and
+ * catch-up replay use different eventIds for the same message). Prevents
+ * the live + catch-up race where both copies clear the pre-await dedup
+ * gates and create two jobs for one user mention. Cleared in the finally
+ * block of processEvent.
+ */
+const inFlightProcessClaims = new Set<string>();
+
 function dedupeKey(event: SlackEventEnvelope, intent: string): string {
   return `${event.channelId}:${event.threadTs}:${event.eventTs}:${intent}`;
 }
@@ -525,6 +535,28 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
     return;
   }
 
+  // Claim this Slack message synchronously before any await: live socket
+  // delivery and catch-up replay arrive with different eventIds but the same
+  // (channelId, eventTs), and the durable dedup gates below all run after
+  // async work, so without an in-process claim both copies can race past
+  // them and create two jobs for one user action.
+  const claimKey = `${event.channelId}:${event.eventTs}`;
+  if (inFlightProcessClaims.has(claimKey)) {
+    logger.info(
+      { eventId: event.eventId, channelId: event.channelId, eventTs: event.eventTs },
+      'in-flight duplicate skipped (live socket / catch-up overlap)',
+    );
+    return;
+  }
+  inFlightProcessClaims.add(claimKey);
+  try {
+    await processEventClaimed(event, client);
+  } finally {
+    inFlightProcessClaims.delete(claimKey);
+  }
+}
+
+async function processEventClaimed(event: SlackEventEnvelope, client: WebClient): Promise<void> {
   if (store.hasJobForEventTs(event.channelId, event.eventTs)) {
     store.recordEvent(event.eventId, event.channelId, event.threadTs);
     logger.info(
