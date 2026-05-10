@@ -18,6 +18,7 @@ import { assertMacOS } from './platform.js';
 import { evaluatePolicy, loadPolicies } from './policies/evaluator.js';
 import { agentCallContext } from './state/runContext.js';
 import { normalizeTask } from './router/intentParser.js';
+import { decidePausedResume } from './router/pausedResume.js';
 import { classifyProduct } from './router/productClassifier.js';
 import { routeTask } from './router/taskRouter.js';
 import { startMentionCatchup } from './slack/mentionCatchup.js';
@@ -551,6 +552,17 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
     return;
   }
 
+  // Paused-job follow-up: if a workflow paused asking the user to reply in
+  // this thread (e.g. PR_REVIEW asking for a missing PR URL), the reply
+  // arrives without an @miniOG mention and would otherwise be dropped by the
+  // no-mention gate below. Decide here whether this event resumes a paused
+  // job, so we can synthesize the mention after normalization.
+  const pausedJob = store.pausedJobForThread(event.channelId, event.threadTs);
+  const resumeDecision = decidePausedResume({
+    pausedJob: pausedJob ? { id: pausedJob.id, workflow: pausedJob.workflow } : undefined,
+    eventText: event.text ?? '',
+  });
+
   const eventClient = buildEventAwareClient(client, event);
 
   // Add :eyes: reaction to signal processing has started
@@ -560,7 +572,30 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
   const threadMessages = await fetchThreadContext(eventClient, event.channelId, event.threadTs).catch(() => []);
   const threadTexts = threadMessages.map(message => message.text);
   logger.info({ eventId: event.eventId, messages: threadMessages.length }, 'thread context fetched for intake');
-  const task = normalizeTask(event, config, threadTexts);
+  let task = normalizeTask(event, config, threadTexts);
+
+  // If this event resumes a paused workflow that asked the user to reply
+  // in-thread, synthesize the bot mention so the no-mention gate below does
+  // not drop the reply, and mark the old paused job as superseded.
+  if (resumeDecision.resume && resumeDecision.paused) {
+    task = { ...task, mentionDetected: true, mentionType: 'bot' };
+    store.markJob(resumeDecision.paused.id, 'SKIPPED', {
+      result: {
+        reason: 'resumed_by_followup',
+        followupEventId: event.eventId,
+        resumeReason: resumeDecision.reason,
+      },
+    });
+    logger.info(
+      {
+        eventId: event.eventId,
+        pausedJobId: resumeDecision.paused.id,
+        pausedWorkflow: resumeDecision.paused.workflow,
+        reason: resumeDecision.reason,
+      },
+      'paused-job follow-up: synthesized mention to resume in-thread',
+    );
+  }
 
   logger.info(
     {
