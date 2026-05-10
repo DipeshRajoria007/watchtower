@@ -412,3 +412,91 @@ describe('pause / resume lifecycle', () => {
     store.close();
   });
 });
+
+describe('isPausedAwaitingPrUrl', () => {
+  function jobWith(store: JobStore, id: string, workflow: 'PR_REVIEW' | 'OWNER_AUTOPILOT' | 'IMPLEMENTATION'): void {
+    store.createJob({
+      id,
+      eventId: `event-${id}`,
+      dedupeKey: `dk-${id}`,
+      workflow,
+      channelId: 'C1',
+      threadTs: 'T1',
+      payload: {},
+    });
+  }
+
+  it('returns false for a job that has no logs at all', () => {
+    const store = new JobStore(tempDbPath());
+    jobWith(store, 'job-empty', 'PR_REVIEW');
+    expect(store.isPausedAwaitingPrUrl('job-empty')).toBe(false);
+    store.close();
+  });
+
+  it('returns true for a PR_REVIEW job that logged pr_review.context.missing', () => {
+    const store = new JobStore(tempDbPath());
+    jobWith(store, 'job-prr', 'PR_REVIEW');
+    store.appendJobLog({
+      jobId: 'job-prr',
+      stage: 'pr_review.context.missing',
+      message: 'PR context missing; asking for URL in thread and pausing.',
+      level: 'WARN',
+    });
+    expect(store.isPausedAwaitingPrUrl('job-prr')).toBe(true);
+    store.close();
+  });
+
+  it('returns true for an OWNER_AUTOPILOT-recorded job that paused as PR_REVIEW (the regression case from #207 follow-up)', () => {
+    // Owner mentions land in jobs.workflow=OWNER_AUTOPILOT even when the
+    // classifier later routed them to PR_REVIEW; pr_review.context.missing
+    // still gets logged on the same job_id, so the helper must match on
+    // the log entry rather than the workflow column.
+    const store = new JobStore(tempDbPath());
+    jobWith(store, 'job-owner', 'OWNER_AUTOPILOT');
+    store.appendJobLog({
+      jobId: 'job-owner',
+      stage: 'router.classify.override',
+      message: 'AI classifier resolved intent: OWNER_AUTOPILOT → PR_REVIEW.',
+    });
+    store.appendJobLog({
+      jobId: 'job-owner',
+      stage: 'pr_review.context.missing',
+      message: 'PR context missing; asking for URL in thread and pausing.',
+      level: 'WARN',
+    });
+    store.appendJobLog({
+      jobId: 'job-owner',
+      stage: 'job.attempt.result',
+      message: 'Workflow attempt returned a result.',
+    });
+    expect(store.isPausedAwaitingPrUrl('job-owner')).toBe(true);
+    store.close();
+  });
+
+  it('returns false for a job that paused for a different reason (e.g. implementation approval)', () => {
+    const store = new JobStore(tempDbPath());
+    jobWith(store, 'job-impl', 'IMPLEMENTATION');
+    store.appendJobLog({
+      jobId: 'job-impl',
+      stage: 'implementation.approval.waiting',
+      message: 'Awaiting plan approval.',
+    });
+    expect(store.isPausedAwaitingPrUrl('job-impl')).toBe(false);
+    store.close();
+  });
+
+  it('does not leak state across jobs (per-job isolation)', () => {
+    const store = new JobStore(tempDbPath());
+    jobWith(store, 'job-a', 'PR_REVIEW');
+    jobWith(store, 'job-b', 'PR_REVIEW');
+    store.appendJobLog({
+      jobId: 'job-a',
+      stage: 'pr_review.context.missing',
+      message: 'paused',
+      level: 'WARN',
+    });
+    expect(store.isPausedAwaitingPrUrl('job-a')).toBe(true);
+    expect(store.isPausedAwaitingPrUrl('job-b')).toBe(false);
+    store.close();
+  });
+});
