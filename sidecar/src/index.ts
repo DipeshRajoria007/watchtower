@@ -557,9 +557,15 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
   // arrives without an @miniOG mention and would otherwise be dropped by the
   // no-mention gate below. Decide here whether this event resumes a paused
   // job, so we can synthesize the mention after normalization.
+  //
+  // We can't trust jobs.workflow as the resume gate: owner mentions land in
+  // that column as OWNER_AUTOPILOT even when the classifier later routed
+  // them to PR_REVIEW. Read the actual pause cause from job_logs instead.
   const pausedJob = store.pausedJobForThread(event.channelId, event.threadTs);
+  const pauseSignal = pausedJob && store.isPausedAwaitingPrUrl(pausedJob.id) ? 'pr_review_awaiting_url' : undefined;
   const resumeDecision = decidePausedResume({
     pausedJob: pausedJob ? { id: pausedJob.id, workflow: pausedJob.workflow } : undefined,
+    pauseSignal,
     eventText: event.text ?? '',
   });
 
