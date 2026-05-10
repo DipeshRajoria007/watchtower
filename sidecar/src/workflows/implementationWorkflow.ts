@@ -1281,13 +1281,39 @@ Write your response as a ready-to-post Slack message describing what you did.
       };
     }
 
+    if (fullResult.finalStatus !== 'passed') {
+      // Refuse to publish a PR or report SUCCESS when the pipeline did not
+      // pass. createPrFromWorkspace is willing to push & open a PR off any
+      // dirty / ahead-of-base workspace, so without this gate a failed or
+      // aborted run could leak commits into a PR and then be marked SUCCESS
+      // purely because prUrl is truthy.
+      logStep?.({
+        stage: 'implementation.pipeline.failed',
+        message: `Pipeline finished with status ${fullResult.finalStatus} — refusing to open a PR.`,
+        level: 'WARN',
+        data: { finalStatus: fullResult.finalStatus },
+      });
+
+      const failureSummary = `Pipeline finished with status: ${fullResult.finalStatus}. Not opening a PR.`;
+      await slack.chat.postMessage({
+        channel: task.event.channelId,
+        thread_ts: task.event.threadTs,
+        text: failureSummary,
+      });
+
+      return {
+        workflow: 'IMPLEMENTATION',
+        status: 'FAILED',
+        message: failureSummary,
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+
     const coderStep = fullResult.steps.find(s => s.role === 'coder');
     const rawCoderSummary = coderStep?.output?.summary ? sanitizeOwnerSummary(String(coderStep.output.summary)) : '';
     const summary =
-      rawCoderSummary ||
-      (fullResult.finalStatus === 'passed'
-        ? 'Pipeline completed but the agent did not return a summary. Check the repo for changes.'
-        : `Pipeline finished with status: ${fullResult.finalStatus}. The agent did not produce output — it may not be installed or may have timed out.`);
+      rawCoderSummary || 'Pipeline completed but the agent did not return a summary. Check the repo for changes.';
 
     let prUrl = coderStep?.output?.prUrl ? String(coderStep.output.prUrl) : '';
 
@@ -1321,11 +1347,9 @@ Write your response as a ready-to-post Slack message describing what you did.
       text: `${summary}${prBlock}`.trim(),
     });
 
-    const workflowStatus = fullResult.finalStatus === 'passed' || Boolean(prUrl) ? 'SUCCESS' : 'FAILED';
-
     return {
       workflow: 'IMPLEMENTATION',
-      status: workflowStatus,
+      status: 'SUCCESS',
       message: summary,
       notifyDesktop: false,
       slackPosted: true,
