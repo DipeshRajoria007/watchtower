@@ -1025,6 +1025,7 @@ Write your response as a ready-to-post Slack message describing what you did.
 
     // Post initial plan
     let planMessageTs: string | undefined;
+    let planPostError: unknown;
     if (planSteps.length > 0) {
       try {
         const planResult = await slack.chat.postMessage({
@@ -1033,9 +1034,44 @@ Write your response as a ready-to-post Slack message describing what you did.
           text: formatPlanMessage(planSteps, planAffectedFiles, planScope, undefined, pipelineCwd),
         });
         planMessageTs = planResult.ts ?? undefined;
-      } catch {
-        // Non-fatal
+      } catch (error) {
+        planPostError = error;
       }
+    }
+
+    // Fail closed: admin approval is mandatory for fresh implementation runs,
+    // and the only thread the admin can react to is the plan message. If the
+    // planner produced no steps, or the plan post failed, we have no
+    // reviewable artifact and no approval prompt \u2014 proceeding would let the
+    // coder/reviewer/verifier write code unsupervised.
+    if (!planMessageTs) {
+      const reason =
+        planSteps.length === 0
+          ? 'Planner returned no plan steps \u2014 cannot proceed without a reviewable plan.'
+          : 'Failed to post the plan to Slack \u2014 cannot proceed without an admin approval prompt.';
+      logStep?.({
+        stage: 'implementation.approval.unreachable',
+        message: reason,
+        level: 'ERROR',
+        data: {
+          planStepCount: planSteps.length,
+          planPostError: planPostError ? String(planPostError) : undefined,
+        },
+      });
+      await slack.chat
+        .postMessage({
+          channel: task.event.channelId,
+          thread_ts: task.event.threadTs,
+          text: `Couldn't reach an admin approval gate \u2014 ${reason} Cancelling.`,
+        })
+        .catch(() => {});
+      return {
+        workflow: 'IMPLEMENTATION',
+        status: 'FAILED',
+        message: reason,
+        notifyDesktop: false,
+        slackPosted: true,
+      };
     }
 
     // Iterative approval loop (handles fresh runs and resumed-from-pause).
@@ -1044,75 +1080,73 @@ Write your response as a ready-to-post Slack message describing what you did.
     // NEW Slack message on each feedback round (instead of only chat.update'ing
     // the original) so "Here's the revised plan" is honest.
     let feedbackRounds = 0;
-    if (planMessageTs) {
-      const loopOutcome = await runApprovalLoop({
-        slack,
-        config,
-        task,
-        initial: {
-          planSteps,
-          planAffectedFiles,
-          planScope,
-          plannerOutput,
-          plannerSessionId,
-          planMessageTs,
-        },
-        pipelineCwd,
-        iterationStart: 0,
-        feedbackRoundsStart: 0,
-        pauseCountStart: 0,
-        plannerSchemaPath,
-        plannerProfile,
-        workflowTimeoutMs,
-        githubToken: ctx.githubToken,
-        workflowIntent: task.intent === 'OWNER_AUTOPILOT' ? 'OWNER_AUTOPILOT' : 'IMPLEMENTATION',
-        logStep,
-      });
+    const loopOutcome = await runApprovalLoop({
+      slack,
+      config,
+      task,
+      initial: {
+        planSteps,
+        planAffectedFiles,
+        planScope,
+        plannerOutput,
+        plannerSessionId,
+        planMessageTs,
+      },
+      pipelineCwd,
+      iterationStart: 0,
+      feedbackRoundsStart: 0,
+      pauseCountStart: 0,
+      plannerSchemaPath,
+      plannerProfile,
+      workflowTimeoutMs,
+      githubToken: ctx.githubToken,
+      workflowIntent: task.intent === 'OWNER_AUTOPILOT' ? 'OWNER_AUTOPILOT' : 'IMPLEMENTATION',
+      logStep,
+    });
 
-      if (loopOutcome.kind === 'paused') {
-        return {
-          workflow: loopOutcome.resumeContext.workflow,
-          status: 'PAUSED',
-          message: 'Paused \u2014 awaiting next mention to resume.',
-          notifyDesktop: false,
-          slackPosted: true,
-          resumeContext: loopOutcome.resumeContext,
-        };
-      }
-      if (loopOutcome.kind === 'rejected_then_cancelled') {
-        return {
-          workflow: 'IMPLEMENTATION',
-          status: 'SKIPPED',
-          message: loopOutcome.message,
-          notifyDesktop: false,
-          slackPosted: true,
-        };
-      }
-      if (loopOutcome.kind === 'exhausted') {
-        await slack.chat
-          .postMessage({
-            channel: task.event.channelId,
-            thread_ts: task.event.threadTs,
-            text: `Reached the revision limit (${MAX_FEEDBACK_ITERATIONS}). Cancelling \u2014 feel free to start a new request.`,
-          })
-          .catch(() => {});
-        return {
-          workflow: 'IMPLEMENTATION',
-          status: 'SKIPPED',
-          message: 'Exceeded maximum feedback iterations.',
-          notifyDesktop: false,
-          slackPosted: true,
-        };
-      }
-      // loopOutcome.kind === 'approved' \u2014 refresh outer state with possibly-revised plan and continue.
-      planSteps = loopOutcome.planSteps;
-      planAffectedFiles = loopOutcome.planAffectedFiles;
-      planScope = loopOutcome.planScope;
-      plannerOutput = loopOutcome.plannerOutput;
-      plannerSessionId = loopOutcome.plannerSessionId;
-      planMessageTs = loopOutcome.planMessageTs;
-      feedbackRounds = loopOutcome.feedbackRounds;
+    if (loopOutcome.kind === 'paused') {
+      return {
+        workflow: loopOutcome.resumeContext.workflow,
+        status: 'PAUSED',
+        message: 'Paused \u2014 awaiting next mention to resume.',
+        notifyDesktop: false,
+        slackPosted: true,
+        resumeContext: loopOutcome.resumeContext,
+      };
     }
+    if (loopOutcome.kind === 'rejected_then_cancelled') {
+      return {
+        workflow: 'IMPLEMENTATION',
+        status: 'SKIPPED',
+        message: loopOutcome.message,
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+    if (loopOutcome.kind === 'exhausted') {
+      await slack.chat
+        .postMessage({
+          channel: task.event.channelId,
+          thread_ts: task.event.threadTs,
+          text: `Reached the revision limit (${MAX_FEEDBACK_ITERATIONS}). Cancelling \u2014 feel free to start a new request.`,
+        })
+        .catch(() => {});
+      return {
+        workflow: 'IMPLEMENTATION',
+        status: 'SKIPPED',
+        message: 'Exceeded maximum feedback iterations.',
+        notifyDesktop: false,
+        slackPosted: true,
+      };
+    }
+    // loopOutcome.kind === 'approved' \u2014 refresh outer state with possibly-revised plan and continue.
+    planSteps = loopOutcome.planSteps;
+    planAffectedFiles = loopOutcome.planAffectedFiles;
+    planScope = loopOutcome.planScope;
+    plannerOutput = loopOutcome.plannerOutput;
+    plannerSessionId = loopOutcome.plannerSessionId;
+    planMessageTs = loopOutcome.planMessageTs;
+    feedbackRounds = loopOutcome.feedbackRounds;
 
     // Build the plannerStep for downstream consumption
     const plannerStep: AgentStepResult = {
