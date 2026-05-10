@@ -592,12 +592,20 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
         resumeReason: resumeDecision.reason,
       },
     });
+    // Clear the :zzz: reaction from the original mention now that the job
+    // is no longer parked. The new event will get its own :eyes: → outcome
+    // reactions via the normal flow.
+    const anchor = store.eventAnchorFor(resumeDecision.paused.id);
+    if (anchor) {
+      await removeReaction(client, anchor.channelId, anchor.eventTs, 'zzz');
+    }
     logger.info(
       {
         eventId: event.eventId,
         pausedJobId: resumeDecision.paused.id,
         pausedWorkflow: resumeDecision.paused.workflow,
         reason: resumeDecision.reason,
+        clearedZzzAt: anchor ? `${anchor.channelId}:${anchor.eventTs}` : null,
       },
       'paused-job follow-up: synthesized mention to resume in-thread',
     );

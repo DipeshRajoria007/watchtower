@@ -413,6 +413,47 @@ describe('pause / resume lifecycle', () => {
   });
 });
 
+describe('eventAnchorFor', () => {
+  it('returns undefined when the job does not exist', () => {
+    const store = new JobStore(tempDbPath());
+    expect(store.eventAnchorFor('no-such-job')).toBeUndefined();
+    store.close();
+  });
+
+  it('returns channelId + eventTs from the job row + payload', () => {
+    const store = new JobStore(tempDbPath());
+    store.createJob({
+      id: 'job-anchor',
+      eventId: 'Ev123',
+      dedupeKey: 'dk-anchor',
+      workflow: 'PR_REVIEW',
+      channelId: 'C0AHGMH2F1V',
+      threadTs: '1778405776.426159',
+      payload: { eventTs: '1778405776.426159', text: '<@bot> review' },
+    });
+    expect(store.eventAnchorFor('job-anchor')).toEqual({
+      channelId: 'C0AHGMH2F1V',
+      eventTs: '1778405776.426159',
+    });
+    store.close();
+  });
+
+  it('returns undefined when the payload is missing eventTs', () => {
+    const store = new JobStore(tempDbPath());
+    store.createJob({
+      id: 'job-no-evt',
+      eventId: 'Ev999',
+      dedupeKey: 'dk-no-evt',
+      workflow: 'PR_REVIEW',
+      channelId: 'C0AHGMH2F1V',
+      threadTs: '1778405776.426159',
+      payload: { text: 'no eventTs in payload' },
+    });
+    expect(store.eventAnchorFor('job-no-evt')).toBeUndefined();
+    store.close();
+  });
+});
+
 describe('isPausedAwaitingPrUrl', () => {
   function jobWith(store: JobStore, id: string, workflow: 'PR_REVIEW' | 'OWNER_AUTOPILOT' | 'IMPLEMENTATION'): void {
     store.createJob({
