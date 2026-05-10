@@ -30,7 +30,12 @@ export async function resolveUserGroupMembers(slack: WebClient, handle: string):
 
     return members;
   } catch (error) {
+    // Re-throw on Slack API failure so the caller can decide whether to
+    // overwrite the access-group cache. Returning [] here previously caused
+    // setResolvedGroupMembers() to wipe the live allowlist on transient
+    // outages, locking out legitimate group-only users until the next
+    // successful refresh.
     logger.error({ handle: normalizedHandle, error: String(error) }, 'failed to resolve Slack user group');
-    return [];
+    throw error;
   }
 }
