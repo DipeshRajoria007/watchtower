@@ -1059,6 +1059,28 @@ export class JobStore {
   }
 
   /**
+   * Returns the channel + message-ts of the Slack event that originated this
+   * job, so callers can manipulate reactions on the original mention later
+   * (e.g. clear the :zzz: reaction when a paused job is resumed). The
+   * channel lives on the row directly; the event-ts is stashed in
+   * payload_json by processEvent at job-create time.
+   */
+  eventAnchorFor(jobId: string): { channelId: string; eventTs: string } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT channel_id, json_extract(payload_json, '$.eventTs') AS event_ts
+         FROM jobs
+         WHERE id = ?
+         LIMIT 1`,
+      )
+      .get(jobId) as { channel_id?: string; event_ts?: string } | undefined;
+    if (!row?.channel_id || !row?.event_ts) {
+      return undefined;
+    }
+    return { channelId: row.channel_id, eventTs: row.event_ts };
+  }
+
+  /**
    * Returns true when the given job has logged the PR_REVIEW "asking for URL
    * in thread and pausing" stage — i.e. the workflow paused specifically to
    * wait for a follow-up reply containing a PR URL. Used to gate paused-job
