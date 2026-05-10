@@ -247,6 +247,12 @@ async function hasBotResponseAfterMention(
     }
     return false;
   } catch (error) {
+    // Don't collapse a transient conversations.replies failure into "yes
+    // already responded" — that previously caused catch-up to record the
+    // replay marker and silently drop the mention forever. Returning false
+    // here lets catch-up enqueue the replayed mention; processEvent's
+    // hasJobForEventTs dedup gate will still suppress an actual double-run
+    // if the bot did in fact reply.
     logger.warn(
       {
         component: 'slack-catchup',
@@ -254,9 +260,9 @@ async function hasBotResponseAfterMention(
         threadTs,
         error: String(error),
       },
-      'failed to inspect thread replies while checking missed mention response status',
+      'failed to inspect thread replies while checking missed mention response status; treating as not-yet-responded so catch-up retries',
     );
-    return true;
+    return false;
   }
 }
 
