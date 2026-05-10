@@ -107,7 +107,11 @@ export class SocketSlackClient {
 
     this.app.command('/wt', async ({ command, ack, client }) => {
       await ack();
-      const normalized = this.normalizeCommandEnvelope(command as unknown as Record<string, unknown>);
+      // Preserve the `wt` namespace so devAssistParser.stripPrefix() (which
+      // requires it) still routes prefix-dependent operator commands like
+      // help / runs / trace / diagnose / cancel / policy to DEV_ASSIST.
+      // Without this, those commands fell through to OWNER_AUTOPILOT.
+      const normalized = this.normalizeCommandEnvelope(command as unknown as Record<string, unknown>, 'wt');
       logger.info(
         {
           component: 'slack',
@@ -124,7 +128,7 @@ export class SocketSlackClient {
 
     this.app.command('/watchtower', async ({ command, ack, client }) => {
       await ack();
-      const normalized = this.normalizeCommandEnvelope(command as unknown as Record<string, unknown>);
+      const normalized = this.normalizeCommandEnvelope(command as unknown as Record<string, unknown>, 'wt');
       logger.info(
         {
           component: 'slack',
@@ -190,7 +194,7 @@ export class SocketSlackClient {
     };
   }
 
-  private normalizeCommandEnvelope(command: Record<string, unknown>): SlackEventEnvelope {
+  private normalizeCommandEnvelope(command: Record<string, unknown>, namespace?: string): SlackEventEnvelope {
     const channelId = String(command.channel_id ?? '');
     const channelType = inferChannelTypeFromChannelId(channelId);
     const eventTs = String(command.command_ts ?? `${Date.now() / 1000}`);
@@ -200,6 +204,7 @@ export class SocketSlackClient {
     const eventId = `command:${channelId}:${threadTs}:${eventTs}`;
     const responseUrl = String(command.response_url ?? '');
 
+    const namespacePart = namespace ? `${namespace} ` : '';
     return {
       eventId,
       channelId,
@@ -208,7 +213,7 @@ export class SocketSlackClient {
       threadTs,
       eventTs,
       userId,
-      text: `<@${this.config.botUserId}> ${rawText}`.trim(),
+      text: `<@${this.config.botUserId}> ${namespacePart}${rawText}`.trim(),
       rawEvent: command,
     };
   }
