@@ -237,11 +237,21 @@ async function runApprovalLoop(input: {
     pauseCount,
   });
 
+  // When a re-plan attempt fails to parse, we post a recovery message that
+  // doubles as the next approval prompt and let the loop wait on its ts —
+  // that way the next iteration doesn't post a misleading "Here's the revised
+  // plan" prompt above an unchanged plan.
+  let overrideNextPromptTs: string | undefined;
+
   for (let iteration = iterationStart; iteration < MAX_FEEDBACK_ITERATIONS; iteration++) {
     let approvalPromptTs: string | undefined;
     if (iteration === iterationStart && resumeApprovalPromptTs) {
       // Resuming: the prompt is already posted; the resume mention is the next reply we want to classify.
       approvalPromptTs = resumeApprovalPromptTs;
+    } else if (overrideNextPromptTs) {
+      // Previous re-plan failed; the recovery message we already posted IS this iteration's prompt.
+      approvalPromptTs = overrideNextPromptTs;
+      overrideNextPromptTs = undefined;
     } else {
       const promptText =
         iteration === 0
@@ -421,14 +431,39 @@ async function runApprovalLoop(input: {
 
       plannerSessionId = revisedResult.sessionId ?? plannerSessionId;
 
-      if (revisedResult.ok && revisedResult.parsedJson) {
-        plannerOutput = revisedResult.parsedJson;
-        planSteps = Array.isArray(plannerOutput.plan) ? plannerOutput.plan.map(String) : planSteps;
-        planAffectedFiles = Array.isArray(plannerOutput.affectedFiles)
-          ? plannerOutput.affectedFiles.map(String)
-          : planAffectedFiles;
-        planScope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : planScope;
+      if (!(revisedResult.ok && revisedResult.parsedJson)) {
+        // Re-plan failed (model output wasn't valid JSON, or runCodex errored).
+        // Pre-fix, the workflow silently fell through to "post the revised plan
+        // as a new message" using the unchanged old plan — making "Here's the
+        // revised plan" a lie. Tell the user instead and let them rephrase.
+        logStep?.({
+          stage: 'implementation.approval.revising.failed',
+          message: 'Revised plan generation produced non-JSON output; surfacing recovery prompt to the user.',
+          level: 'WARN',
+          data: { feedbackRounds, ok: revisedResult.ok, hasParsedJson: Boolean(revisedResult.parsedJson) },
+        });
+        try {
+          const recoveryPosted = await slack.chat.postMessage({
+            channel: task.event.channelId,
+            thread_ts: task.event.threadTs,
+            text: 'I had trouble revising the plan from that feedback — the planner returned non-JSON output. Reply with rephrased feedback, `yes` to proceed with the original plan, or `no` to cancel.',
+          });
+          overrideNextPromptTs = recoveryPosted.ts ?? undefined;
+        } catch {
+          // Non-fatal; if posting failed we'll fall back to the default "Here's
+          // the revised plan" prompt next iteration (suboptimal but not stuck).
+        }
+        // Don't post a fake-revised plan; loop back. feedbackRounds was already
+        // incremented above — counts as a used revision attempt to bound the cap.
+        continue;
       }
+
+      plannerOutput = revisedResult.parsedJson;
+      planSteps = Array.isArray(plannerOutput.plan) ? plannerOutput.plan.map(String) : planSteps;
+      planAffectedFiles = Array.isArray(plannerOutput.affectedFiles)
+        ? plannerOutput.affectedFiles.map(String)
+        : planAffectedFiles;
+      planScope = typeof plannerOutput.scope === 'string' ? plannerOutput.scope : planScope;
 
       // Post the revised plan as a NEW message (instead of only updating the
       // original in place). The "Here's the revised plan" approval prompt
