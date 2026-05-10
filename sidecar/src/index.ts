@@ -1203,13 +1203,31 @@ async function main(): Promise<void> {
       }
 
       const allMembers: string[] = [];
+      let anyHandleFailed = false;
       for (const handle of handles) {
         try {
           const members = await resolveUserGroupMembers(client.webClient, handle);
           allMembers.push(...members);
         } catch (error) {
           logger.warn({ groupKey, handle, error: String(error) }, 'access group handle refresh failed');
+          anyHandleFailed = true;
         }
+      }
+
+      // Don't overwrite the live allowlist with a partial / empty membership
+      // when any configured handle failed to resolve — that would lock out
+      // group-only users on a transient Slack outage. Retain the
+      // last-known-good cache; the next refresh tick (30m) will retry.
+      if (anyHandleFailed) {
+        logger.warn(
+          {
+            groupKey,
+            handles,
+            memberCount: getConfiguredAccessControl(config).groups[groupKey].resolvedUserIds.length,
+          },
+          'access group refresh skipped: handle failure(s); retaining last-known-good membership',
+        );
+        continue;
       }
 
       setResolvedGroupMembers({ config, groupKey, members: allMembers });
