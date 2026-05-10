@@ -389,6 +389,7 @@ struct AppSettings {
     core_dev_slack_user_group: String,
     vault_path: String,
     vault_enabled: bool,
+    mini_og_repo_root: String,
     access_control: AccessControlSettings,
 }
 
@@ -488,6 +489,7 @@ impl Default for AppSettings {
             core_dev_slack_user_group: String::new(),
             vault_path: String::new(),
             vault_enabled: false,
+            mini_og_repo_root: "/Users/dipesh/code/mini-og".to_string(),
             access_control: AccessControlSettings::default(),
         }
     }
@@ -3277,7 +3279,8 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
               COALESCE(core_dev_slack_user_ids, '') as core_dev_slack_user_ids,
               COALESCE(core_dev_slack_user_group, '') as core_dev_slack_user_group,
               COALESCE(vault_path, '') as vault_path,
-              COALESCE(vault_enabled, 0) as vault_enabled
+              COALESCE(vault_enabled, 0) as vault_enabled,
+              COALESCE(mini_og_repo_root, '/Users/dipesh/code/mini-og') as mini_og_repo_root
              FROM app_settings
              WHERE id = 1
              LIMIT 1",
@@ -3316,6 +3319,7 @@ fn read_app_settings(connection: &Connection) -> Result<AppSettings, String> {
                 core_dev_slack_user_group: row.get(26)?,
                 vault_path: row.get(27)?,
                 vault_enabled: row.get::<_, i64>(28)? != 0,
+                mini_og_repo_root: row.get(29)?,
                 access_control: AccessControlSettings::default(),
             })
         })
@@ -3730,6 +3734,29 @@ fn is_absolute_directory(path_value: &str) -> bool {
     path.is_absolute() && path.is_dir()
 }
 
+/// Mirrors the sidecar's mini-og-root invariant from `sidecar/src/config.ts`:
+/// every configured repo path must live under `mini_og_repo_root`. Without
+/// this check the desktop's "Runtime Ready" can report green even though the
+/// sidecar will hard-fail boot with `MiniOgRepoRootViolationError`.
+fn repo_paths_under_miniog_root(settings: &AppSettings) -> bool {
+    let root = Path::new(settings.mini_og_repo_root.trim());
+    if !root.is_absolute() || !root.is_dir() {
+        return false;
+    }
+    let canon_root = match root.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    let canon_under = |raw: &str| -> bool {
+        let p = Path::new(raw.trim());
+        match p.canonicalize() {
+            Ok(canon) => canon.starts_with(&canon_root),
+            Err(_) => false,
+        }
+    };
+    canon_under(&settings.newton_web_path) && canon_under(&settings.newton_api_path)
+}
+
 fn is_settings_complete(settings: &AppSettings) -> bool {
     !settings.slack_bot_token.trim().is_empty()
         && !settings.slack_app_token.trim().is_empty()
@@ -3737,6 +3764,7 @@ fn is_settings_complete(settings: &AppSettings) -> bool {
         && has_owner_ids(&settings.owner_slack_user_ids)
         && is_absolute_directory(&settings.newton_web_path)
         && is_absolute_directory(&settings.newton_api_path)
+        && repo_paths_under_miniog_root(settings)
 }
 
 fn settings_ready(db_path: &PathBuf) -> Result<bool, String> {
