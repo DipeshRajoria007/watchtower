@@ -1213,6 +1213,7 @@ Write your response as a ready-to-post Slack message describing what you did.
       introMessage: introMsg,
       store,
       jobId,
+      signal,
     });
 
     const MAX_NEEDS_INPUT_RESUMES = 3;
@@ -1314,6 +1315,7 @@ Write your response as a ready-to-post Slack message describing what you did.
         introMessage: 'Picking back up with the new info you shared.',
         store,
         jobId,
+        signal,
       });
     }
 

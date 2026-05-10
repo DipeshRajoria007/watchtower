@@ -771,8 +771,9 @@ export async function runAgentPipeline(params: {
   store?: PipelineStore;
   jobId?: string;
   introMessage?: string;
+  signal?: AbortSignal;
 }): Promise<PipelineResult> {
-  const { ctx, slack, logStep, store, jobId, introMessage } = params;
+  const { ctx, slack, logStep, store, jobId, introMessage, signal } = params;
   const {
     agents,
     maxRetryLoops,
@@ -877,6 +878,7 @@ export async function runAgentPipeline(params: {
         ...profile,
         // timeoutMs: perAgentTimeoutMs,
         onLog: logStep,
+        signal,
       }),
     );
 
@@ -1067,6 +1069,7 @@ export async function runAgentPipeline(params: {
             githubToken: ctx.githubToken,
             ...coderProfile,
             onLog: logStep,
+            signal,
           }),
         );
 
