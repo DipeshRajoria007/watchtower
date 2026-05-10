@@ -414,14 +414,38 @@ async function runApprovalLoop(input: {
         data: { feedbackRounds },
       });
 
-      const feedbackPrompt = plannerSessionId
-        ? `The admin reviewed the plan and provided this feedback:\n\n"${approval.userReply}"\n\nRevise the plan to incorporate this feedback. Return the same JSON schema:\n{\n  "plan": string[],\n  "risks": string[],\n  "affectedFiles": string[],\n  "scope": "small" | "medium" | "large",\n  "requiresCodeChanges": boolean\n}`
-        : `You previously produced this plan:\n${JSON.stringify(plannerOutput, null, 2)}\n\nThe admin reviewed it and provided this feedback:\n\n"${approval.userReply}"\n\nRevise the plan to incorporate this feedback. Return the same JSON schema:\n{\n  "plan": string[],\n  "risks": string[],\n  "affectedFiles": string[],\n  "scope": "small" | "medium" | "large",\n  "requiresCodeChanges": boolean\n}`;
+      // Always pass the prior plan as JSON in the prompt — do NOT use
+      // resumeSessionId here. claudeCodeBackend silently drops outputSchemaPath
+      // (it's only honored by codexBackend), so resumed sessions rely entirely
+      // on the model "remembering" the JSON contract from the initial call.
+      // That memory is unreliable: revision calls were producing prose/markdown
+      // instead of JSON, the parser bailed, and the workflow re-posted the old
+      // plan unchanged. Passing the plan inline + restating the contract is
+      // slightly more tokens but reliably produces parseable JSON.
+      const feedbackPrompt = `You previously produced this plan:
+${JSON.stringify(plannerOutput, null, 2)}
+
+The admin reviewed it and provided this feedback:
+
+"${approval.userReply}"
+
+Revise the plan to incorporate this feedback. Output rules — strict:
+- Reply with ONE JSON object and nothing else. No prose, no markdown fences, no preamble, no trailing notes.
+- The JSON must match this exact schema (every key required, no extras):
+{
+  "plan": string[],
+  "risks": string[],
+  "affectedFiles": string[],
+  "scope": "small" | "medium" | "large",
+  "requiresCodeChanges": boolean
+}
+- "plan" should reflect the FEEDBACK above. If the feedback adds new behavior (e.g. an additional log line, a different function call, an extra parameter), the steps and "affectedFiles" must mention it explicitly. Do not return the prior plan unchanged unless the feedback was purely cosmetic.
+
+Return the JSON now.`;
 
       const revisedResult = await runCodex({
         cwd: pipelineCwd,
         prompt: feedbackPrompt,
-        ...(plannerSessionId ? { resumeSessionId: plannerSessionId } : {}),
         outputSchemaPath: plannerSchemaPath,
         githubToken,
         ...plannerProfile,
@@ -429,6 +453,8 @@ async function runApprovalLoop(input: {
         onLog: logStep,
       });
 
+      // Even though we no longer resume, capture sessionId so a later coder
+      // step or follow-up logging can reference this revision's session.
       plannerSessionId = revisedResult.sessionId ?? plannerSessionId;
 
       if (!(revisedResult.ok && revisedResult.parsedJson)) {
