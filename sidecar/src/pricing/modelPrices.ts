@@ -14,6 +14,18 @@ export interface ModelPricing {
 
 const PRICES: Record<string, ModelPricing> = {
   // Anthropic Claude
+  'claude-opus-4-7': {
+    inputPer1k: 0.015,
+    outputPer1k: 0.075,
+    cacheReadPer1k: 0.0015,
+    cacheCreatePer1k: 0.01875,
+  },
+  'claude-sonnet-4-6': {
+    inputPer1k: 0.003,
+    outputPer1k: 0.015,
+    cacheReadPer1k: 0.0003,
+    cacheCreatePer1k: 0.00375,
+  },
   'claude-opus-4-20250514': {
     inputPer1k: 0.015,
     outputPer1k: 0.075,

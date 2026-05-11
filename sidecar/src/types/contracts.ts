@@ -190,7 +190,7 @@ export interface RepoClassificationResult {
   uncertain: boolean;
 }
 
-export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface CodexRunRequest {
   cwd: string;
