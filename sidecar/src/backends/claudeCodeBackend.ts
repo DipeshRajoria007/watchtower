@@ -107,6 +107,9 @@ export const claudeCodeBackend: AgentBackend = {
     if (request.model) {
       args.push('--model', request.model);
     }
+    if (request.reasoningEffort) {
+      args.push('--effort', request.reasoningEffort);
+    }
     if (request.imagePaths) {
       for (const imagePath of request.imagePaths) {
         args.push('--image', imagePath);
@@ -173,10 +176,10 @@ export const claudeCodeBackend: AgentBackend = {
   },
 
   availableModels(): string[] {
-    return ['claude-sonnet-4-20250514', 'claude-opus-4-20250514'];
+    return ['claude-sonnet-4-6', 'claude-opus-4-7'];
   },
 
   defaultModel(): string {
-    return 'claude-sonnet-4-20250514';
+    return 'claude-sonnet-4-6';
   },
 };

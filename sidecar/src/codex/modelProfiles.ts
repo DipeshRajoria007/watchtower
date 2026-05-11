@@ -31,21 +31,21 @@ const BACKEND_PROFILES: Record<AgentBackendId, BackendProfileTable> = {
   },
   'claude-code': {
     lightweight: {
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       reasoningEffort: 'low',
     },
     highReasoning: {
-      model: 'claude-opus-4-20250514',
+      model: 'claude-opus-4-7',
       reasoningEffort: 'high',
     },
   },
   cursor: {
     lightweight: {
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       reasoningEffort: 'low',
     },
     highReasoning: {
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       reasoningEffort: 'high',
     },
   },
@@ -62,6 +62,12 @@ const ROLE_TIER: Record<AgentRole, 'lightweight' | 'highReasoning'> = {
 
 export function profileForAgentRole(role: AgentRole, backendId?: AgentBackendId): CodexExecutionProfile {
   const backend = backendId ?? 'codex';
+  if (role === 'planner' && backend === 'claude-code') {
+    return {
+      model: 'claude-opus-4-7',
+      reasoningEffort: 'max',
+    };
+  }
   const tier = ROLE_TIER[role];
   return BACKEND_PROFILES[backend][tier];
 }

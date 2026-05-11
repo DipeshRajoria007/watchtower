@@ -87,10 +87,10 @@ export const cursorBackend: AgentBackend = {
   },
 
   availableModels(): string[] {
-    return ['claude-sonnet-4-20250514'];
+    return ['claude-sonnet-4-6'];
   },
 
   defaultModel(): string {
-    return 'claude-sonnet-4-20250514';
+    return 'claude-sonnet-4-6';
   },
 };
