@@ -184,9 +184,7 @@ export interface NormalizedTask {
 export interface RepoClassificationResult {
   selectedRepo: 'newton-web' | 'newton-api' | null;
   confidence: number;
-  scoreWeb: number;
-  scoreApi: number;
-  signals: string[];
+  reasoning: string;
   uncertain: boolean;
 }
 
