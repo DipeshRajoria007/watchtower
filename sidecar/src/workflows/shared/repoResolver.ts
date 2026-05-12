@@ -10,12 +10,7 @@ export type RepoResolution =
   | { outcome: 'desktop_only'; reason: string }
   | { outcome: 'cancelled' };
 
-export type ResolutionSource =
-  | 'plan-affected-files'
-  | 'text-mention'
-  | 'extension-hint'
-  | 'classifier'
-  | 'admin-choice';
+export type ResolutionSource = 'plan-affected-files' | 'classifier' | 'admin-choice';
 
 export async function resolveRepoOrAsk(params: {
   task: NormalizedTask;
@@ -27,9 +22,8 @@ export async function resolveRepoOrAsk(params: {
   signal?: AbortSignal;
   askAdminsOnUncertain?: boolean;
   /**
-   * Optional per-user repo affinity. When supplied, biases the keyword
-   * classifier toward repos the requester historically works in. Capped soft
-   * prior — strong text signals always win.
+   * Optional per-user repo affinity. Passed to the agent as advisory context;
+   * the current task always dominates.
    */
   repoAffinity?: RepoAffinity;
 }): Promise<RepoResolution> {
@@ -45,47 +39,23 @@ export async function resolveRepoOrAsk(params: {
     repoAffinity,
   } = params;
 
-  // 1. Planner's affectedFiles contain an explicit repo name.
+  // Fast path: the planner already named a path that lives in a known repo.
+  // This is a deterministic substring check on file paths, not classification —
+  // calling the agent here would just burn a round-trip.
   if (planAffectedFiles.length > 0) {
     const hasWebFiles = planAffectedFiles.some(f => f.includes('newton-web'));
     const hasApiFiles = planAffectedFiles.some(f => f.includes('newton-api'));
-    if (hasWebFiles && !hasApiFiles) {
-      return resolved('newton-web', config, 'plan-affected-files');
-    }
-    if (hasApiFiles && !hasWebFiles) {
-      return resolved('newton-api', config, 'plan-affected-files');
-    }
+    if (hasWebFiles && !hasApiFiles) return resolved('newton-web', config, 'plan-affected-files');
+    if (hasApiFiles && !hasWebFiles) return resolved('newton-api', config, 'plan-affected-files');
   }
 
-  // 2. Explicit mention of newton-web / newton-api in the task or thread text.
-  const combinedText = [task.event.text, ...threadMessages.map(m => m.text)].join('\n');
-  const mentionsApi = /\bnewton[-_\s]?api\b/i.test(combinedText);
-  const mentionsWeb = /\bnewton[-_\s]?web\b/i.test(combinedText);
-  if (mentionsApi && !mentionsWeb) return resolved('newton-api', config, 'text-mention');
-  if (mentionsWeb && !mentionsApi) return resolved('newton-web', config, 'text-mention');
-
-  // 3. File-extension hints from the planner's affectedFiles.
-  if (planAffectedFiles.length > 0) {
-    const hasPy = planAffectedFiles.some(f => /\.py$/i.test(f));
-    const hasJsx = planAffectedFiles.some(f => /\.(tsx|jsx)$/i.test(f));
-    if (hasPy && !hasJsx) return resolved('newton-api', config, 'extension-hint');
-    if (hasJsx && !hasPy) return resolved('newton-web', config, 'extension-hint');
-  }
-
-  // 4. Keyword classifier with confidence threshold.
-  const classification = classifyRepo(
-    [task.event.text, ...threadMessages.map(m => m.text)],
-    config.repoClassifierThreshold,
-    repoAffinity,
-  );
-  logStep?.({
-    stage: 'workflow.repo.classified',
-    message: 'Classified repository for execution.',
-    data: {
-      selectedRepo: classification.selectedRepo,
-      confidence: classification.confidence,
-      uncertain: classification.uncertain,
-    },
+  const classification = await classifyRepo({
+    task: task.event.text,
+    threadMessages: threadMessages.map(m => m.text),
+    threshold: config.repoClassifierThreshold,
+    affinity: repoAffinity,
+    planAffectedFiles,
+    logStep,
   });
   if (!classification.uncertain && classification.selectedRepo) {
     return resolved(classification.selectedRepo, config, 'classifier');

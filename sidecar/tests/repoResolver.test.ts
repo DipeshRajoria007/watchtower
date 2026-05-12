@@ -1,13 +1,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resolveRepoOrAsk } from '../src/workflows/shared/repoResolver.js';
 import type { AppConfig, NormalizedTask } from '../src/types/contracts.js';
 
 vi.mock('../src/agents/pipeline.js', () => ({
   waitForRepoChoice: vi.fn(),
 }));
+vi.mock('../src/router/repoClassifier.js', () => ({
+  classifyRepo: vi.fn(),
+}));
 
 const { waitForRepoChoice } = await import('../src/agents/pipeline.js');
+const { classifyRepo } = await import('../src/router/repoClassifier.js');
+const { resolveRepoOrAsk } = await import('../src/workflows/shared/repoResolver.js');
 
 const baseConfig = (): AppConfig => ({
   platformPolicy: 'macos_only',
@@ -49,13 +53,46 @@ const baseTask = (text: string): NormalizedTask => ({
 
 const slack: any = { chat: { postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '2.2' }) } };
 
+const adminAccessControl = () => ({
+  mode: 'enforce' as const,
+  groups: {
+    viewer: emptyGroup('viewer'),
+    reviewer: emptyGroup('reviewer'),
+    builder: emptyGroup('builder'),
+    admin: {
+      key: 'admin' as const,
+      slackUserGroupHandle: '',
+      manualUserIds: 'UADMIN',
+      allowedChannelIds: '',
+      allowIm: false,
+      allowMpim: false,
+      resolvedChannelIds: [],
+      resolvedUserIds: ['UADMIN'],
+    },
+  },
+});
+
+function emptyGroup<K extends 'viewer' | 'reviewer' | 'builder'>(key: K) {
+  return {
+    key,
+    slackUserGroupHandle: '',
+    manualUserIds: '',
+    allowedChannelIds: '',
+    allowIm: false,
+    allowMpim: false,
+    resolvedChannelIds: [],
+    resolvedUserIds: [],
+  };
+}
+
 describe('resolveRepoOrAsk', () => {
   beforeEach(() => {
     vi.mocked(waitForRepoChoice).mockReset();
+    vi.mocked(classifyRepo).mockReset();
     slack.chat.postMessage.mockClear();
   });
 
-  it('picks newton-web when planAffectedFiles point there', async () => {
+  it('short-circuits to newton-web when planAffectedFiles all point inside a newton-web path', async () => {
     const res = await resolveRepoOrAsk({
       task: baseTask('do a thing'),
       config: baseConfig(),
@@ -66,87 +103,114 @@ describe('resolveRepoOrAsk', () => {
     expect(res).toEqual(
       expect.objectContaining({ outcome: 'resolved', name: 'newton-web', source: 'plan-affected-files' }),
     );
+    expect(classifyRepo).not.toHaveBeenCalled();
   });
 
-  it('picks newton-api from explicit text mention', async () => {
+  it('short-circuits to newton-api when planAffectedFiles all point inside a newton-api path', async () => {
     const res = await resolveRepoOrAsk({
-      task: baseTask('fix the rate limiter in newton-api'),
+      task: baseTask('do a thing'),
       config: baseConfig(),
       slack,
       threadMessages: [],
+      planAffectedFiles: ['/repos/newton-api/handlers/foo.py'],
     });
-    expect(res).toEqual(expect.objectContaining({ outcome: 'resolved', name: 'newton-api', source: 'text-mention' }));
+    expect(res).toEqual(
+      expect.objectContaining({ outcome: 'resolved', name: 'newton-api', source: 'plan-affected-files' }),
+    );
+    expect(classifyRepo).not.toHaveBeenCalled();
   });
 
-  it('uses extension hint when files are only .py or only .tsx', async () => {
-    const web = await resolveRepoOrAsk({
-      task: baseTask('update components'),
+  it('falls through to the agent when planAffectedFiles span both repos', async () => {
+    vi.mocked(classifyRepo).mockResolvedValueOnce({
+      selectedRepo: 'newton-web',
+      confidence: 0.9,
+      reasoning: 'web wins',
+      uncertain: false,
+    });
+    const res = await resolveRepoOrAsk({
+      task: baseTask('do a thing'),
       config: baseConfig(),
       slack,
       threadMessages: [],
-      planAffectedFiles: ['src/Button.tsx', 'src/Card.jsx'],
+      planAffectedFiles: ['/repos/newton-web/src/foo.tsx', '/repos/newton-api/handlers/bar.py'],
     });
-    expect(web).toEqual(expect.objectContaining({ name: 'newton-web', source: 'extension-hint' }));
+    expect(res).toEqual(expect.objectContaining({ outcome: 'resolved', name: 'newton-web', source: 'classifier' }));
+    expect(classifyRepo).toHaveBeenCalledTimes(1);
+  });
 
-    const api = await resolveRepoOrAsk({
+  it('resolves via the agent classifier when confident', async () => {
+    vi.mocked(classifyRepo).mockResolvedValueOnce({
+      selectedRepo: 'newton-web',
+      confidence: 0.92,
+      reasoning: 'nav bar change on a public URL',
+      uncertain: false,
+    });
+    const res = await resolveRepoOrAsk({
+      task: baseTask('remove the right nav bar section on my.newtonschool.co/tech-openings/all-jobs'),
+      config: baseConfig(),
+      slack,
+      threadMessages: [],
+    });
+    expect(res).toEqual(expect.objectContaining({ outcome: 'resolved', name: 'newton-web', source: 'classifier' }));
+  });
+
+  it('passes task, thread, planAffectedFiles, and repoAffinity through to the classifier', async () => {
+    vi.mocked(classifyRepo).mockResolvedValueOnce({
+      selectedRepo: 'newton-api',
+      confidence: 0.88,
+      reasoning: 'planner pointed at .py files',
+      uncertain: false,
+    });
+    await resolveRepoOrAsk({
       task: baseTask('update handlers'),
       config: baseConfig(),
       slack,
-      threadMessages: [],
+      threadMessages: [{ text: 'follow-up note' }],
       planAffectedFiles: ['handlers/create.py'],
+      repoAffinity: { newtonApiHits: 12 },
     });
-    expect(api).toEqual(expect.objectContaining({ name: 'newton-api', source: 'extension-hint' }));
+    const args = vi.mocked(classifyRepo).mock.calls[0][0];
+    expect(args.planAffectedFiles).toEqual(['handlers/create.py']);
+    expect(args.affinity).toEqual({ newtonApiHits: 12 });
+    expect(args.task).toBe('update handlers');
+    expect(args.threadMessages).toEqual(['follow-up note']);
+    expect(args.threshold).toBe(0.75);
+  });
+
+  it('routes to the admin gate when the classifier is uncertain', async () => {
+    vi.mocked(classifyRepo).mockResolvedValueOnce({
+      selectedRepo: null,
+      confidence: 0,
+      reasoning: 'no signal',
+      uncertain: true,
+    });
+    vi.mocked(waitForRepoChoice).mockResolvedValueOnce({
+      outcome: 'newton-web',
+      userReply: 'web',
+      approverId: 'UADMIN',
+    });
+    const config = baseConfig();
+    config.accessControl = adminAccessControl();
+    const res = await resolveRepoOrAsk({
+      task: baseTask('do the thing'),
+      config,
+      slack,
+      threadMessages: [],
+    });
+    expect(res).toEqual(expect.objectContaining({ outcome: 'resolved', name: 'newton-web', source: 'admin-choice' }));
+    expect(slack.chat.postMessage).toHaveBeenCalled();
   });
 
   it('returns desktop_only when classifier uncertain and no admin reply', async () => {
+    vi.mocked(classifyRepo).mockResolvedValueOnce({
+      selectedRepo: null,
+      confidence: 0,
+      reasoning: 'no signal',
+      uncertain: true,
+    });
     vi.mocked(waitForRepoChoice).mockResolvedValueOnce({ outcome: 'timeout', userReply: '', approverId: '' });
     const config = baseConfig();
-    config.accessControl = {
-      mode: 'enforce',
-      groups: {
-        viewer: {
-          key: 'viewer',
-          slackUserGroupHandle: '',
-          manualUserIds: '',
-          allowedChannelIds: '',
-          allowIm: false,
-          allowMpim: false,
-          resolvedChannelIds: [],
-          resolvedUserIds: [],
-        },
-        reviewer: {
-          key: 'reviewer',
-          slackUserGroupHandle: '',
-          manualUserIds: '',
-          allowedChannelIds: '',
-          allowIm: false,
-          allowMpim: false,
-          resolvedChannelIds: [],
-          resolvedUserIds: [],
-        },
-        builder: {
-          key: 'builder',
-          slackUserGroupHandle: '',
-          manualUserIds: '',
-          allowedChannelIds: '',
-          allowIm: false,
-          allowMpim: false,
-          resolvedChannelIds: [],
-          resolvedUserIds: [],
-        },
-        admin: {
-          key: 'admin',
-          slackUserGroupHandle: '',
-          manualUserIds: 'UADMIN',
-          allowedChannelIds: '',
-          allowIm: false,
-          allowMpim: false,
-          resolvedChannelIds: [],
-          resolvedUserIds: ['UADMIN'],
-        },
-      },
-    };
-
+    config.accessControl = adminAccessControl();
     const res = await resolveRepoOrAsk({
       task: baseTask('something is off, please look'),
       config,
@@ -157,6 +221,12 @@ describe('resolveRepoOrAsk', () => {
   });
 
   it('returns desktop_only immediately when askAdminsOnUncertain is false', async () => {
+    vi.mocked(classifyRepo).mockResolvedValueOnce({
+      selectedRepo: null,
+      confidence: 0,
+      reasoning: 'no signal',
+      uncertain: true,
+    });
     const res = await resolveRepoOrAsk({
       task: baseTask('fix stuff'),
       config: baseConfig(),
@@ -169,57 +239,19 @@ describe('resolveRepoOrAsk', () => {
   });
 
   it('returns cancelled when admin replies cancel', async () => {
+    vi.mocked(classifyRepo).mockResolvedValueOnce({
+      selectedRepo: null,
+      confidence: 0,
+      reasoning: 'no signal',
+      uncertain: true,
+    });
     vi.mocked(waitForRepoChoice).mockResolvedValueOnce({
       outcome: 'cancelled',
       userReply: 'cancel',
       approverId: 'UADMIN',
     });
     const config = baseConfig();
-    config.accessControl = {
-      mode: 'enforce',
-      groups: {
-        viewer: {
-          key: 'viewer',
-          slackUserGroupHandle: '',
-          manualUserIds: '',
-          allowedChannelIds: '',
-          allowIm: false,
-          allowMpim: false,
-          resolvedChannelIds: [],
-          resolvedUserIds: [],
-        },
-        reviewer: {
-          key: 'reviewer',
-          slackUserGroupHandle: '',
-          manualUserIds: '',
-          allowedChannelIds: '',
-          allowIm: false,
-          allowMpim: false,
-          resolvedChannelIds: [],
-          resolvedUserIds: [],
-        },
-        builder: {
-          key: 'builder',
-          slackUserGroupHandle: '',
-          manualUserIds: '',
-          allowedChannelIds: '',
-          allowIm: false,
-          allowMpim: false,
-          resolvedChannelIds: [],
-          resolvedUserIds: [],
-        },
-        admin: {
-          key: 'admin',
-          slackUserGroupHandle: '',
-          manualUserIds: 'UADMIN',
-          allowedChannelIds: '',
-          allowIm: false,
-          allowMpim: false,
-          resolvedChannelIds: [],
-          resolvedUserIds: ['UADMIN'],
-        },
-      },
-    };
+    config.accessControl = adminAccessControl();
     const res = await resolveRepoOrAsk({
       task: baseTask('do a thing'),
       config,
