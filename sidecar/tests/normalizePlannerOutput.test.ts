@@ -65,7 +65,75 @@ describe('normalizePlannerOutput', () => {
       expect(result.scope).toBe('small');
       expect(result.requiresCodeChanges).toBe(true);
       expect(result.clarificationNeeded).toBeNull();
-      expect(result.affectedFiles).toEqual([]);
+    });
+
+    it('extracts backtick-wrapped file paths from the plan markdown', () => {
+      const summary = [
+        '# Plan',
+        '',
+        '- Update `apps/web/components/Banner.tsx` to remove the blue banner',
+        '- Adjust `apps/web/styles/banner.css`',
+        '- Leave `someUtility()` and `MyComponent` alone (not paths)',
+        '- External: `https://example.com/foo` should be ignored',
+        '',
+        'Scope: medium',
+      ].join('\n');
+      const result = normalizePlannerOutput({ summary }, 'claude-code');
+      expect(result.affectedFiles).toEqual(['apps/web/components/Banner.tsx', 'apps/web/styles/banner.css']);
+    });
+
+    it('extracts files identified by extension alone (no directory separator)', () => {
+      const result = normalizePlannerOutput(
+        { summary: 'Touch `README.md` and `package.json`. Skip `foo`.' },
+        'claude-code',
+      );
+      expect(result.affectedFiles).toEqual(['README.md', 'package.json']);
+    });
+
+    it('prefers an already-carried affectedFiles array over re-extracting from markdown', () => {
+      const result = normalizePlannerOutput(
+        {
+          planMarkdown: 'Touch `src/foo.ts` and `src/bar.ts`.',
+          affectedFiles: ['src/explicit.ts'],
+        },
+        'claude-code',
+      );
+      expect(result.affectedFiles).toEqual(['src/explicit.ts']);
+    });
+
+    it('keeps Next.js route-group paths even though they contain parens', () => {
+      const result = normalizePlannerOutput(
+        { summary: 'Edit `src/app/(marketing)/page.tsx` and call `useRouter()`.' },
+        'claude-code',
+      );
+      expect(result.affectedFiles).toEqual(['src/app/(marketing)/page.tsx']);
+    });
+
+    it('rejects schemeless URLs whose first segment looks like a host', () => {
+      const result = normalizePlannerOutput(
+        {
+          summary:
+            'See `github.com/org/repo` and `docs.foo.com/page`, but do edit `src/foo.ts` and the relative `./util/bar.ts`.',
+        },
+        'claude-code',
+      );
+      expect(result.affectedFiles).toEqual(['src/foo.ts', './util/bar.ts']);
+    });
+
+    it('recognises known extensionless filenames and dotfiles', () => {
+      const result = normalizePlannerOutput(
+        {
+          summary: 'Update `Dockerfile`, `Makefile`, `.gitignore`, `infra/main.tf`, and `api/users.proto`.',
+        },
+        'claude-code',
+      );
+      expect(result.affectedFiles).toEqual([
+        'Dockerfile',
+        'Makefile',
+        '.gitignore',
+        'infra/main.tf',
+        'api/users.proto',
+      ]);
     });
 
     it('is idempotent: re-normalizing an already-normalized output preserves planMarkdown', () => {
