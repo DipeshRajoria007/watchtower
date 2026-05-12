@@ -101,6 +101,41 @@ describe('normalizePlannerOutput', () => {
       expect(result.affectedFiles).toEqual(['src/explicit.ts']);
     });
 
+    it('keeps Next.js route-group paths even though they contain parens', () => {
+      const result = normalizePlannerOutput(
+        { summary: 'Edit `src/app/(marketing)/page.tsx` and call `useRouter()`.' },
+        'claude-code',
+      );
+      expect(result.affectedFiles).toEqual(['src/app/(marketing)/page.tsx']);
+    });
+
+    it('rejects schemeless URLs whose first segment looks like a host', () => {
+      const result = normalizePlannerOutput(
+        {
+          summary:
+            'See `github.com/org/repo` and `docs.foo.com/page`, but do edit `src/foo.ts` and the relative `./util/bar.ts`.',
+        },
+        'claude-code',
+      );
+      expect(result.affectedFiles).toEqual(['src/foo.ts', './util/bar.ts']);
+    });
+
+    it('recognises known extensionless filenames and dotfiles', () => {
+      const result = normalizePlannerOutput(
+        {
+          summary: 'Update `Dockerfile`, `Makefile`, `.gitignore`, `infra/main.tf`, and `api/users.proto`.',
+        },
+        'claude-code',
+      );
+      expect(result.affectedFiles).toEqual([
+        'Dockerfile',
+        'Makefile',
+        '.gitignore',
+        'infra/main.tf',
+        'api/users.proto',
+      ]);
+    });
+
     it('is idempotent: re-normalizing an already-normalized output preserves planMarkdown', () => {
       const first = normalizePlannerOutput({ summary: '# Plan\n1. Do thing\nScope: large' }, 'claude-code');
       const augmented = {

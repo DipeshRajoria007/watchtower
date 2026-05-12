@@ -52,13 +52,45 @@ function extractScopeFromMarkdown(markdown: string): PlanScope {
 }
 
 const FILE_EXTENSION_PATTERN =
-  /\.(ts|tsx|js|jsx|mjs|cjs|json|md|mdx|css|scss|sass|less|html|htm|yml|yaml|toml|ini|env|rs|go|py|rb|java|kt|swift|m|mm|c|cc|cpp|h|hpp|sh|bash|zsh|sql|prisma|graphql|gql|vue|svelte|astro|lock|conf|cfg)$/i;
+  /\.(ts|tsx|js|jsx|mjs|cjs|json|md|mdx|css|scss|sass|less|html|htm|xml|yml|yaml|toml|ini|env|rs|go|py|rb|java|kt|swift|m|mm|c|cc|cpp|h|hpp|sh|bash|zsh|sql|prisma|graphql|gql|proto|tf|tfvars|vue|svelte|astro|lock|conf|cfg|gradle|properties)$/i;
+
+const KNOWN_BASENAMES = new Set([
+  'Dockerfile',
+  'Makefile',
+  'Procfile',
+  'Gemfile',
+  'Rakefile',
+  'Justfile',
+  'CHANGELOG',
+  'LICENSE',
+  'NOTICE',
+  'README',
+]);
+
+const DOTFILE_PATTERN = /^\.[a-z][a-z0-9._-]*$/i;
+
+function basenameOf(s: string): string {
+  const idx = s.lastIndexOf('/');
+  return idx >= 0 ? s.slice(idx + 1) : s;
+}
 
 function looksLikeFilePath(candidate: string): boolean {
   if (candidate.length === 0 || candidate.length > 200) return false;
   if (/\s/.test(candidate)) return false;
   if (/^https?:\/\//i.test(candidate)) return false;
-  if (candidate.includes('(') || candidate.includes(')')) return false;
+  // Reject function-call-shaped tokens (`foo()`, `foo(arg)`) but allow path
+  // segments with parens like Next.js route groups (`src/app/(marketing)/page.tsx`).
+  if ((candidate.includes('(') || candidate.includes(')')) && !candidate.includes('/')) return false;
+  // Reject schemeless URLs whose first segment is host-shaped (`github.com/org/repo`).
+  // `./foo` and `../foo` are allowed (`.`/`..` aren't hosts).
+  const slashIdx = candidate.indexOf('/');
+  if (slashIdx > 0) {
+    const firstSegment = candidate.slice(0, slashIdx);
+    if (firstSegment !== '.' && firstSegment !== '..' && firstSegment.includes('.')) return false;
+  }
+  const base = basenameOf(candidate);
+  if (KNOWN_BASENAMES.has(base)) return true;
+  if (DOTFILE_PATTERN.test(base)) return true;
   if (candidate.includes('/')) return true;
   return FILE_EXTENSION_PATTERN.test(candidate);
 }
