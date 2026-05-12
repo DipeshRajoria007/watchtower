@@ -275,10 +275,15 @@ export function readAgentBackend(dbPath: string): AgentBackendId {
     const row = db
       .prepare(`SELECT COALESCE(agent_backend, 'codex') AS agent_backend FROM app_settings WHERE id = 1 LIMIT 1`)
       .get() as { agent_backend?: string } | undefined;
-    return (row?.agent_backend || 'codex') as AgentBackendId;
+    return coerceAgentBackend(row?.agent_backend);
   } finally {
     db.close();
   }
+}
+
+function coerceAgentBackend(value: string | undefined | null): AgentBackendId {
+  if (value === 'claude-code') return 'claude-code';
+  return 'codex';
 }
 
 function mapSettingsToConfig(settings: SettingsRow, accessControlSettings?: AccessControlSettings): AppConfig {
@@ -352,7 +357,7 @@ function mapSettingsToConfig(settings: SettingsRow, accessControlSettings?: Acce
     repoClassifierThreshold: settings.repo_classifier_threshold,
     allowedPrOrg: 'Newton-School',
     multiAgentEnabled: Boolean(settings.multi_agent_enabled),
-    agentBackend: (settings.agent_backend || 'codex') as AgentBackendId,
+    agentBackend: coerceAgentBackend(settings.agent_backend),
     prReviewTimeoutMs: settings.pr_review_timeout_ms,
     bugFixTimeoutMs: settings.bug_fix_timeout_ms,
     pmTaskTimeoutMs: settings.pm_task_timeout_ms,

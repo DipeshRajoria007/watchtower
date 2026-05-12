@@ -528,6 +528,12 @@ export class JobStore {
     } catch {
       /* column already exists */
     }
+
+    try {
+      this.db.exec(`UPDATE app_settings SET agent_backend = 'codex' WHERE agent_backend = 'cursor'`);
+    } catch {
+      /* column may not exist on very old installs; harmless */
+    }
   }
 
   close(): void {
