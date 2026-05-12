@@ -92,6 +92,52 @@ describe('resolveRepoOrAsk', () => {
     slack.chat.postMessage.mockClear();
   });
 
+  it('short-circuits to newton-web when planAffectedFiles all point inside a newton-web path', async () => {
+    const res = await resolveRepoOrAsk({
+      task: baseTask('do a thing'),
+      config: baseConfig(),
+      slack,
+      threadMessages: [],
+      planAffectedFiles: ['/repos/newton-web/src/foo.tsx'],
+    });
+    expect(res).toEqual(
+      expect.objectContaining({ outcome: 'resolved', name: 'newton-web', source: 'plan-affected-files' }),
+    );
+    expect(classifyRepo).not.toHaveBeenCalled();
+  });
+
+  it('short-circuits to newton-api when planAffectedFiles all point inside a newton-api path', async () => {
+    const res = await resolveRepoOrAsk({
+      task: baseTask('do a thing'),
+      config: baseConfig(),
+      slack,
+      threadMessages: [],
+      planAffectedFiles: ['/repos/newton-api/handlers/foo.py'],
+    });
+    expect(res).toEqual(
+      expect.objectContaining({ outcome: 'resolved', name: 'newton-api', source: 'plan-affected-files' }),
+    );
+    expect(classifyRepo).not.toHaveBeenCalled();
+  });
+
+  it('falls through to the agent when planAffectedFiles span both repos', async () => {
+    vi.mocked(classifyRepo).mockResolvedValueOnce({
+      selectedRepo: 'newton-web',
+      confidence: 0.9,
+      reasoning: 'web wins',
+      uncertain: false,
+    });
+    const res = await resolveRepoOrAsk({
+      task: baseTask('do a thing'),
+      config: baseConfig(),
+      slack,
+      threadMessages: [],
+      planAffectedFiles: ['/repos/newton-web/src/foo.tsx', '/repos/newton-api/handlers/bar.py'],
+    });
+    expect(res).toEqual(expect.objectContaining({ outcome: 'resolved', name: 'newton-web', source: 'classifier' }));
+    expect(classifyRepo).toHaveBeenCalledTimes(1);
+  });
+
   it('resolves via the agent classifier when confident', async () => {
     vi.mocked(classifyRepo).mockResolvedValueOnce({
       selectedRepo: 'newton-web',
@@ -108,7 +154,7 @@ describe('resolveRepoOrAsk', () => {
     expect(res).toEqual(expect.objectContaining({ outcome: 'resolved', name: 'newton-web', source: 'classifier' }));
   });
 
-  it('passes planAffectedFiles and repoAffinity through to the classifier', async () => {
+  it('passes task, thread, planAffectedFiles, and repoAffinity through to the classifier', async () => {
     vi.mocked(classifyRepo).mockResolvedValueOnce({
       selectedRepo: 'newton-api',
       confidence: 0.88,
@@ -126,7 +172,8 @@ describe('resolveRepoOrAsk', () => {
     const args = vi.mocked(classifyRepo).mock.calls[0][0];
     expect(args.planAffectedFiles).toEqual(['handlers/create.py']);
     expect(args.affinity).toEqual({ newtonApiHits: 12 });
-    expect(args.texts).toEqual(['update handlers', 'follow-up note']);
+    expect(args.task).toBe('update handlers');
+    expect(args.threadMessages).toEqual(['follow-up note']);
     expect(args.threshold).toBe(0.75);
   });
 

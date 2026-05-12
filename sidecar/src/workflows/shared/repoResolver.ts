@@ -10,7 +10,7 @@ export type RepoResolution =
   | { outcome: 'desktop_only'; reason: string }
   | { outcome: 'cancelled' };
 
-export type ResolutionSource = 'classifier' | 'admin-choice';
+export type ResolutionSource = 'plan-affected-files' | 'classifier' | 'admin-choice';
 
 export async function resolveRepoOrAsk(params: {
   task: NormalizedTask;
@@ -39,22 +39,23 @@ export async function resolveRepoOrAsk(params: {
     repoAffinity,
   } = params;
 
+  // Fast path: the planner already named a path that lives in a known repo.
+  // This is a deterministic substring check on file paths, not classification —
+  // calling the agent here would just burn a round-trip.
+  if (planAffectedFiles.length > 0) {
+    const hasWebFiles = planAffectedFiles.some(f => f.includes('newton-web'));
+    const hasApiFiles = planAffectedFiles.some(f => f.includes('newton-api'));
+    if (hasWebFiles && !hasApiFiles) return resolved('newton-web', config, 'plan-affected-files');
+    if (hasApiFiles && !hasWebFiles) return resolved('newton-api', config, 'plan-affected-files');
+  }
+
   const classification = await classifyRepo({
-    texts: [task.event.text, ...threadMessages.map(m => m.text)],
+    task: task.event.text,
+    threadMessages: threadMessages.map(m => m.text),
     threshold: config.repoClassifierThreshold,
     affinity: repoAffinity,
     planAffectedFiles,
     logStep,
-  });
-  logStep?.({
-    stage: 'workflow.repo.classified',
-    message: 'Classified repository for execution.',
-    data: {
-      selectedRepo: classification.selectedRepo,
-      confidence: classification.confidence,
-      uncertain: classification.uncertain,
-      reasoning: classification.reasoning,
-    },
   });
   if (!classification.uncertain && classification.selectedRepo) {
     return resolved(classification.selectedRepo, config, 'classifier');
