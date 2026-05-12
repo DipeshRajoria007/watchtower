@@ -39,16 +39,6 @@ const BACKEND_PROFILES: Record<AgentBackendId, BackendProfileTable> = {
       reasoningEffort: 'high',
     },
   },
-  cursor: {
-    lightweight: {
-      model: 'claude-sonnet-4-6',
-      reasoningEffort: 'low',
-    },
-    highReasoning: {
-      model: 'claude-sonnet-4-6',
-      reasoningEffort: 'high',
-    },
-  },
 };
 
 const ROLE_TIER: Record<AgentRole, 'lightweight' | 'highReasoning'> = {

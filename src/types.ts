@@ -252,7 +252,7 @@ export type JobLogEntry = {
   createdAt: string;
 };
 
-export type AgentBackendId = 'codex' | 'claude-code' | 'cursor';
+export type AgentBackendId = 'codex' | 'claude-code';
 
 export type AccessMode = 'audit' | 'enforce';
 

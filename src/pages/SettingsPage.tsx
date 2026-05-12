@@ -60,11 +60,6 @@ const AGENT_BACKEND_OPTIONS: AgentBackendOption[] = [
     id: 'claude-code',
     label: 'Claude Code (Anthropic)',
   },
-  {
-    description: 'Cursor AI coding assistant CLI.',
-    id: 'cursor',
-    label: 'Cursor',
-  },
 ];
 
 type AccessModeOption = {

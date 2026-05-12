@@ -1,4 +1,4 @@
-export type AgentBackendId = 'codex' | 'claude-code' | 'cursor';
+export type AgentBackendId = 'codex' | 'claude-code';
 export type AccessMode = 'audit' | 'enforce';
 export type AccessGroupKey = 'viewer' | 'reviewer' | 'builder' | 'admin';
 export type AccessLevel = AccessGroupKey;
@@ -209,7 +209,7 @@ export interface CodexRunRequest {
   resumeSessionId?: string;
   /**
    * Run the backend in plan mode. Only honored by the claude-code backend
-   * (adds `--permission-mode plan`). Codex and Cursor backends ignore this.
+   * (adds `--permission-mode plan`). The Codex backend ignores this.
    */
   planMode?: boolean;
 }

@@ -19,7 +19,7 @@ This document catalogs the gaps against a modern agent-loop architecture (stream
 
 **What's strong today** — keep these:
 
-- Backend-agnostic agent layer (`sidecar/src/backends/types.ts`): Claude Code, Codex, Cursor are pluggable behind a clean `AgentBackend` contract.
+- Backend-agnostic agent layer (`sidecar/src/backends/types.ts`): Claude Code and Codex are pluggable behind a clean `AgentBackend` contract.
 - Git worktree isolation per `(repo, threadTs)` with symlinked `node_modules` (`sidecar/src/workspaces/workspaceManager.ts`).
 - Slack Socket Mode + catchup poller (`sidecar/src/slack/mentionCatchup.ts`) — no missed mentions.
 - SQLite with WAL mode and rich schema (jobs, job_logs, agent_pipeline_runs, job_diffs, learning_signals).
@@ -52,7 +52,7 @@ This document catalogs the gaps against a modern agent-loop architecture (stream
 │ Multi-agent pipeline: planner → coder → reviewer →       │  sidecar/src/agents/
 │   security → performance → verifier                      │
 ├──────────────────────────────────────────────────────────┤
-│ Backends: Claude Code | Codex | Cursor                   │  sidecar/src/backends/
+│ Backends: Claude Code | Codex                            │  sidecar/src/backends/
 ├──────────────────────────────────────────────────────────┤
 │ Workspaces (git worktree), GitHub (gh CLI), State (SQL)  │  sidecar/src/{workspaces,github,state}/
 ├──────────────────────────────────────────────────────────┤

@@ -1,12 +1,10 @@
 import type { AgentBackend, AgentBackendId } from './types.js';
 import { codexBackend } from './codexBackend.js';
 import { claudeCodeBackend } from './claudeCodeBackend.js';
-import { cursorBackend } from './cursorBackend.js';
 
 const BACKENDS: Record<AgentBackendId, AgentBackend> = {
   codex: codexBackend,
   'claude-code': claudeCodeBackend,
-  cursor: cursorBackend,
 };
 
 export function getBackend(id: AgentBackendId): AgentBackend {

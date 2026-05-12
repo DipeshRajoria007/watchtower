@@ -64,7 +64,7 @@ The sidecar (`sidecar/src/`) is a long-running Node.js process supervised by Tau
 | `router/` | Intent parsing, task routing, repo classification |
 | `workflows/` | PR review, bug fix, implementation, conversational, dev-assist |
 | `agents/` | Multi-agent pipeline: planner, coder, reviewer, security, performance, verifier |
-| `backends/` | Claude Code, Codex, Cursor backend interfaces |
+| `backends/` | Claude Code, Codex backend interfaces |
 | `codex/` | Codex execution, model profiles, prompt building |
 | `learning/` | Self-learning engine, failure doctor, personality profiles |
 | `state/` | SQLite job store, active jobs registry |
