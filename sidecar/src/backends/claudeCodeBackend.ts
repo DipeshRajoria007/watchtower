@@ -97,9 +97,14 @@ export const claudeCodeBackend: AgentBackend = {
     } else {
       args.push('-p', request.prompt);
     }
-    args.push('--output-format', 'json', '--dangerously-skip-permissions');
+    args.push('--output-format', 'json');
+    // `--dangerously-skip-permissions` is equivalent to `--permission-mode bypassPermissions`
+    // and silently wins over `--permission-mode plan`, so passing both leaves the model
+    // without the ExitPlanMode tool. Choose one or the other.
     if (request.planMode) {
       args.push('--permission-mode', 'plan');
+    } else {
+      args.push('--dangerously-skip-permissions');
     }
     if (request.sessionId) {
       args.push('--session-id', request.sessionId);

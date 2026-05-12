@@ -104,3 +104,24 @@ describe('claudeCodeBackend.parseOutput', () => {
     expect(parsed.costUsd).toBeUndefined();
   });
 });
+
+describe('claudeCodeBackend.buildArgs', () => {
+  const baseRequest = {
+    cwd: '/tmp/repo',
+    prompt: 'hello',
+  } as Parameters<typeof claudeCodeBackend.buildArgs>[0];
+
+  it('uses --dangerously-skip-permissions when planMode is not set', () => {
+    const args = claudeCodeBackend.buildArgs(baseRequest, '/tmp/out.json');
+    expect(args).toContain('--dangerously-skip-permissions');
+    expect(args).not.toContain('--permission-mode');
+  });
+
+  it('uses --permission-mode plan and omits skip-permissions when planMode is true', () => {
+    const args = claudeCodeBackend.buildArgs({ ...baseRequest, planMode: true }, '/tmp/out.json');
+    expect(args).not.toContain('--dangerously-skip-permissions');
+    const idx = args.indexOf('--permission-mode');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(args[idx + 1]).toBe('plan');
+  });
+});

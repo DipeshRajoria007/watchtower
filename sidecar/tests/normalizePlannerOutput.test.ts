@@ -65,7 +65,40 @@ describe('normalizePlannerOutput', () => {
       expect(result.scope).toBe('small');
       expect(result.requiresCodeChanges).toBe(true);
       expect(result.clarificationNeeded).toBeNull();
-      expect(result.affectedFiles).toEqual([]);
+    });
+
+    it('extracts backtick-wrapped file paths from the plan markdown', () => {
+      const summary = [
+        '# Plan',
+        '',
+        '- Update `apps/web/components/Banner.tsx` to remove the blue banner',
+        '- Adjust `apps/web/styles/banner.css`',
+        '- Leave `someUtility()` and `MyComponent` alone (not paths)',
+        '- External: `https://example.com/foo` should be ignored',
+        '',
+        'Scope: medium',
+      ].join('\n');
+      const result = normalizePlannerOutput({ summary }, 'claude-code');
+      expect(result.affectedFiles).toEqual(['apps/web/components/Banner.tsx', 'apps/web/styles/banner.css']);
+    });
+
+    it('extracts files identified by extension alone (no directory separator)', () => {
+      const result = normalizePlannerOutput(
+        { summary: 'Touch `README.md` and `package.json`. Skip `foo`.' },
+        'claude-code',
+      );
+      expect(result.affectedFiles).toEqual(['README.md', 'package.json']);
+    });
+
+    it('prefers an already-carried affectedFiles array over re-extracting from markdown', () => {
+      const result = normalizePlannerOutput(
+        {
+          planMarkdown: 'Touch `src/foo.ts` and `src/bar.ts`.',
+          affectedFiles: ['src/explicit.ts'],
+        },
+        'claude-code',
+      );
+      expect(result.affectedFiles).toEqual(['src/explicit.ts']);
     });
 
     it('is idempotent: re-normalizing an already-normalized output preserves planMarkdown', () => {
