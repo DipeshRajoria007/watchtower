@@ -12,6 +12,25 @@ export type RepoResolution =
 
 export type ResolutionSource = 'plan-affected-files' | 'classifier' | 'admin-choice';
 
+/**
+ * Deterministic substring check: returns the repo name if `files` unambiguously
+ * point inside one of our known repos, else null. Shared between the initial
+ * repo resolution and the post-revision recheck — revisions can swing a plan
+ * from newton-api → newton-web (or vice versa) and the worktree must follow.
+ */
+export function inferRepoFromAffectedFiles(files: string[]): RepoName | null {
+  if (files.length === 0) return null;
+  const hasWebFiles = files.some(f => f.includes('newton-web'));
+  const hasApiFiles = files.some(f => f.includes('newton-api'));
+  if (hasWebFiles && !hasApiFiles) return 'newton-web';
+  if (hasApiFiles && !hasWebFiles) return 'newton-api';
+  return null;
+}
+
+export function repoPathFor(name: RepoName, config: AppConfig): string {
+  return name === 'newton-web' ? config.repoPaths.newtonWeb : config.repoPaths.newtonApi;
+}
+
 export async function resolveRepoOrAsk(params: {
   task: NormalizedTask;
   config: AppConfig;
@@ -40,14 +59,10 @@ export async function resolveRepoOrAsk(params: {
   } = params;
 
   // Fast path: the planner already named a path that lives in a known repo.
-  // This is a deterministic substring check on file paths, not classification —
-  // calling the agent here would just burn a round-trip.
-  if (planAffectedFiles.length > 0) {
-    const hasWebFiles = planAffectedFiles.some(f => f.includes('newton-web'));
-    const hasApiFiles = planAffectedFiles.some(f => f.includes('newton-api'));
-    if (hasWebFiles && !hasApiFiles) return resolved('newton-web', config, 'plan-affected-files');
-    if (hasApiFiles && !hasWebFiles) return resolved('newton-api', config, 'plan-affected-files');
-  }
+  // Deterministic substring check on file paths, not classification — calling
+  // the agent here would just burn a round-trip.
+  const fromFiles = inferRepoFromAffectedFiles(planAffectedFiles);
+  if (fromFiles) return resolved(fromFiles, config, 'plan-affected-files');
 
   const classification = await classifyRepo({
     task: task.event.text,
@@ -148,7 +163,7 @@ function resolved(
   return {
     outcome: 'resolved',
     name,
-    path: name === 'newton-web' ? config.repoPaths.newtonWeb : config.repoPaths.newtonApi,
+    path: repoPathFor(name, config),
     source,
   };
 }

@@ -11,7 +11,8 @@ vi.mock('../src/router/repoClassifier.js', () => ({
 
 const { waitForRepoChoice } = await import('../src/agents/pipeline.js');
 const { classifyRepo } = await import('../src/router/repoClassifier.js');
-const { resolveRepoOrAsk } = await import('../src/workflows/shared/repoResolver.js');
+const { resolveRepoOrAsk, inferRepoFromAffectedFiles, repoPathFor } =
+  await import('../src/workflows/shared/repoResolver.js');
 
 const baseConfig = (): AppConfig => ({
   platformPolicy: 'macos_only',
@@ -236,6 +237,22 @@ describe('resolveRepoOrAsk', () => {
     });
     expect(res.outcome).toBe('desktop_only');
     expect(waitForRepoChoice).not.toHaveBeenCalled();
+  });
+
+  it('inferRepoFromAffectedFiles returns the unambiguous repo or null', () => {
+    expect(inferRepoFromAffectedFiles([])).toBeNull();
+    expect(inferRepoFromAffectedFiles(['/repos/newton-web/src/a.tsx'])).toBe('newton-web');
+    expect(inferRepoFromAffectedFiles(['handlers/x.py', '/repos/newton-api/y.py'])).toBe('newton-api');
+    // mixed → null so we don't silently pick one
+    expect(inferRepoFromAffectedFiles(['/repos/newton-web/src/a.tsx', '/repos/newton-api/handlers/b.py'])).toBeNull();
+    // neither → null (no signal at all)
+    expect(inferRepoFromAffectedFiles(['src/foo.ts', 'README.md'])).toBeNull();
+  });
+
+  it('repoPathFor returns the configured path for the given repo', () => {
+    const cfg = baseConfig();
+    expect(repoPathFor('newton-web', cfg)).toBe('/repos/web');
+    expect(repoPathFor('newton-api', cfg)).toBe('/repos/api');
   });
 
   it('returns cancelled when admin replies cancel', async () => {
