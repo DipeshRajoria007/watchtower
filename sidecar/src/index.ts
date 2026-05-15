@@ -196,51 +196,6 @@ function buildEventAwareClient(client: WebClient, event: SlackEventEnvelope): We
   return wrappedClient;
 }
 
-async function postFailureDoctorHint(params: {
-  client: WebClient;
-  event: SlackEventEnvelope;
-  errorKind: string;
-  summary: string;
-  actions: string[];
-  logStep: (step: WorkflowStepLog) => void;
-}): Promise<void> {
-  const { client, event, errorKind, summary, actions, logStep } = params;
-  const actionLines = actions
-    .slice(0, 3)
-    .map(action => `- ${action}`)
-    .join('\n');
-  const text = [`Failure Doctor: ${summary}`, `Type: ${errorKind}`];
-  if (actionLines) {
-    text.push('Suggested fixes:', actionLines);
-  }
-
-  try {
-    await client.chat.postMessage({
-      channel: event.channelId,
-      thread_ts: event.threadTs,
-      text: text.join('\n'),
-    });
-    logStep({
-      stage: 'failure_doctor.slack_posted',
-      message: 'Posted Failure Doctor diagnosis to Slack thread.',
-      level: 'WARN',
-      data: {
-        errorKind,
-      },
-    });
-  } catch (error) {
-    logStep({
-      stage: 'failure_doctor.slack_failed',
-      message: 'Failed to post Failure Doctor diagnosis to Slack thread.',
-      level: 'WARN',
-      data: {
-        errorKind,
-        error: String(error),
-      },
-    });
-  }
-}
-
 function reactionToSentiment(reaction: string): -1 | 0 | 1 {
   const value = reaction.toLowerCase();
   if (value === 'thumbsup' || value === '+1') {
@@ -841,15 +796,6 @@ async function processEventClaimed(event: SlackEventEnvelope, client: WebClient)
             level: 'WARN',
             data: diagnosis,
           });
-
-          await postFailureDoctorHint({
-            client: eventClient,
-            event,
-            errorKind: diagnosis.errorKind,
-            summary: diagnosis.summary,
-            actions: diagnosis.actions,
-            logStep,
-          });
         }
 
         logStep({
@@ -1014,17 +960,6 @@ async function processEventClaimed(event: SlackEventEnvelope, client: WebClient)
         text: `${errorMessage}`,
       })
       .catch(() => {});
-
-    if (diagnosis) {
-      await postFailureDoctorHint({
-        client: eventClient,
-        event,
-        errorKind: diagnosis.errorKind,
-        summary: diagnosis.summary,
-        actions: diagnosis.actions,
-        logStep,
-      });
-    }
 
     logStep({
       stage: 'job.failed.slack_posted',
