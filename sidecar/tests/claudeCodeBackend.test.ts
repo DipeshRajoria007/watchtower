@@ -103,6 +103,104 @@ describe('claudeCodeBackend.parseOutput', () => {
     expect(parsed.usage).toBeUndefined();
     expect(parsed.costUsd).toBeUndefined();
   });
+
+  describe('plan mode (--permission-mode plan)', () => {
+    // Captured envelope from a real run of
+    //   claude -p "..." --output-format json --permission-mode plan
+    // (Claude Code 2.1.142). The plan markdown lives in
+    // `permission_denials[].tool_input.plan`, NOT in `result`. Pre-fix, the
+    // parser only looked at `result` and the planner workflow failed with
+    // "Planner returned no plan content" whenever the model went straight to
+    // ExitPlanMode without writing a textual preamble.
+    const planMarkdown =
+      '# Plan: Add `subtract` function to `foo.ts`\n\n' +
+      '## Change\n' +
+      'Append a `subtract(a, b)` function below `add`, matching the existing signature.\n';
+
+    it('extracts the plan from ExitPlanMode in permission_denials', () => {
+      const wrapper = JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'Plan written to `/Users/x/.claude/plans/foo.md` — awaiting approval.',
+        session_id: 'plan-session-1',
+        cost_usd: 0.27,
+        permission_denials: [
+          {
+            tool_name: 'ExitPlanMode',
+            tool_use_id: 'toolu_01TZe5A8tTxA9DFpFNh1QixX',
+            tool_input: {
+              plan: planMarkdown,
+              planFilePath: '/Users/x/.claude/plans/foo.md',
+            },
+          },
+        ],
+      });
+
+      const parsed = claudeCodeBackend.parseOutput(wrapper);
+      expect(parsed.strategy).toBe('claude_unwrap+exit_plan_mode');
+      expect(parsed.parsedJson?.planMarkdown).toBe(planMarkdown.trim());
+      // Also mirrored into `summary` so downstream consumers that only look at
+      // `summary` (existing normalizePlannerOutput fallback chain) still work.
+      expect(parsed.parsedJson?.summary).toBe(planMarkdown.trim());
+      expect(parsed.sessionId).toBe('plan-session-1');
+      expect(parsed.costUsd).toBe(0.27);
+    });
+
+    it('recovers the plan when result is empty (the production failure mode)', () => {
+      const wrapper = JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: '', // Model went straight to ExitPlanMode without a text preamble
+        session_id: 'plan-session-2',
+        permission_denials: [
+          {
+            tool_name: 'ExitPlanMode',
+            tool_use_id: 'toolu_xyz',
+            tool_input: { plan: planMarkdown },
+          },
+        ],
+      });
+
+      const parsed = claudeCodeBackend.parseOutput(wrapper);
+      expect(parsed.strategy).toBe('claude_unwrap+exit_plan_mode');
+      expect(parsed.parsedJson?.planMarkdown).toBe(planMarkdown.trim());
+    });
+
+    it('prefers the most recent ExitPlanMode call when several are denied', () => {
+      const firstPlan = '# Old plan';
+      const finalPlan = '# Revised plan after admin feedback';
+      const wrapper = JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: '',
+        permission_denials: [
+          { tool_name: 'ExitPlanMode', tool_input: { plan: firstPlan } },
+          { tool_name: 'ExitPlanMode', tool_input: { plan: finalPlan } },
+        ],
+      });
+
+      const parsed = claudeCodeBackend.parseOutput(wrapper);
+      expect(parsed.parsedJson?.planMarkdown).toBe(finalPlan);
+    });
+
+    it('ignores denials that are not ExitPlanMode or have an empty plan', () => {
+      const wrapper = JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'fell back to result text',
+        permission_denials: [
+          { tool_name: 'Write', tool_input: { file_path: '/etc/passwd', content: 'x' } },
+          { tool_name: 'ExitPlanMode', tool_input: { plan: '   ' } }, // whitespace-only
+        ],
+      });
+
+      const parsed = claudeCodeBackend.parseOutput(wrapper);
+      // No usable ExitPlanMode plan, so it falls through to the existing
+      // plain-text path that surfaces `result` as `summary`.
+      expect(parsed.strategy).toBe('claude_unwrap+plain_text');
+      expect(parsed.parsedJson?.summary).toBe('fell back to result text');
+    });
+  });
 });
 
 describe('claudeCodeBackend.buildArgs', () => {

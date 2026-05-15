@@ -10,6 +10,42 @@ function asFiniteNumber(value: unknown): number | undefined {
   return Number.isFinite(value) ? value : undefined;
 }
 
+/**
+ * In plan mode (`--permission-mode plan`), Claude Code surfaces the
+ * ExitPlanMode invocation under `permission_denials[]`, with the plan markdown
+ * carried as `tool_input.plan`. Returns the most recent such plan, or
+ * `undefined` if no ExitPlanMode call is present. The envelope's typical shape:
+ *
+ *   {
+ *     ...,
+ *     "permission_denials": [
+ *       {
+ *         "tool_name": "ExitPlanMode",
+ *         "tool_use_id": "toolu_...",
+ *         "tool_input": { "plan": "# Plan ...", "planFilePath": "..." }
+ *       }
+ *     ]
+ *   }
+ */
+function extractExitPlanModePlan(denials: unknown): string | undefined {
+  if (!Array.isArray(denials)) return undefined;
+  // Walk back-to-front so a later ExitPlanMode call (e.g. after a clarification
+  // round) wins over an earlier one in the same session.
+  for (let i = denials.length - 1; i >= 0; i--) {
+    const entry = denials[i];
+    if (!entry || typeof entry !== 'object') continue;
+    const record = entry as Record<string, unknown>;
+    if (record.tool_name !== 'ExitPlanMode') continue;
+    const toolInput = record.tool_input;
+    if (!toolInput || typeof toolInput !== 'object') continue;
+    const plan = (toolInput as Record<string, unknown>).plan;
+    if (typeof plan !== 'string') continue;
+    const trimmed = plan.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
+}
+
 function extractClaudeUsage(envelope: Record<string, unknown>): TokenUsage | undefined {
   const usageRaw = envelope.usage;
   if (!usageRaw || typeof usageRaw !== 'object') return undefined;
@@ -154,6 +190,34 @@ export const claudeCodeBackend: AgentBackend = {
       const costUsd = asFiniteNumber(envelope.cost_usd);
       const usage = extractClaudeUsage(envelope);
       const sessionId = typeof envelope.session_id === 'string' ? envelope.session_id : undefined;
+
+      // Plan mode (`--permission-mode plan`): when the model invokes
+      // ExitPlanMode, Claude Code records it under `permission_denials` (because
+      // exiting plan mode requires user approval, which is granted out-of-band
+      // by Watchtower's own admin gate). The plan markdown lives in
+      // `tool_input.plan` — not in `result`. The `result` field is just the
+      // assistant's final text (often a one-line "Plan written to ..." summary,
+      // and sometimes empty when the model goes straight to ExitPlanMode).
+      // Extract the plan from the denied ExitPlanMode call so the planner
+      // workflow gets the actual plan instead of failing the
+      // `Planner returned no plan content` gate. Captured the schema by running
+      // `claude -p '...' --output-format json --permission-mode plan` locally.
+      const planFromExitPlanMode = extractExitPlanModePlan(envelope.permission_denials);
+      if (planFromExitPlanMode) {
+        return {
+          parsedJson: {
+            status: 'success',
+            planMarkdown: planFromExitPlanMode,
+            summary: planFromExitPlanMode,
+            actions: [],
+            prUrl: '',
+          },
+          strategy: 'claude_unwrap+exit_plan_mode',
+          usage,
+          costUsd,
+          sessionId,
+        };
+      }
 
       const innerText = (envelope.result as string).trim();
       // Try to parse the inner text as the structured JSON we asked the model to produce
