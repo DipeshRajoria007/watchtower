@@ -248,6 +248,29 @@ describe('access control evaluator', () => {
       expect(decision.ownerBypass).toBe(true);
     });
 
+    it('grants rank-4 access via the owner group when the user is not in ownerSlackUserIds', () => {
+      // Configures a user who is in the owner group but NOT in ownerSlackUserIds,
+      // so the early bypass at evaluateAccess does not fire and the rank-4 group path
+      // is exercised on its own.
+      const config = makeConfig({ ownerSlackUserIds: [] });
+      setResolvedGroupMembers({
+        config,
+        groupKey: 'owner',
+        members: ['UPROMOTED'],
+      });
+
+      const decision = evaluateAccess({
+        config,
+        userId: 'UPROMOTED',
+        channelId: 'C-UNLISTED',
+        requiredLevel: 'owner',
+      });
+
+      expect(decision.allowed).toBe(true);
+      expect(decision.ownerBypass).toBe(false);
+      expect(decision.matchedGroups).toContain('owner');
+    });
+
     it('denies non-owner admins when the required level is owner', () => {
       const config = makeConfig();
       const decision = evaluateAccess({

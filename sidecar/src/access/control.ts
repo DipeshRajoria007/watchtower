@@ -140,6 +140,7 @@ export function resolveRequiredAccessLevel(intent: WorkflowIntent): AccessLevel 
       return 'builder';
     case 'DEPLOY':
     case 'DEV_ASSIST':
+    case 'WEBFLOW_EDIT':
       return 'admin';
     case 'INFORMATIONAL':
     case 'CONVERSATIONAL':
@@ -213,6 +214,10 @@ function channelAllowed(
   channelId: string,
   channelType?: string,
 ): boolean {
+  // Owner is channel-unrestricted by design. The owner row's `allowedChannelIds`,
+  // `allowIm`, and `allowMpim` are still hydrated from the DB but have no effect —
+  // owners can act in any channel. Editing those fields (e.g. via direct SQL) is a
+  // no-op; configure who is an owner through `ownerSlackUserIds` instead.
   if (group.key === 'owner') {
     return true;
   }

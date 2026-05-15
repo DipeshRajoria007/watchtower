@@ -137,6 +137,11 @@ function loadAccessControlSettings(db: Database.Database): AccessControlSettings
 
   for (const row of rows) {
     const key = row.group_key;
+    // The `owner` row is accepted so the schema stays uniform across groups, but it
+    // is intentionally not editable from the Settings UI — owners are configured via
+    // `ownerSlackUserIds`. Any `manual_user_ids` / `slack_user_group_handle` seeded on
+    // this row by direct SQL will be loaded and granted rank-4 access; treat the row
+    // as system-managed and don't populate it by hand.
     if (key !== 'viewer' && key !== 'reviewer' && key !== 'builder' && key !== 'admin' && key !== 'owner') {
       continue;
     }
