@@ -19,7 +19,7 @@ import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { getBackend } from '../backends/registry.js';
 import { runAgentPipeline, formatPlanMessage, waitForApproval, buildApprovalMessage } from '../agents/pipeline.js';
 import { normalizePlannerOutput } from '../agents/normalizePlannerOutput.js';
-import { resolveRepoOrAsk } from './shared/repoResolver.js';
+import { inferRepoFromAffectedFiles, repoPathFor, resolveRepoOrAsk } from './shared/repoResolver.js';
 import { waitForClarificationWithIdle, detectClarificationLoop } from './shared/clarificationGuards.js';
 import type { ClarificationRound } from './shared/clarificationGuards.js';
 import { profileForAgentRole } from '../codex/modelProfiles.js';
@@ -164,7 +164,7 @@ type ApprovalLoopState = {
 };
 
 type ApprovalLoopOutcome =
-  | ({ kind: 'approved'; feedbackRounds: number } & ApprovalLoopState)
+  | ({ kind: 'approved'; feedbackRounds: number; pipelineCwd: string } & ApprovalLoopState)
   | { kind: 'rejected_then_cancelled'; message: string }
   | { kind: 'exhausted' }
   | { kind: 'paused'; resumeContext: ImplementationApprovalResume };
@@ -201,7 +201,6 @@ async function runApprovalLoop(input: {
     config,
     task,
     initial,
-    pipelineCwd,
     iterationStart,
     feedbackRoundsStart,
     pauseCountStart,
@@ -218,6 +217,11 @@ async function runApprovalLoop(input: {
   let { planMarkdown, planAffectedFiles, planScope, plannerOutput, plannerSessionId, planMessageTs } = initial;
   let feedbackRounds = feedbackRoundsStart;
   let pauseCount = pauseCountStart;
+  // Mutable shadow of the worktree path: revisions can flip the repo
+  // (e.g. admin redirects from newton-api → newton-web), and the coder must
+  // run against the worktree that matches the *approved* plan, not the
+  // worktree we materialized from the initial classifier guess.
+  let pipelineCwd = input.pipelineCwd;
 
   const buildResumeContext = (
     iteration: number,
@@ -323,6 +327,7 @@ async function runApprovalLoop(input: {
         plannerOutput,
         plannerSessionId,
         planMessageTs,
+        pipelineCwd,
       };
     }
 
@@ -392,6 +397,7 @@ async function runApprovalLoop(input: {
           plannerOutput,
           plannerSessionId,
           planMessageTs,
+          pipelineCwd,
         };
       }
 
@@ -492,6 +498,31 @@ Return the JSON now.`;
       planAffectedFiles =
         revisedNormalized.affectedFiles.length > 0 ? revisedNormalized.affectedFiles : planAffectedFiles;
       planScope = revisedNormalized.scope || planScope;
+
+      // If the revision swung the plan to a different repo (e.g. admin said
+      // "make changes in newton-web, not newton-api"), materialize the matching
+      // worktree before the coder runs. Without this swap the coder runs in
+      // the original repo and silently produces an empty diff because none of
+      // the affectedFiles exist there.
+      const desiredRepo = inferRepoFromAffectedFiles(planAffectedFiles);
+      if (desiredRepo) {
+        const desiredCwd = resolveWorkspace(repoPathFor(desiredRepo, config), task.event.threadTs);
+        if (desiredCwd !== pipelineCwd) {
+          logStep?.({
+            stage: 'implementation.workspace.switched',
+            message: `Plan now targets ${desiredRepo}; switching workspace.`,
+            data: { from: pipelineCwd, to: desiredCwd, repo: desiredRepo, feedbackRounds },
+          });
+          await slack.chat
+            .postMessage({
+              channel: task.event.channelId,
+              thread_ts: task.event.threadTs,
+              text: `Switching to *${desiredRepo}* based on the revised plan.`,
+            })
+            .catch(() => {});
+          pipelineCwd = desiredCwd;
+        }
+      }
 
       // Post the revised plan as a NEW message (instead of only updating the
       // original in place). The "Here's the revised plan" approval prompt
@@ -1201,6 +1232,11 @@ Write your response as a ready-to-post Slack message describing what you did.
     plannerSessionId = loopOutcome.plannerSessionId;
     planMessageTs = loopOutcome.planMessageTs;
     feedbackRounds = loopOutcome.feedbackRounds;
+    // Adopt the worktree the loop ended on. Revisions may have swapped repos
+    // mid-flight (newton-api \u2192 newton-web); the coder/reviewer/verifier
+    // pipeline below must run against that worktree, not the one chosen at
+    // initial repo classification.
+    pipelineCwd = loopOutcome.pipelineCwd;
 
     // Build the plannerStep for downstream consumption
     const plannerStep: AgentStepResult = {
