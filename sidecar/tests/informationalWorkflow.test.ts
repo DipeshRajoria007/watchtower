@@ -92,20 +92,29 @@ const baseConfig = {
   multiAgentEnabled: false,
 };
 
-function makeTask(overrides: Partial<{ channelId: string; threadTs: string; text: string; eventId: string }> = {}) {
+function makeTask(
+  overrides: Partial<{
+    channelId: string;
+    threadTs: string;
+    text: string;
+    eventId: string;
+    isOwnerAuthor: boolean;
+    userId: string;
+  }> = {},
+) {
   return {
     event: {
       eventId: overrides.eventId ?? 'Ev1',
       channelId: overrides.channelId ?? 'C1',
       threadTs: overrides.threadTs ?? '1.1',
       eventTs: overrides.threadTs ?? '1.1',
-      userId: 'U1',
+      userId: overrides.userId ?? 'U1',
       text: overrides.text ?? '<@UBOT1> how does auth work?',
       rawEvent: {},
     },
     mentionDetected: true,
     mentionType: 'bot' as const,
-    isOwnerAuthor: false,
+    isOwnerAuthor: overrides.isOwnerAuthor ?? false,
     isCoreDevAuthor: false,
     intent: 'INFORMATIONAL' as const,
   };
@@ -257,7 +266,11 @@ describe('informationalWorkflow', () => {
         .mockResolvedValueOnce(codexOk('Figma MCP is not configured in `~/.claude.json`.'));
 
       const slack = makeSlack();
-      const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+      const result = await runInformationalWorkflow({
+        task: makeTask({ isOwnerAuthor: true }),
+        config: baseConfig,
+        slack,
+      });
 
       expect(runCodex).toHaveBeenCalledTimes(3);
       expect(result.status).toBe('SUCCESS');
@@ -274,7 +287,11 @@ describe('informationalWorkflow', () => {
         .mockResolvedValueOnce(codexOk('Bot bit.'));
 
       const slack = makeSlack();
-      const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+      const result = await runInformationalWorkflow({
+        task: makeTask({ isOwnerAuthor: true }),
+        config: baseConfig,
+        slack,
+      });
 
       expect(result.status).toBe('SUCCESS');
       const webIdx = result.message?.indexOf('*Frontend (newton-web):*') ?? -1;
@@ -283,6 +300,32 @@ describe('informationalWorkflow', () => {
       expect(webIdx).toBeGreaterThanOrEqual(0);
       expect(apiIdx).toBeGreaterThan(webIdx);
       expect(selfIdx).toBeGreaterThan(apiIdx);
+    });
+
+    it('skips miniog-self fanout for non-owner authors and logs the reason', async () => {
+      vi.mocked(resolveWatchtowerPath).mockResolvedValue('/code/watchtower');
+      vi.mocked(runCodex)
+        .mockResolvedValueOnce(codexOk('Frontend answer.'))
+        .mockResolvedValueOnce(codexOk('Backend answer.'));
+
+      const slack = makeSlack();
+      const logStep = vi.fn();
+      const result = await runInformationalWorkflow({
+        task: makeTask({ isOwnerAuthor: false, userId: 'UADMIN' }),
+        config: baseConfig,
+        slack,
+        logStep,
+      });
+
+      expect(runCodex).toHaveBeenCalledTimes(2);
+      const cwds = vi.mocked(runCodex).mock.calls.map(c => c[0].cwd);
+      expect(cwds).not.toContain('/code/watchtower');
+      expect(result.status).toBe('SUCCESS');
+      expect(result.message).not.toContain('Bot internals');
+
+      const skipLog = logStep.mock.calls.find(([entry]) => entry.stage === 'informational.fanout.self.skipped');
+      expect(skipLog).toBeDefined();
+      expect(skipLog?.[0].data).toMatchObject({ reason: 'not_owner', userId: 'UADMIN' });
     });
 
     it('injects the live state snapshot into the self-inquiry prompt with the watchtower cwd', async () => {
@@ -294,7 +337,11 @@ describe('informationalWorkflow', () => {
         .mockResolvedValueOnce(codexOk('Self answer.'));
 
       const slack = makeSlack();
-      await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+      await runInformationalWorkflow({
+        task: makeTask({ isOwnerAuthor: true }),
+        config: baseConfig,
+        slack,
+      });
 
       const calls = vi.mocked(runCodex).mock.calls;
       const selfCall = calls.find(c => c[0].cwd === '/code/watchtower');
@@ -312,7 +359,11 @@ describe('informationalWorkflow', () => {
         .mockResolvedValueOnce(codexOk('NOT_APPLICABLE: not a question about the bot'));
 
       const slack = makeSlack();
-      const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+      const result = await runInformationalWorkflow({
+        task: makeTask({ isOwnerAuthor: true }),
+        config: baseConfig,
+        slack,
+      });
 
       expect(result.status).toBe('SUCCESS');
       expect(result.message).toBe('Frontend answer.');

@@ -95,7 +95,15 @@ export async function runInformationalWorkflow(params: {
 
   const selfPath = await resolveWatchtowerPath(config);
   if (selfPath) {
-    targets.push({ repo: 'miniog-self', cwd: selfPath });
+    if (task.isOwnerAuthor) {
+      targets.push({ repo: 'miniog-self', cwd: selfPath });
+    } else {
+      logStep?.({
+        stage: 'informational.fanout.self.skipped',
+        message: 'miniog-self target skipped for non-owner author.',
+        data: { reason: 'not_owner', userId: task.event.userId },
+      });
+    }
   } else {
     logStep?.({
       stage: 'informational.self.skipped',
@@ -104,7 +112,8 @@ export async function runInformationalWorkflow(params: {
     });
   }
 
-  const selfSnapshot = selfPath ? await buildLiveStateSnapshot(config) : undefined;
+  const selfTargetIncluded = targets.some(t => t.repo === 'miniog-self');
+  const selfSnapshot = selfTargetIncluded ? await buildLiveStateSnapshot(config) : undefined;
 
   let reply: string;
   let ok: boolean;

@@ -137,7 +137,7 @@ function loadAccessControlSettings(db: Database.Database): AccessControlSettings
 
   for (const row of rows) {
     const key = row.group_key;
-    if (key !== 'viewer' && key !== 'reviewer' && key !== 'builder' && key !== 'admin') {
+    if (key !== 'viewer' && key !== 'reviewer' && key !== 'builder' && key !== 'admin' && key !== 'owner') {
       continue;
     }
 

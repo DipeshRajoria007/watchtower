@@ -61,6 +61,13 @@ function makeSettings(): AppSettings {
           allowIm: true,
           allowMpim: true,
         },
+        owner: {
+          slackUserGroupHandle: '',
+          manualUserIds: '',
+          allowedChannelIds: '',
+          allowIm: false,
+          allowMpim: false,
+        },
       },
     },
   };

@@ -70,10 +70,11 @@ const adminAccessControl = () => ({
       resolvedChannelIds: [],
       resolvedUserIds: ['UADMIN'],
     },
+    owner: emptyGroup('owner'),
   },
 });
 
-function emptyGroup<K extends 'viewer' | 'reviewer' | 'builder'>(key: K) {
+function emptyGroup<K extends 'viewer' | 'reviewer' | 'builder' | 'owner'>(key: K) {
   return {
     key,
     slackUserGroupHandle: '',
