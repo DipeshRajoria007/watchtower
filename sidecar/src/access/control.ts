@@ -140,7 +140,6 @@ export function resolveRequiredAccessLevel(intent: WorkflowIntent): AccessLevel 
       return 'builder';
     case 'DEPLOY':
     case 'DEV_ASSIST':
-    case 'WEBFLOW_EDIT':
       return 'admin';
     case 'INFORMATIONAL':
     case 'CONVERSATIONAL':
@@ -154,7 +153,11 @@ export function resolveRequiredAccessLevel(intent: WorkflowIntent): AccessLevel 
 
 export function getAdminUserIds(config: AppConfig): string[] {
   if (config.accessControl) {
-    return uniqueList([...config.ownerSlackUserIds, ...config.accessControl.groups.admin.resolvedUserIds]);
+    return uniqueList([
+      ...config.ownerSlackUserIds,
+      ...config.accessControl.groups.admin.resolvedUserIds,
+      ...config.accessControl.groups.owner.resolvedUserIds,
+    ]);
   }
   return uniqueList([...config.ownerSlackUserIds, ...(config.coreDevSlackUserIds ?? [])]);
 }
@@ -246,8 +249,8 @@ export function evaluateAccess(params: {
       allowed: true,
       ownerBypass: true,
       requiredLevel,
-      matchedGroups: ['admin'],
-      userGroups: ['admin'],
+      matchedGroups: ['owner'],
+      userGroups: ['owner'],
     };
   }
 

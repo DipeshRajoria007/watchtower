@@ -3,6 +3,7 @@ import {
   buildLegacyAccessControlConfig,
   evaluateAccess,
   formatAdminMention,
+  getAdminUserIds,
   resolveRequiredAccessLevel,
   setResolvedGroupMembers,
   toResolvedAccessControlConfig,
@@ -246,6 +247,8 @@ describe('access control evaluator', () => {
 
       expect(decision.allowed).toBe(true);
       expect(decision.ownerBypass).toBe(true);
+      expect(decision.matchedGroups).toEqual(['owner']);
+      expect(decision.userGroups).toEqual(['owner']);
     });
 
     it('grants rank-4 access via the owner group when the user is not in ownerSlackUserIds', () => {
@@ -269,6 +272,17 @@ describe('access control evaluator', () => {
       expect(decision.allowed).toBe(true);
       expect(decision.ownerBypass).toBe(false);
       expect(decision.matchedGroups).toContain('owner');
+    });
+
+    it('surfaces owner-group members via getAdminUserIds for admin mentions and approval gates', () => {
+      const config = makeConfig({ ownerSlackUserIds: [] });
+      setResolvedGroupMembers({
+        config,
+        groupKey: 'owner',
+        members: ['UPROMOTED'],
+      });
+
+      expect(getAdminUserIds(config)).toContain('UPROMOTED');
     });
 
     it('denies non-owner admins when the required level is owner', () => {
