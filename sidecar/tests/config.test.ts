@@ -291,6 +291,18 @@ describe('loadConfigFromDb', () => {
       ) VALUES (?, ?, ?, ?, ?, ?)
     `,
     ).run('admin', 'platform-admins', 'U6', 'C-ADMIN', 1, 1);
+    db.prepare(
+      `
+      INSERT INTO access_control_groups(
+        group_key,
+        slack_user_group_handle,
+        manual_user_ids,
+        allowed_channel_ids,
+        allow_im,
+        allow_mpim
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `,
+    ).run('owner', '', '', '', 0, 0);
 
     db.close();
 
@@ -300,5 +312,7 @@ describe('loadConfigFromDb', () => {
     expect(config.accessControl?.groups.viewer.resolvedUserIds).toEqual(['U3']);
     expect(config.accessControl?.groups.admin.resolvedUserIds).toEqual(['U1', 'U2', 'U6']);
     expect(config.accessControl?.groups.admin.allowIm).toBe(true);
+    expect(config.accessControl?.groups.owner).toBeDefined();
+    expect(config.accessControl?.groups.owner.resolvedUserIds).toEqual(['U1', 'U2']);
   });
 });

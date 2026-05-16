@@ -3,6 +3,7 @@ import {
   buildLegacyAccessControlConfig,
   evaluateAccess,
   formatAdminMention,
+  getAdminUserIds,
   resolveRequiredAccessLevel,
   setResolvedGroupMembers,
   toResolvedAccessControlConfig,
@@ -67,6 +68,13 @@ function makeConfig(overrides?: Partial<AppConfig>): AppConfig {
             allowedChannelIds: 'C-ADMIN',
             allowIm: true,
             allowMpim: true,
+          },
+          owner: {
+            slackUserGroupHandle: '',
+            manualUserIds: '',
+            allowedChannelIds: '',
+            allowIm: false,
+            allowMpim: false,
           },
         },
       },
@@ -220,6 +228,96 @@ describe('access control evaluator', () => {
       members: ['UADMIN2', 'UOWNER1'],
     });
     expect(config.accessControl?.groups.admin.resolvedUserIds).toEqual(['UOWNER1', 'UADMIN', 'UADMIN2']);
+  });
+
+  describe('owner access level', () => {
+    it('auto-populates the owner group resolvedUserIds from ownerSlackUserIds', () => {
+      const config = makeConfig();
+      expect(config.accessControl?.groups.owner.resolvedUserIds).toEqual(['UOWNER1']);
+    });
+
+    it('grants owners rank-4 access for owner-level requirements', () => {
+      const config = makeConfig();
+      const decision = evaluateAccess({
+        config,
+        userId: 'UOWNER1',
+        channelId: 'C-UNLISTED',
+        requiredLevel: 'owner',
+      });
+
+      expect(decision.allowed).toBe(true);
+      expect(decision.ownerBypass).toBe(true);
+      expect(decision.matchedGroups).toEqual(['owner']);
+      expect(decision.userGroups).toEqual(['owner']);
+    });
+
+    it('grants rank-4 access via the owner group when the user is not in ownerSlackUserIds', () => {
+      // Configures a user who is in the owner group but NOT in ownerSlackUserIds,
+      // so the early bypass at evaluateAccess does not fire and the rank-4 group path
+      // is exercised on its own.
+      const config = makeConfig({ ownerSlackUserIds: [] });
+      setResolvedGroupMembers({
+        config,
+        groupKey: 'owner',
+        members: ['UPROMOTED'],
+      });
+
+      const decision = evaluateAccess({
+        config,
+        userId: 'UPROMOTED',
+        channelId: 'C-UNLISTED',
+        requiredLevel: 'owner',
+      });
+
+      expect(decision.allowed).toBe(true);
+      expect(decision.ownerBypass).toBe(false);
+      expect(decision.matchedGroups).toContain('owner');
+    });
+
+    it('surfaces owner-group members via getAdminUserIds for admin mentions and approval gates', () => {
+      const config = makeConfig({ ownerSlackUserIds: [] });
+      setResolvedGroupMembers({
+        config,
+        groupKey: 'owner',
+        members: ['UPROMOTED'],
+      });
+
+      expect(getAdminUserIds(config)).toContain('UPROMOTED');
+    });
+
+    it('denies non-owner admins when the required level is owner', () => {
+      const config = makeConfig();
+      const decision = evaluateAccess({
+        config,
+        userId: 'UADMIN',
+        channelId: 'C-ADMIN',
+        requiredLevel: 'owner',
+      });
+
+      expect(decision.allowed).toBe(false);
+      expect(decision.denyReason).toBe('INSUFFICIENT_ROLE');
+    });
+
+    it('treats the owner group as channel-unrestricted (no allowedChannel match required)', () => {
+      const config = makeConfig({
+        ownerSlackUserIds: [],
+      });
+      setResolvedGroupMembers({
+        config,
+        groupKey: 'owner',
+        members: ['UPROMOTED'],
+      });
+
+      const decision = evaluateAccess({
+        config,
+        userId: 'UPROMOTED',
+        channelId: 'C-UNLISTED',
+        requiredLevel: 'admin',
+      });
+
+      expect(decision.allowed).toBe(true);
+      expect(decision.matchedGroups).toContain('owner');
+    });
   });
 
   describe('denial reasons', () => {
@@ -384,6 +482,13 @@ describe('formatAdminMention', () => {
               manualUserIds: 'UOWNER1,UCORE2',
               allowedChannelIds: '',
               allowIm: true,
+              allowMpim: false,
+            },
+            owner: {
+              slackUserGroupHandle: '',
+              manualUserIds: '',
+              allowedChannelIds: '',
+              allowIm: false,
               allowMpim: false,
             },
           },

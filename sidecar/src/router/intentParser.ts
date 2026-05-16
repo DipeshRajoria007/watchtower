@@ -179,14 +179,15 @@ function inferIntent(
     return { intent: 'DEPLOY' };
   }
 
-  // Intent classification for PR_REVIEW vs OWNER_AUTOPILOT is handled by the
-  // AI classifier in routeTask. Here we return OWNER_AUTOPILOT as the default
-  // for any bot mention that is not a DEV_ASSIST command.
-
-  // Any bot mention (owner or non-owner) routes to OWNER_AUTOPILOT.
-  // The workflow itself determines trust level based on ownerSlackUserIds.
+  // Intent classification (PR_REVIEW, INFORMATIONAL, etc.) is handled by the
+  // AI classifier in routeTask. Here we set the pre-classifier default:
+  // - Owners: OWNER_AUTOPILOT (preserves owner-only relaxed prompt path in implementationWorkflow).
+  // - Non-owners: IMPLEMENTATION. Both intents map to the same required access level
+  //   (builder) and the same downstream workflow, but the IMPLEMENTATION label avoids
+  //   tagging non-owner jobs with an owner-implying name.
   if (mention.detected && mention.type === 'bot') {
-    return { intent: 'OWNER_AUTOPILOT' };
+    const isOwner = config.ownerSlackUserIds.includes(event.userId);
+    return { intent: isOwner ? 'OWNER_AUTOPILOT' : 'IMPLEMENTATION' };
   }
 
   return { intent: 'UNKNOWN' };

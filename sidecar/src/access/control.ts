@@ -8,13 +8,14 @@ import type {
   WorkflowIntent,
 } from '../types/contracts.js';
 
-export const ACCESS_GROUP_KEYS: AccessGroupKey[] = ['viewer', 'reviewer', 'builder', 'admin'];
+export const ACCESS_GROUP_KEYS: AccessGroupKey[] = ['viewer', 'reviewer', 'builder', 'admin', 'owner'];
 
 const ACCESS_RANK: Record<AccessLevel, number> = {
   viewer: 0,
   reviewer: 1,
   builder: 2,
   admin: 3,
+  owner: 4,
 };
 
 export type AccessDenyReason = 'NOT_ON_ACCESS_LIST' | 'INSUFFICIENT_ROLE' | 'CHANNEL_NOT_ENABLED';
@@ -47,6 +48,7 @@ export function createDefaultAccessControlSettings(): AccessControlSettings {
       reviewer: createDefaultAccessGroupSettings(),
       builder: createDefaultAccessGroupSettings(),
       admin: createDefaultAccessGroupSettings(),
+      owner: createDefaultAccessGroupSettings(),
     },
   };
 }
@@ -83,12 +85,13 @@ function hydrateAccessControlSettings(settings?: Partial<AccessControlSettings> 
 
 function toResolvedAccessGroup(key: AccessGroupKey, group: AccessGroupSettings, ownerSlackUserIds: string[]) {
   const manualUserIds = parseDelimitedIds(group.manualUserIds);
+  const includesOwners = key === 'admin' || key === 'owner';
 
   return {
     key,
     ...group,
     resolvedChannelIds: parseDelimitedIds(group.allowedChannelIds),
-    resolvedUserIds: key === 'admin' ? uniqueList([...ownerSlackUserIds, ...manualUserIds]) : manualUserIds,
+    resolvedUserIds: includesOwners ? uniqueList([...ownerSlackUserIds, ...manualUserIds]) : manualUserIds,
   };
 }
 
@@ -123,6 +126,7 @@ export function toResolvedAccessControlConfig(
       reviewer: toResolvedAccessGroup('reviewer', hydrated.groups.reviewer, ownerSlackUserIds),
       builder: toResolvedAccessGroup('builder', hydrated.groups.builder, ownerSlackUserIds),
       admin: toResolvedAccessGroup('admin', hydrated.groups.admin, ownerSlackUserIds),
+      owner: toResolvedAccessGroup('owner', hydrated.groups.owner, ownerSlackUserIds),
     },
   };
 }
@@ -149,7 +153,11 @@ export function resolveRequiredAccessLevel(intent: WorkflowIntent): AccessLevel 
 
 export function getAdminUserIds(config: AppConfig): string[] {
   if (config.accessControl) {
-    return uniqueList([...config.ownerSlackUserIds, ...config.accessControl.groups.admin.resolvedUserIds]);
+    return uniqueList([
+      ...config.ownerSlackUserIds,
+      ...config.accessControl.groups.admin.resolvedUserIds,
+      ...config.accessControl.groups.owner.resolvedUserIds,
+    ]);
   }
   return uniqueList([...config.ownerSlackUserIds, ...(config.coreDevSlackUserIds ?? [])]);
 }
@@ -195,10 +203,10 @@ export function setResolvedGroupMembers(params: {
 }): void {
   const accessControl = getConfiguredAccessControl(params.config);
   const manualUserIds = parseDelimitedIds(accessControl.groups[params.groupKey].manualUserIds);
-  const nextMembers =
-    params.groupKey === 'admin'
-      ? uniqueList([...params.config.ownerSlackUserIds, ...manualUserIds, ...params.members])
-      : uniqueList([...manualUserIds, ...params.members]);
+  const includesOwners = params.groupKey === 'admin' || params.groupKey === 'owner';
+  const nextMembers = includesOwners
+    ? uniqueList([...params.config.ownerSlackUserIds, ...manualUserIds, ...params.members])
+    : uniqueList([...manualUserIds, ...params.members]);
 
   accessControl.groups[params.groupKey].resolvedUserIds = nextMembers;
   params.config.accessControl = accessControl;
@@ -209,6 +217,13 @@ function channelAllowed(
   channelId: string,
   channelType?: string,
 ): boolean {
+  // Owner is channel-unrestricted by design. The owner row's `allowedChannelIds`,
+  // `allowIm`, and `allowMpim` are still hydrated from the DB but have no effect —
+  // owners can act in any channel. Editing those fields (e.g. via direct SQL) is a
+  // no-op; configure who is an owner through `ownerSlackUserIds` instead.
+  if (group.key === 'owner') {
+    return true;
+  }
   if (channelType === 'im') {
     return group.allowIm;
   }
@@ -234,8 +249,8 @@ export function evaluateAccess(params: {
       allowed: true,
       ownerBypass: true,
       requiredLevel,
-      matchedGroups: ['admin'],
-      userGroups: ['admin'],
+      matchedGroups: ['owner'],
+      userGroups: ['owner'],
     };
   }
 

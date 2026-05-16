@@ -410,8 +410,8 @@ struct AccessControlSettings {
     groups: BTreeMap<String, AccessGroupSettings>,
 }
 
-fn access_group_keys() -> [&'static str; 4] {
-    ["viewer", "reviewer", "builder", "admin"]
+fn access_group_keys() -> [&'static str; 5] {
+    ["viewer", "reviewer", "builder", "admin", "owner"]
 }
 
 fn default_access_group_settings() -> AccessGroupSettings {

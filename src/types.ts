@@ -256,7 +256,7 @@ export type AgentBackendId = 'codex' | 'claude-code';
 
 export type AccessMode = 'audit' | 'enforce';
 
-export type AccessGroupKey = 'viewer' | 'reviewer' | 'builder' | 'admin';
+export type AccessGroupKey = 'viewer' | 'reviewer' | 'builder' | 'admin' | 'owner';
 
 export type AccessGroupSettings = {
   slackUserGroupHandle: string;

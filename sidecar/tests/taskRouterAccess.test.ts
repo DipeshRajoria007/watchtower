@@ -120,6 +120,13 @@ function makeConfig(mode: 'audit' | 'enforce'): AppConfig {
             allowIm: true,
             allowMpim: true,
           },
+          owner: {
+            slackUserGroupHandle: '',
+            manualUserIds: '',
+            allowedChannelIds: '',
+            allowIm: false,
+            allowMpim: false,
+          },
         },
       },
       ['UOWNER1'],

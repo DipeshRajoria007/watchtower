@@ -56,7 +56,7 @@ describe('intentParser', () => {
     expect(result?.number).toBe(123);
   });
 
-  it('normalizes PR-containing message to OWNER_AUTOPILOT (AI classifier refines in router)', () => {
+  it('normalizes non-owner PR-containing message to IMPLEMENTATION (AI classifier refines in router)', () => {
     const task = normalizeTask(
       {
         ...baseEvent,
@@ -66,15 +66,15 @@ describe('intentParser', () => {
       [],
     );
 
-    // normalizeTask returns OWNER_AUTOPILOT as preliminary intent;
+    // Non-owner bot mentions get IMPLEMENTATION as the preliminary intent;
     // the AI classifier in routeTask refines it to PR_REVIEW.
-    expect(task.intent).toBe('OWNER_AUTOPILOT');
+    expect(task.intent).toBe('IMPLEMENTATION');
     expect(task.mentionDetected).toBe(true);
     expect(task.isOwnerAuthor).toBe(false);
     expect(task.prContext?.repo).toBe('newton-web');
   });
 
-  it('routes any bot-mentioned bug request to owner-autopilot', () => {
+  it('routes any bot-mentioned bug request from a non-owner to implementation', () => {
     const task = normalizeTask(
       {
         ...baseEvent,
@@ -84,7 +84,7 @@ describe('intentParser', () => {
       [],
     );
 
-    expect(task.intent).toBe('OWNER_AUTOPILOT');
+    expect(task.intent).toBe('IMPLEMENTATION');
 
     const otherChannel = normalizeTask(
       {
@@ -96,10 +96,10 @@ describe('intentParser', () => {
       [],
     );
 
-    expect(otherChannel.intent).toBe('OWNER_AUTOPILOT');
+    expect(otherChannel.intent).toBe('IMPLEMENTATION');
   });
 
-  it('returns OWNER_AUTOPILOT for PR URL in any channel (AI refines in router)', () => {
+  it('returns IMPLEMENTATION for non-owner PR URL in any channel (AI refines in router)', () => {
     const task = normalizeTask(
       {
         ...baseEvent,
@@ -110,7 +110,7 @@ describe('intentParser', () => {
       [],
     );
 
-    expect(task.intent).toBe('OWNER_AUTOPILOT');
+    expect(task.intent).toBe('IMPLEMENTATION');
     expect(task.mentionDetected).toBe(true);
     expect(task.prContext?.number).toBe(22);
   });
@@ -226,7 +226,7 @@ describe('intentParser', () => {
     expect(task.intent).toBe('OWNER_AUTOPILOT');
   });
 
-  it('extracts PR context even though intent stays OWNER_AUTOPILOT (AI refines in router)', () => {
+  it('extracts PR context for non-owner mentions and tags intent as IMPLEMENTATION (AI refines in router)', () => {
     const task = normalizeTask(
       {
         ...baseEvent,
@@ -236,8 +236,38 @@ describe('intentParser', () => {
       [],
     );
 
-    expect(task.intent).toBe('OWNER_AUTOPILOT');
+    expect(task.intent).toBe('IMPLEMENTATION');
     expect(task.prContext?.number).toBe(99);
+  });
+
+  it('defaults non-owner bot mentions to IMPLEMENTATION (no owner-implying label)', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        userId: 'URANDOM',
+        text: '<@UBOT1> can you look into this?',
+      },
+      config,
+      [],
+    );
+
+    expect(task.intent).toBe('IMPLEMENTATION');
+    expect(task.isOwnerAuthor).toBe(false);
+  });
+
+  it('defaults owner bot mentions to OWNER_AUTOPILOT (preserves owner-only relaxed prompt path)', () => {
+    const task = normalizeTask(
+      {
+        ...baseEvent,
+        userId: 'UOWNER1',
+        text: '<@UBOT1> ship it',
+      },
+      config,
+      [],
+    );
+
+    expect(task.intent).toBe('OWNER_AUTOPILOT');
+    expect(task.isOwnerAuthor).toBe(true);
   });
 
   it('routes numbered wt command from owner to dev-assist', () => {
