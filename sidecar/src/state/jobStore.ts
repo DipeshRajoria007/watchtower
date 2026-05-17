@@ -1291,6 +1291,36 @@ export class JobStore {
     return result.changes;
   }
 
+  /**
+   * On startup, mark any launchpad request stuck in a non-terminal state
+   * (RUNNING / CLAIMED / QUEUED with a linked job_id) as FAILED when its
+   * underlying job is no longer in a non-terminal state. This complements
+   * `cleanupOrphanedRunningJobs` — that method fails the jobs row but never
+   * touches launchpad_requests, so a RUNNING launchpad request whose job
+   * just got marked FAILED would otherwise stay stranded indefinitely with
+   * no DM delivered to the requester.
+   *
+   * Must run AFTER `cleanupOrphanedRunningJobs` so the linked job rows are
+   * already in their terminal state at the time of the JOIN.
+   *
+   * Returns the number of launchpad_requests rows reconciled.
+   */
+  reconcileFailedOrphanedLaunchpadRequests(): number {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE launchpad_requests
+         SET status = 'FAILED',
+             error_message = COALESCE(error_message, 'Process lost during sidecar restart'),
+             updated_at = ?
+         WHERE status IN ('RUNNING', 'CLAIMED', 'QUEUED')
+           AND job_id IS NOT NULL
+           AND job_id IN (SELECT id FROM jobs WHERE status = 'FAILED')`,
+      )
+      .run(now);
+    return result.changes;
+  }
+
   markJob(
     jobId: string,
     status: JobRecord['status'],
