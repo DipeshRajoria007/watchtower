@@ -3005,6 +3005,14 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
     let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN core_dev_slack_user_group TEXT NOT NULL DEFAULT ''", []);
     let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN vault_path TEXT NOT NULL DEFAULT ''", []);
     let _ = connection.execute("ALTER TABLE app_settings ADD COLUMN vault_enabled INTEGER NOT NULL DEFAULT 0", []);
+    // mini_og_repo_root: read_app_settings selects this column unconditionally. Fresh-install
+    // DBs created by initialize_db never had the column until the sidecar self-migration ran,
+    // so the very first read_app_settings call from the desktop on launch crashed with
+    // "no such column: mini_og_repo_root". Add it here so the Rust read path is always safe.
+    let _ = connection.execute(
+        "ALTER TABLE app_settings ADD COLUMN mini_og_repo_root TEXT NOT NULL DEFAULT '/Users/dipesh/code/mini-og'",
+        [],
+    );
     ensure_access_control_seeded(&connection)?;
 
     Ok(())
@@ -4428,6 +4436,21 @@ mod tests {
                 .manual_user_ids,
             "UADMIN1,UADMIN2"
         );
+
+        drop(connection);
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn initialize_db_creates_mini_og_repo_root_column_for_fresh_install() {
+        // Regression for #279: read_app_settings selects mini_og_repo_root unconditionally,
+        // so the column must exist before any caller reads app_settings on a fresh DB.
+        let db_path = test_db_path();
+        initialize_db(&db_path).expect("initialize db");
+        let connection = Connection::open(&db_path).expect("open db");
+
+        let settings = read_app_settings(&connection).expect("read settings");
+        assert_eq!(settings.mini_og_repo_root, "/Users/dipesh/code/mini-og");
 
         drop(connection);
         let _ = fs::remove_file(db_path);
