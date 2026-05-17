@@ -631,7 +631,27 @@ export async function runPrReviewWorkflow(params: {
 
     const diff = await fetchPrDiff({ prContext, githubToken });
     if (!diff) {
-      logStep?.({ stage: 'pr_review.diff.empty', message: 'PR diff is empty — cannot run review.', level: 'WARN' });
+      logStep?.({
+        stage: 'pr_review.diff.empty',
+        message: 'PR diff is empty — failing review to prevent silent approval of an unreviewed PR.',
+        level: 'ERROR',
+      });
+      const failureMessage =
+        'PR diff fetch returned empty — review not submitted. Re-trigger after confirming the PR has changes.';
+      await slack.chat
+        .postMessage({
+          channel: task.event.channelId,
+          thread_ts: task.event.threadTs,
+          text: failureMessage,
+        })
+        .catch(() => {});
+      return {
+        workflow: 'PR_REVIEW',
+        status: 'FAILED',
+        message: failureMessage,
+        notifyDesktop: true,
+        slackPosted: true,
+      };
     }
 
     logStep?.({
