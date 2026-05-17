@@ -598,15 +598,15 @@ async fn get_dashboard_data(state: State<'_, AppState>) -> Result<DashboardData,
 
     let active_jobs = query_runs(
         &connection,
-        "SELECT id, workflow, status, channel_id, thread_ts, created_at, updated_at, error_message, payload_json FROM jobs WHERE status = 'RUNNING' ORDER BY updated_at DESC LIMIT 50",
+        "SELECT id, COALESCE(executed_workflow, workflow) AS workflow, status, channel_id, thread_ts, created_at, updated_at, error_message, payload_json FROM jobs WHERE status = 'RUNNING' ORDER BY updated_at DESC LIMIT 50",
     )?;
     let recent_runs = query_runs(
         &connection,
-        "SELECT id, workflow, status, channel_id, thread_ts, created_at, updated_at, error_message, payload_json FROM jobs ORDER BY updated_at DESC LIMIT 50",
+        "SELECT id, COALESCE(executed_workflow, workflow) AS workflow, status, channel_id, thread_ts, created_at, updated_at, error_message, payload_json FROM jobs ORDER BY updated_at DESC LIMIT 50",
     )?;
     let failures = query_runs(
         &connection,
-        "SELECT id, workflow, status, channel_id, thread_ts, created_at, updated_at, error_message, payload_json FROM jobs WHERE status = 'FAILED' ORDER BY updated_at DESC LIMIT 50",
+        "SELECT id, COALESCE(executed_workflow, workflow) AS workflow, status, channel_id, thread_ts, created_at, updated_at, error_message, payload_json FROM jobs WHERE status = 'FAILED' ORDER BY updated_at DESC LIMIT 50",
     )?;
     let metrics = query_dashboard_metrics(&connection)?;
     let learning = query_learning_insights(&connection)?;
@@ -3013,6 +3013,11 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
         "ALTER TABLE app_settings ADD COLUMN mini_og_repo_root TEXT NOT NULL DEFAULT '/Users/dipesh/code/mini-og'",
         [],
     );
+    // executed_workflow tracks the workflow that actually ran after router AI
+    // reclassification. The sidecar's listDevRuns query reads it via COALESCE so
+    // dashboard surfaces show the right label without disturbing jobs.workflow
+    // (which pauseResume uses for resume detection).
+    let _ = connection.execute("ALTER TABLE jobs ADD COLUMN executed_workflow TEXT", []);
     ensure_access_control_seeded(&connection)?;
 
     Ok(())

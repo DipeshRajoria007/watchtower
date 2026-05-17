@@ -530,6 +530,16 @@ export class JobStore {
     }
 
     try {
+      // Tracks the workflow that actually executed after router reclassification.
+      // jobs.workflow stays as the pre-router intent (resume detection at
+      // pausedResume.ts relies on it), so we surface the executed workflow via
+      // a separate column. UI surfaces read COALESCE(executed_workflow, workflow).
+      this.db.exec(`ALTER TABLE jobs ADD COLUMN executed_workflow TEXT`);
+    } catch {
+      /* column already exists */
+    }
+
+    try {
       this.db.exec(`UPDATE app_settings SET agent_backend = 'codex' WHERE agent_backend = 'cursor'`);
     } catch {
       /* column may not exist on very old installs; harmless */
@@ -1324,8 +1334,39 @@ export class JobStore {
   markJob(
     jobId: string,
     status: JobRecord['status'],
-    options?: { errorMessage?: string; result?: Record<string, unknown> },
+    options?: {
+      errorMessage?: string;
+      result?: Record<string, unknown>;
+      /**
+       * Workflow that actually executed (after router AI reclassification).
+       * Stored in jobs.executed_workflow without overwriting jobs.workflow —
+       * the latter remains the pre-router intent that pauseResume relies on
+       * to detect what kind of resume signal to accept.
+       */
+      executedWorkflow?: WorkflowIntent;
+    },
   ): void {
+    if (options?.executedWorkflow !== undefined) {
+      this.db
+        .prepare(
+          `UPDATE jobs
+           SET status = ?,
+               error_message = ?,
+               result_json = ?,
+               executed_workflow = ?,
+               updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          status,
+          options?.errorMessage ?? null,
+          options?.result ? JSON.stringify(options.result) : null,
+          options.executedWorkflow,
+          new Date().toISOString(),
+          jobId,
+        );
+      return;
+    }
     this.db
       .prepare(
         `UPDATE jobs
@@ -2416,10 +2457,14 @@ export class JobStore {
     errorMessage?: string;
   }> {
     const safeLimit = Math.min(Math.max(limit, 1), 50);
+    // COALESCE(executed_workflow, workflow): when the router AI reclassifies a
+    // job mid-run, executed_workflow holds the workflow that actually ran. Falling
+    // back to the pre-router workflow keeps history accurate for jobs created
+    // before this column existed.
     const rows = status
       ? (
           this.db.prepare(
-            `SELECT id, workflow, status, updated_at, error_message
+            `SELECT id, COALESCE(executed_workflow, workflow) AS workflow, status, updated_at, error_message
            FROM jobs
            WHERE status = ?
            ORDER BY updated_at DESC
@@ -2439,7 +2484,7 @@ export class JobStore {
         ).all(status, safeLimit)
       : (
           this.db.prepare(
-            `SELECT id, workflow, status, updated_at, error_message
+            `SELECT id, COALESCE(executed_workflow, workflow) AS workflow, status, updated_at, error_message
            FROM jobs
            ORDER BY updated_at DESC
            LIMIT ?`,

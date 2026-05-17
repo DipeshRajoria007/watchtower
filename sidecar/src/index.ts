@@ -809,8 +809,12 @@ async function processEventClaimed(event: SlackEventEnvelope, client: WebClient)
             notifyDesktop: result.notifyDesktop,
           },
         });
+        // Persist the workflow that actually ran (post-router reclassification)
+        // so dashboard surfaces show the right label without disturbing
+        // jobs.workflow (which pauseResume uses for resume detection).
+        const executedWorkflow = result.workflow !== routedTask.intent ? result.workflow : undefined;
         if (result.status === 'SUCCESS') {
-          store.markJob(jobId, 'SUCCESS', { result: result.result });
+          store.markJob(jobId, 'SUCCESS', { result: result.result, executedWorkflow });
         } else if (result.status === 'PAUSED') {
           // For PAUSED jobs the workflow's resumeContext (if it set one) is the
           // payload that matters — it's what loadResumeContext + the sweeper
@@ -818,13 +822,18 @@ async function processEventClaimed(event: SlackEventEnvelope, client: WebClient)
           // without a resume context (e.g. desktop-routing on uncertain repo).
           store.markJob(jobId, 'PAUSED', {
             result: (result.resumeContext as Record<string, unknown> | undefined) ?? result.result,
+            executedWorkflow,
           });
         } else if (result.status === 'SKIPPED') {
-          store.markJob(jobId, 'SKIPPED', { result: result.result });
+          store.markJob(jobId, 'SKIPPED', { result: result.result, executedWorkflow });
         } else if (result.status === 'CANCELLED') {
-          store.markJob(jobId, 'CANCELLED', { result: result.result });
+          store.markJob(jobId, 'CANCELLED', { result: result.result, executedWorkflow });
         } else {
-          store.markJob(jobId, 'FAILED', { errorMessage: result.message, result: result.result });
+          store.markJob(jobId, 'FAILED', {
+            errorMessage: result.message,
+            result: result.result,
+            executedWorkflow,
+          });
         }
 
         try {
