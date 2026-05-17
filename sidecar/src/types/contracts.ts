@@ -13,6 +13,7 @@ export type WorkflowIntent =
   | 'DEV_ASSIST'
   | 'DEPLOY'
   | 'MINIOG_DOSSIER'
+  | 'WEBFLOW_EDIT'
   | 'UNKNOWN';
 export type WorkflowStatus = 'SUCCESS' | 'FAILED' | 'PAUSED' | 'SKIPPED' | 'CANCELLED';
 export type JobLogLevel = 'INFO' | 'WARN' | 'ERROR';
