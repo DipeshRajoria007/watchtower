@@ -394,6 +394,13 @@ export function createDossierStore(db: Database.Database): DossierStore {
 
   const deletePinnedByIdStmt = db.prepare(`DELETE FROM user_pinned_facts WHERE id = ? AND user_id = ?`);
 
+  // Per-user "this user was edited externally" signal — written by the desktop
+  // Tauri commands (save_dossier_field, forget_dossier_field, add_pinned_fact,
+  // remove_pinned_fact) so getDossier knows to invalidate the cache and queue a
+  // vault render even though those writes never go through this store.
+  const selectCacheSignalStmt = db.prepare(`SELECT updated_at FROM dossier_cache_signals WHERE user_id = ?`);
+  const lastSeenSignal = new Map<string, string>();
+
   // --- Lazy rollup support (Phase 1) -------------------------------------
 
   const probeNewSignal = db.prepare(
@@ -599,6 +606,17 @@ export function createDossierStore(db: Database.Database): DossierStore {
     },
 
     getDossier(userId) {
+      // External-edit detection: the desktop writes dossier_cache_signals every
+      // time it mutates a user via Tauri. If the row is newer than the last
+      // value we saw for this user, invalidate the cache and queue a vault
+      // render before serving the read. Single indexed PK lookup; sub-ms cost.
+      const signalRow = selectCacheSignalStmt.get(userId) as { updated_at?: string } | undefined;
+      const signalAt = signalRow?.updated_at;
+      if (signalAt && signalAt !== lastSeenSignal.get(userId)) {
+        cache.invalidate(userId);
+        scheduleVaultRender({ kind: 'user', userId });
+        lastSeenSignal.set(userId, signalAt);
+      }
       const cached = cache.get(userId);
       if (cached) return cached;
       const now = new Date();

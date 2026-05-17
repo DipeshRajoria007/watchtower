@@ -451,6 +451,18 @@ export class JobStore {
         updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_user_pinned_facts_user ON user_pinned_facts(user_id, created_at);
+
+      -- Signal table used by the desktop Tauri commands (save_dossier_field,
+      -- forget_dossier_field, add_pinned_fact, remove_pinned_fact) to notify the
+      -- sidecar that a user's dossier has been edited externally. The sidecar's
+      -- dossierStore.getDossier checks this on every call; when the signal is
+      -- newer than its last-seen value the cache is invalidated and a vault
+      -- render is queued. This is the SQLite-only bridge between desktop and
+      -- sidecar — no IPC channel is required.
+      CREATE TABLE IF NOT EXISTS dossier_cache_signals (
+        user_id TEXT PRIMARY KEY,
+        updated_at TEXT NOT NULL
+      );
     `);
 
     try {

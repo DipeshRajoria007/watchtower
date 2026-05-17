@@ -192,3 +192,58 @@ describe('formatDossierForPrompt', () => {
     expect(summary).not.toContain('Preferred tone');
   });
 });
+
+describe('dossier_cache_signals bridge (#284)', () => {
+  it('invalidates the in-memory cache when an external write bumps the signal row', () => {
+    // Simulate the desktop Tauri path: it writes directly to user_dossiers and
+    // then upserts the signal row. The sidecar's getDossier must detect the
+    // signal and serve the fresh row instead of its stale cached copy.
+    const store = makeStore();
+    const dossiers = store.dossierStore();
+
+    dossiers.setRole('U_SIGNAL', 'pm');
+    // Warm the cache with the current value.
+    expect(dossiers.getDossier('U_SIGNAL').profile?.role).toBe('pm');
+
+    const db = (store as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } }).db;
+
+    // Imitate the desktop: write the role directly to SQLite (bypassing the
+    // sidecar mutator that would have invalidated the cache itself).
+    db.prepare(`UPDATE user_dossiers SET role = 'dev' WHERE user_id = ?`).run('U_SIGNAL');
+
+    // Without a signal write, the cache would still return 'pm'. With the
+    // signal, the sidecar should detect the external edit and reload.
+    db.prepare(
+      `INSERT INTO dossier_cache_signals(user_id, updated_at) VALUES(?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET updated_at = excluded.updated_at`,
+    ).run('U_SIGNAL', new Date().toISOString());
+
+    const reloaded = dossiers.getDossier('U_SIGNAL');
+    expect(reloaded.profile?.role).toBe('dev');
+    store.close();
+  });
+
+  it('does not invalidate on repeat reads when the signal has not changed', () => {
+    // After the first read picks up the signal, subsequent reads must NOT
+    // keep invalidating the cache — that would defeat its purpose.
+    const store = makeStore();
+    const dossiers = store.dossierStore();
+    dossiers.setRole('U_REPEAT', 'pm');
+
+    const db = (store as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } }).db;
+    db.prepare(
+      `INSERT INTO dossier_cache_signals(user_id, updated_at) VALUES(?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET updated_at = excluded.updated_at`,
+    ).run('U_REPEAT', '2026-05-17T00:00:00Z');
+
+    // First read after the signal: should pick up the value and remember it.
+    dossiers.getDossier('U_REPEAT');
+    // Mutate DB silently again. With a STABLE signal value the cache should
+    // still serve its memoized copy and NOT reflect the silent change.
+    db.prepare(`UPDATE user_dossiers SET role = 'dev' WHERE user_id = ?`).run('U_REPEAT');
+
+    const repeated = dossiers.getDossier('U_REPEAT');
+    expect(repeated.profile?.role).toBe('pm'); // cache still trusted
+    store.close();
+  });
+});
