@@ -722,8 +722,15 @@ describe('devAssistWorkflow', () => {
       store,
     });
 
-    expect(swarmResult.status).toBe('SUCCESS');
+    expect(swarmResult.status).toBe('FAILED');
     expect(swarmResult.result?.command).toBe('MISSION_RUN_SWARM');
+    expect(swarmResult.result?.started).toBe(false);
+    expect(swarmResult.result?.reason).toBe('not_implemented');
+    expect(slack.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('not implemented yet'),
+      }),
+    );
   });
 
   it('explains that wt trust is managed from settings', async () => {
