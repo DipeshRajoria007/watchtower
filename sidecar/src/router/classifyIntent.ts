@@ -62,10 +62,16 @@ function buildClassifyUserPrompt(params: {
   return lines.join('\n');
 }
 
+// Fall back to INFORMATIONAL (viewer-level read-only access) instead of IMPLEMENTATION
+// (builder-level write access) when classification fails. Previously a transient classifier
+// outage could deny a viewer's read-only question in a DM, or escalate it into the
+// implementation workflow in a channel where they had only viewer/reviewer access.
+// INFORMATIONAL keeps the request answerable in the same surfaces without granting
+// privileges the user did not intend to invoke.
 const SAFE_FALLBACK: IntentClassification = {
-  intent: 'IMPLEMENTATION',
-  confidence: 0.5,
-  reasoning: 'Classification failed — defaulting to IMPLEMENTATION to avoid skipping a real request.',
+  intent: 'INFORMATIONAL',
+  confidence: 0,
+  reasoning: 'Classifier failed; using low-risk INFORMATIONAL fallback.',
 };
 
 const SILENT_FALLBACK: IntentClassification = {
@@ -121,7 +127,7 @@ export async function classifyWorkflowIntent(params: {
     if (!result.ok || !result.parsedJson) {
       logStep?.({
         stage: 'router.classify.fallback',
-        message: `Classification AI call failed — using ${isIndirectMention ? 'NONE' : 'IMPLEMENTATION'} fallback.`,
+        message: `Classification AI call failed — using ${isIndirectMention ? 'NONE' : 'INFORMATIONAL'} fallback.`,
         level: 'WARN',
         data: {
           ok: result.ok,
@@ -137,7 +143,7 @@ export async function classifyWorkflowIntent(params: {
       ? ['PR_REVIEW', 'IMPLEMENTATION', 'INVESTIGATION', 'INFORMATIONAL', 'CONVERSATIONAL', 'NONE']
       : ['PR_REVIEW', 'IMPLEMENTATION', 'INVESTIGATION', 'INFORMATIONAL', 'CONVERSATIONAL'];
 
-    const fallbackIntent = isIndirectMention ? 'NONE' : 'IMPLEMENTATION';
+    const fallbackIntent = isIndirectMention ? 'NONE' : 'INFORMATIONAL';
     const intent = validIntents.includes(raw.intent as WorkflowIntent)
       ? (raw.intent as WorkflowIntent)
       : fallbackIntent;
@@ -157,7 +163,7 @@ export async function classifyWorkflowIntent(params: {
   } catch (error) {
     logStep?.({
       stage: 'router.classify.error',
-      message: `Classification threw unexpectedly — using ${isIndirectMention ? 'NONE' : 'IMPLEMENTATION'} fallback: ${String(error)}`,
+      message: `Classification threw unexpectedly — using ${isIndirectMention ? 'NONE' : 'INFORMATIONAL'} fallback: ${String(error)}`,
       level: 'WARN',
     });
     return isIndirectMention ? SILENT_FALLBACK : SAFE_FALLBACK;

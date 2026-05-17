@@ -61,7 +61,11 @@ describe('classifyWorkflowIntent', () => {
     expect(result.intent).toBe('PR_REVIEW');
   });
 
-  it('falls back to IMPLEMENTATION when codex call fails', async () => {
+  it('falls back to INFORMATIONAL (low-risk read-only) when codex call fails', async () => {
+    // Regression for #280: a classifier outage used to fall back to IMPLEMENTATION,
+    // which required builder-level access and could deny a viewer's DM or escalate
+    // a read-only ask into the implementation workflow. INFORMATIONAL keeps the ask
+    // answerable at viewer-level.
     vi.mocked(runCodex).mockResolvedValueOnce({
       ok: false,
       exitCode: 1,
@@ -72,11 +76,11 @@ describe('classifyWorkflowIntent', () => {
       parsedJson: undefined,
     });
     const result = await classifyWorkflowIntent({ userMessage: 'do something', hasPrUrl: false });
-    expect(result.intent).toBe('IMPLEMENTATION');
-    expect(result.confidence).toBe(0.5);
+    expect(result.intent).toBe('INFORMATIONAL');
+    expect(result.confidence).toBe(0);
   });
 
-  it('falls back to IMPLEMENTATION when JSON parsing fails', async () => {
+  it('falls back to INFORMATIONAL when JSON parsing fails', async () => {
     vi.mocked(runCodex).mockResolvedValueOnce({
       ok: true,
       exitCode: 0,
@@ -87,10 +91,10 @@ describe('classifyWorkflowIntent', () => {
       parsedJson: undefined,
     });
     const result = await classifyWorkflowIntent({ userMessage: 'build a feature', hasPrUrl: false });
-    expect(result.intent).toBe('IMPLEMENTATION');
+    expect(result.intent).toBe('INFORMATIONAL');
   });
 
-  it('falls back to IMPLEMENTATION for invalid intent value', async () => {
+  it('falls back to INFORMATIONAL for invalid intent value', async () => {
     vi.mocked(runCodex).mockResolvedValueOnce({
       ok: true,
       exitCode: 0,
@@ -101,13 +105,13 @@ describe('classifyWorkflowIntent', () => {
       parsedJson: { intent: 'INVALID_INTENT', confidence: 0.8, reasoning: 'bad' },
     });
     const result = await classifyWorkflowIntent({ userMessage: 'test', hasPrUrl: false });
-    expect(result.intent).toBe('IMPLEMENTATION');
+    expect(result.intent).toBe('INFORMATIONAL');
   });
 
-  it('falls back to IMPLEMENTATION when codex throws', async () => {
+  it('falls back to INFORMATIONAL when codex throws', async () => {
     vi.mocked(runCodex).mockRejectedValueOnce(new Error('network error'));
     const result = await classifyWorkflowIntent({ userMessage: 'test', hasPrUrl: false });
-    expect(result.intent).toBe('IMPLEMENTATION');
-    expect(result.confidence).toBe(0.5);
+    expect(result.intent).toBe('INFORMATIONAL');
+    expect(result.confidence).toBe(0);
   });
 });
