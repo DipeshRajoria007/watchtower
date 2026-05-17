@@ -1,7 +1,19 @@
-import { describe, expect, it } from 'vitest';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { describe, expect, it, vi } from 'vitest';
 import { isDeployRequest } from '../src/router/intentParser.js';
 import { normalizeTask } from '../src/router/intentParser.js';
-import type { AppConfig, SlackEventEnvelope } from '../src/types/contracts.js';
+import type { AppConfig, NormalizedTask, SlackEventEnvelope } from '../src/types/contracts.js';
+import { runDeployWorkflow } from '../src/workflows/deployWorkflow.js';
+import { runCodex } from '../src/codex/runCodex.js';
+
+vi.mock('../src/codex/runCodex.js', () => ({
+  runCodex: vi.fn(),
+  getActiveBackendId: vi.fn().mockReturnValue('codex'),
+}));
+
+vi.mock('../src/github/githubAuth.js', () => ({
+  resolveGithubTokenForCodex: vi.fn().mockResolvedValue(undefined),
+}));
 
 const config: AppConfig = {
   platformPolicy: 'macos_only',
@@ -111,5 +123,88 @@ describe('normalizeTask routes DEPLOY deterministically', () => {
   it('prioritizes DEV_ASSIST prefix over DEPLOY', () => {
     const task = normalizeTask({ ...baseEvent, text: '<@UBOT1> wt deploy prod' }, config, []);
     expect(task.intent).toBe('DEV_ASSIST');
+  });
+});
+
+describe('runDeployWorkflow idempotency on Slack post failure', () => {
+  function deployTask(): NormalizedTask {
+    return {
+      event: {
+        eventId: 'Ev-deploy',
+        channelId: 'C-DEPLOY',
+        threadTs: '999.88',
+        eventTs: '999.88',
+        userId: 'UOWNER1',
+        text: '<@UBOT1> deploy newton-web to prod',
+        rawEvent: {},
+      },
+      mentionDetected: true,
+      mentionType: 'bot',
+      isOwnerAuthor: true,
+      isCoreDevAuthor: true,
+      intent: 'DEPLOY',
+    };
+  }
+
+  it('runs the deploy codex exactly once even when the final Slack reply throws transiently', async () => {
+    // Regression for #287: a transient slack.chat.postMessage failure (ETIMEDOUT etc.)
+    // used to escape the workflow and trip the index.ts retry loop, which re-entered
+    // the deploy workflow and called runCodex again. A flaky notification could
+    // duplicate a production deploy up to 3 times.
+    vi.mocked(runCodex).mockReset();
+    vi.mocked(runCodex).mockResolvedValueOnce({
+      ok: true,
+      exitCode: 0,
+      timedOut: false,
+      stdout: '',
+      stderr: '',
+      lastMessage: 'Deploy succeeded. v1.2.3 live.',
+      parsedJson: undefined,
+    });
+
+    const postMessage = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, ts: '1.0' }) // ack post ("Deploying newton-web to production...")
+      .mockRejectedValueOnce(new Error('ETIMEDOUT'))
+      .mockRejectedValueOnce(new Error('ETIMEDOUT'))
+      .mockRejectedValueOnce(new Error('ETIMEDOUT'));
+
+    const slack = { chat: { postMessage } } as any;
+    const result = await runDeployWorkflow({ task: deployTask(), config, slack });
+
+    // The deploy itself must run exactly once.
+    expect(runCodex).toHaveBeenCalledTimes(1);
+    // The workflow must NOT throw — that's what would trigger the index.ts retry loop.
+    expect(result.status).toBe('SUCCESS');
+    expect(result.slackPosted).toBe(false);
+    // The ack + 3 final-reply attempts = 4 calls total.
+    expect(postMessage).toHaveBeenCalledTimes(4);
+  });
+
+  it('returns SUCCESS and slackPosted=true when the final reply lands on a later retry', async () => {
+    vi.mocked(runCodex).mockReset();
+    vi.mocked(runCodex).mockResolvedValueOnce({
+      ok: true,
+      exitCode: 0,
+      timedOut: false,
+      stdout: '',
+      stderr: '',
+      lastMessage: 'Deploy succeeded.',
+      parsedJson: undefined,
+    });
+
+    const postMessage = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, ts: '1.0' }) // ack post
+      .mockRejectedValueOnce(new Error('ECONNRESET')) // first reply attempt
+      .mockResolvedValueOnce({ ok: true, ts: '2.0' }); // second attempt succeeds
+
+    const slack = { chat: { postMessage } } as any;
+    const result = await runDeployWorkflow({ task: deployTask(), config, slack });
+
+    expect(runCodex).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('SUCCESS');
+    expect(result.slackPosted).toBe(true);
+    expect(postMessage).toHaveBeenCalledTimes(3);
   });
 });
