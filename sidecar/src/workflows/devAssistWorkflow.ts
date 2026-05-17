@@ -588,20 +588,9 @@ export async function runDevAssistWorkflow(params: {
   }
 
   if (command.type === 'MISSION_RUN_SWARM') {
-    const run = store.startMissionSwarmRun({
-      channelId: task.event.channelId,
-      threadTs: task.event.threadTs,
-      requestedBy: task.event.userId,
-    });
-
-    const text = run
-      ? [
-          'Mission swarm execution started.',
-          `- runId: ${run.runId}`,
-          `- missionId: ${run.missionId}`,
-          `- roles: ${run.roles.join(', ')}`,
-        ].join('\n')
-      : 'No mission found for this thread. Start one with `wt mission start <goal>` first.';
+    const text =
+      'Mission swarm execution is not implemented yet — no executor consumes `mission_swarm_runs` rows. ' +
+      'Run with `--solo` instead.';
 
     await slack.chat.postMessage({
       channel: task.event.channelId,
@@ -611,14 +600,14 @@ export async function runDevAssistWorkflow(params: {
 
     return {
       workflow: 'DEV_ASSIST',
-      status: run ? 'SUCCESS' : 'PAUSED',
-      message: run ? 'Mission swarm started.' : 'Mission not found for swarm run.',
+      status: 'FAILED',
+      message: 'Mission swarm execution is not implemented.',
       notifyDesktop: false,
       slackPosted: true,
       result: {
         command: 'MISSION_RUN_SWARM',
-        started: Boolean(run),
-        runId: run?.runId,
+        started: false,
+        reason: 'not_implemented',
       },
     };
   }
