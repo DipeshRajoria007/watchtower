@@ -434,6 +434,77 @@ describe('pause / resume lifecycle', () => {
   });
 });
 
+describe('launchpad startup recovery', () => {
+  it('reconciles RUNNING launchpad requests whose jobs were orphan-cleaned during restart', () => {
+    // Regression for #283: a launchpad_request that reached RUNNING (job_id assigned)
+    // before a sidecar restart stayed stuck forever. cleanupOrphanedRunningJobs flipped
+    // the job to FAILED, but recoverStrandedLaunchpadRequests only handled CLAIMED/QUEUED
+    // with job_id IS NULL, so the launchpad row never reached a terminal state and the
+    // requester never received a final DM.
+    const store = new JobStore(tempDbPath());
+
+    store.createLaunchpadRequest({
+      id: 'req-running',
+      target: 'miniog',
+      prompt: 'Ship the feature',
+      ownerUserId: 'UOWNER1',
+      status: 'CLAIMED',
+    });
+    store.createJob({
+      id: 'job-running',
+      eventId: 'launchpad:req-running:111.22',
+      dedupeKey: 'D123:111.22:launchpad:req-running:111.22:OWNER_AUTOPILOT',
+      workflow: 'OWNER_AUTOPILOT',
+      channelId: 'D123',
+      threadTs: '111.22',
+      payload: { launchpadRequestId: 'req-running' },
+    });
+    store.markLaunchpadRequestRunning({ id: 'req-running', jobId: 'job-running' });
+
+    // Sidecar restarts: orphan cleanup runs first and flips the job to FAILED.
+    expect(store.cleanupOrphanedRunningJobs()).toBe(1);
+    // recoverStrandedLaunchpadRequests does not touch RUNNING rows with job_id set.
+    expect(store.recoverStrandedLaunchpadRequests()).toBe(0);
+    // Reconciliation picks up the orphan-job → RUNNING-request link and marks it FAILED.
+    expect(store.reconcileFailedOrphanedLaunchpadRequests()).toBe(1);
+
+    const reconciled = store.getLaunchpadRequest('req-running');
+    expect(reconciled?.status).toBe('FAILED');
+    expect(reconciled?.errorMessage).toBe('Process lost during sidecar restart');
+    store.close();
+  });
+
+  it('leaves healthy non-terminal launchpad requests alone', () => {
+    // A launchpad request whose job is still RUNNING (no orphan cleanup) must not
+    // be reconciled. Only requests linked to FAILED jobs should flip.
+    const store = new JobStore(tempDbPath());
+
+    store.createLaunchpadRequest({
+      id: 'req-healthy',
+      target: 'miniog',
+      prompt: 'Healthy',
+      ownerUserId: 'UOWNER1',
+      status: 'CLAIMED',
+    });
+    store.createJob({
+      id: 'job-healthy',
+      eventId: 'launchpad:req-healthy:222.33',
+      dedupeKey: 'D123:222.33:launchpad:req-healthy:222.33:OWNER_AUTOPILOT',
+      workflow: 'OWNER_AUTOPILOT',
+      channelId: 'D123',
+      threadTs: '222.33',
+      payload: { launchpadRequestId: 'req-healthy' },
+    });
+    store.markLaunchpadRequestRunning({ id: 'req-healthy', jobId: 'job-healthy' });
+
+    // Job is still RUNNING — no orphan cleanup happened.
+    expect(store.reconcileFailedOrphanedLaunchpadRequests()).toBe(0);
+    const healthy = store.getLaunchpadRequest('req-healthy');
+    expect(healthy?.status).toBe('RUNNING');
+    store.close();
+  });
+});
+
 describe('eventAnchorFor', () => {
   it('returns undefined when the job does not exist', () => {
     const store = new JobStore(tempDbPath());

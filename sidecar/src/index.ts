@@ -1140,6 +1140,20 @@ async function main(): Promise<void> {
     );
   }
 
+  // Reconcile launchpad requests whose linked job was just orphan-failed above.
+  // Must run AFTER cleanupOrphanedRunningJobs so the JOIN sees the FAILED rows.
+  // Without this, a launchpad request that reached RUNNING (job_id assigned)
+  // before the sidecar restart would stay stuck forever — the orphan cleanup
+  // failed the job but never touched the launchpad row, so no terminal DM
+  // is delivered to the requester.
+  const reconciledLaunchpad = store.reconcileFailedOrphanedLaunchpadRequests();
+  if (reconciledLaunchpad > 0) {
+    logger.warn(
+      { reconciledLaunchpad },
+      'marked stranded RUNNING launchpad requests as FAILED after their jobs were orphan-cleaned',
+    );
+  }
+
   const client = new SocketSlackClient(
     config,
     async (event, webClient) => {
