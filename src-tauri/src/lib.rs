@@ -1453,6 +1453,24 @@ async fn get_dossier(user_id: String, state: State<'_, AppState>) -> Result<Doss
     })
 }
 
+/// Notify the sidecar that a user's dossier has been edited from the desktop.
+/// The sidecar's getDossier reads `dossier_cache_signals` on every call; when
+/// the row's updated_at is newer than its last-seen value the cache is
+/// invalidated and a vault render is queued. Safe to call after any dossier or
+/// pinned-fact mutation; failures are non-fatal because the only cost is a
+/// briefly stale cache, never lost data.
+fn write_dossier_cache_signal(connection: &Connection, user_id: &str) -> Result<(), String> {
+    let now = Utc::now().to_rfc3339();
+    connection
+        .execute(
+            "INSERT INTO dossier_cache_signals(user_id, updated_at) VALUES(?, ?)
+             ON CONFLICT(user_id) DO UPDATE SET updated_at = excluded.updated_at",
+            params![user_id, now],
+        )
+        .map_err(|err| format!("dossier signal write failed: {err}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 async fn save_dossier_field(
     user_id: String,
@@ -1484,6 +1502,7 @@ async fn save_dossier_field(
     connection
         .execute(&sql, params![user_id, value, now, now])
         .map_err(|err| format!("db update failed: {err}"))?;
+    write_dossier_cache_signal(&connection, &user_id)?;
     Ok(())
 }
 
@@ -1581,6 +1600,7 @@ async fn forget_dossier_field(
         }
         other => return Err(format!("field '{other}' is not a valid forget target")),
     }
+    write_dossier_cache_signal(&connection, &user_id)?;
     Ok(())
 }
 
@@ -1740,6 +1760,7 @@ async fn add_pinned_fact(
             },
         )
         .map_err(|err| format!("db row read failed: {err}"))?;
+    write_dossier_cache_signal(&connection, &user_id)?;
     Ok(row)
 }
 
@@ -1757,6 +1778,7 @@ async fn remove_pinned_fact(
             params![id, user_id],
         )
         .map_err(|err| format!("db delete failed: {err}"))?;
+    write_dossier_cache_signal(&connection, &user_id)?;
     Ok(())
 }
 
@@ -3018,6 +3040,15 @@ fn initialize_db(path: &PathBuf) -> Result<(), String> {
     // dashboard surfaces show the right label without disturbing jobs.workflow
     // (which pauseResume uses for resume detection).
     let _ = connection.execute("ALTER TABLE jobs ADD COLUMN executed_workflow TEXT", []);
+    // dossier_cache_signals is a SQLite-only bridge from desktop Tauri commands
+    // to the sidecar's in-memory dossier cache. Whenever the desktop mutates a
+    // user's dossier or pinned facts, it INSERT OR REPLACEs the user_id with
+    // a fresh updated_at. The sidecar's getDossier checks this on every call
+    // and invalidates its cache when the signal is newer than the last seen.
+    let _ = connection.execute(
+        "CREATE TABLE IF NOT EXISTS dossier_cache_signals (user_id TEXT PRIMARY KEY, updated_at TEXT NOT NULL)",
+        [],
+    );
     ensure_access_control_seeded(&connection)?;
 
     Ok(())
