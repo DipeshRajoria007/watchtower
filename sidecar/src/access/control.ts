@@ -140,6 +140,7 @@ export function resolveRequiredAccessLevel(intent: WorkflowIntent): AccessLevel 
       return 'builder';
     case 'DEPLOY':
     case 'DEV_ASSIST':
+    case 'WEBFLOW_EDIT':
       return 'admin';
     case 'INFORMATIONAL':
     case 'CONVERSATIONAL':

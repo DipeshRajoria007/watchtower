@@ -14,6 +14,7 @@ import type { JobStore } from '../state/jobStore.js';
 import { runDevAssistWorkflow } from '../workflows/devAssistWorkflow.js';
 import { runMiniogDossierWorkflow } from '../workflows/miniogDossierWorkflow.js';
 import { runDeployWorkflow } from '../workflows/deployWorkflow.js';
+import { runWebflowEditWorkflow } from '../workflows/webflowEditWorkflow.js';
 import { runImplementationWorkflow } from '../workflows/implementationWorkflow.js';
 import { runInvestigationWorkflow } from '../workflows/investigationWorkflow.js';
 import { runInformationalWorkflow } from '../workflows/informationalWorkflow.js';
@@ -268,6 +269,10 @@ export async function routeTask(params: {
 
   if (resolvedIntent === 'DEPLOY') {
     return runDeployWorkflow({ task: routedTask, config, slack, logStep, signal });
+  }
+
+  if (resolvedIntent === 'WEBFLOW_EDIT') {
+    return runWebflowEditWorkflow({ task: routedTask, config, slack, logStep, signal });
   }
 
   // Check file-based workflow templates before falling through to unknown
