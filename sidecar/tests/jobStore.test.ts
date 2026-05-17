@@ -474,6 +474,59 @@ describe('launchpad startup recovery', () => {
     store.close();
   });
 
+  it('persists executed_workflow without overwriting jobs.workflow', () => {
+    // Regression for #281: jobs.workflow stayed frozen at the pre-router intent
+    // (e.g. OWNER_AUTOPILOT) even when the AI classifier reclassified to a
+    // different workflow (e.g. PR_REVIEW). UI surfaces showed the stale label.
+    // The fix: persist executed_workflow on terminal markJob calls, surface it
+    // via COALESCE in listings, and leave jobs.workflow alone so pausedResume's
+    // resume detection (which keys off the original intent) keeps working.
+    const store = new JobStore(tempDbPath());
+    store.createJob({
+      id: 'job-reclassified',
+      eventId: 'Ev-reclass',
+      dedupeKey: 'dk-reclass',
+      workflow: 'OWNER_AUTOPILOT',
+      channelId: 'C1',
+      threadTs: '111.22',
+      payload: {},
+    });
+
+    store.markJob('job-reclassified', 'SUCCESS', { executedWorkflow: 'PR_REVIEW' });
+
+    // jobs.workflow is unchanged.
+    const rawRow = store['db']
+      .prepare('SELECT workflow, executed_workflow FROM jobs WHERE id = ?')
+      .get('job-reclassified') as { workflow: string; executed_workflow: string | null };
+    expect(rawRow.workflow).toBe('OWNER_AUTOPILOT');
+    expect(rawRow.executed_workflow).toBe('PR_REVIEW');
+
+    // listDevRuns surfaces the executed workflow via COALESCE.
+    const runs = store.listDevRuns(10);
+    const reclassified = runs.find(r => r.id === 'job-reclassified');
+    expect(reclassified?.workflow).toBe('PR_REVIEW');
+  });
+
+  it('falls back to jobs.workflow when executed_workflow is null', () => {
+    // Jobs created before the migration land here. listDevRuns must still return
+    // a workflow value for them.
+    const store = new JobStore(tempDbPath());
+    store.createJob({
+      id: 'job-legacy',
+      eventId: 'Ev-legacy',
+      dedupeKey: 'dk-legacy',
+      workflow: 'IMPLEMENTATION',
+      channelId: 'C1',
+      threadTs: '222.33',
+      payload: {},
+    });
+    store.markJob('job-legacy', 'SUCCESS');
+
+    const runs = store.listDevRuns(10);
+    const legacy = runs.find(r => r.id === 'job-legacy');
+    expect(legacy?.workflow).toBe('IMPLEMENTATION');
+  });
+
   it('leaves healthy non-terminal launchpad requests alone', () => {
     // A launchpad request whose job is still RUNNING (no orphan cleanup) must not
     // be reconciled. Only requests linked to FAILED jobs should flip.
