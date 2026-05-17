@@ -821,6 +821,8 @@ async function processEventClaimed(event: SlackEventEnvelope, client: WebClient)
           });
         } else if (result.status === 'SKIPPED') {
           store.markJob(jobId, 'SKIPPED', { result: result.result });
+        } else if (result.status === 'CANCELLED') {
+          store.markJob(jobId, 'CANCELLED', { result: result.result });
         } else {
           store.markJob(jobId, 'FAILED', { errorMessage: result.message, result: result.result });
         }

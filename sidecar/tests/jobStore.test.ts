@@ -286,6 +286,27 @@ describe('activeJobForThread', () => {
     store.close();
   });
 
+  it('allows a new job for the same event_ts after a previous job was CANCELLED', () => {
+    // CANCELLED is a user-driven terminal state, not a duplicate-prevention signal.
+    // hasJobForEventTs must NOT treat CANCELLED jobs as active, so a follow-up
+    // mention in the same thread can create a fresh job.
+    const store = new JobStore(tempDbPath());
+    store.createJob({
+      id: 'job-cancelled',
+      eventId: 'e-cancel',
+      dedupeKey: 'C1:T-cancel:e-cancel:IMPLEMENTATION',
+      workflow: 'IMPLEMENTATION',
+      channelId: 'C1',
+      threadTs: 'T-cancel',
+      payload: { eventTs: '111.22' },
+    });
+    store.markJob('job-cancelled', 'CANCELLED');
+
+    expect(store.hasJobForEventTs('C1', '111.22')).toBe(false);
+    expect(store.hasDedupeKey('C1:T-cancel:e-cancel:IMPLEMENTATION')).toBe(false);
+    store.close();
+  });
+
   it('returns undefined when job is stale beyond threshold', () => {
     const store = new JobStore(tempDbPath());
     store.createJob({
