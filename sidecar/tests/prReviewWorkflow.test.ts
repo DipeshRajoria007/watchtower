@@ -330,6 +330,81 @@ describe('prReviewWorkflow', () => {
     );
   });
 
+  it('fails the multi-agent review immediately when the PR diff fetch returns empty', async () => {
+    // Regression for #285. Previously the workflow only logged a WARN and continued
+    // with an empty diff, which let the multi-agent reviewers return zero findings
+    // and silently approve the PR.
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      // fetchPrMetadata sends Accept: application/vnd.github+json (returns ok, empty metadata).
+      // fetchPrDiff sends Accept: application/vnd.github.diff (we return 404 → diff = '').
+      const accept = (init?.headers as Record<string, string> | undefined)?.Accept ?? '';
+      if (accept.includes('application/vnd.github.diff')) {
+        return new Response('', { status: 404 });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+
+    try {
+      const slack = {
+        conversations: {
+          replies: vi.fn().mockResolvedValue({
+            messages: [{ text: 'review https://github.com/Newton-School/newton-web/pull/777' }],
+          }),
+        },
+        chat: { postMessage: vi.fn().mockResolvedValue({ ok: true }) },
+      };
+
+      const task: NormalizedTask = {
+        event: {
+          eventId: 'EvEmpty',
+          channelId: 'C1',
+          threadTs: '444.55',
+          eventTs: '444.55',
+          userId: 'U_EMPTY',
+          text: '<@UBOT1> review https://github.com/Newton-School/newton-web/pull/777',
+          rawEvent: {},
+        },
+        mentionDetected: true,
+        mentionType: 'bot',
+        isOwnerAuthor: false,
+        isCoreDevAuthor: false,
+        intent: 'PR_REVIEW',
+        prContext: {
+          url: 'https://github.com/Newton-School/newton-web/pull/777',
+          owner: 'Newton-School',
+          repo: 'newton-web',
+          number: 777,
+        },
+      };
+
+      const result = await runPrReviewWorkflow({
+        task,
+        config: { ...config, multiAgentEnabled: true },
+        slack: slack as any,
+        store: {
+          findLatestReviewedPrHeadSha: () => undefined,
+          getChannelPolicyPack: () => undefined,
+        } as any,
+        resolvePrHeadSha: async () => 'feedface',
+      });
+
+      expect(result.status).toBe('FAILED');
+      expect(result.message).toContain('empty');
+      // runCodex must NEVER be called when the diff is empty — the agents should not
+      // get a chance to "approve" a PR they never saw.
+      expect(runCodex).not.toHaveBeenCalled();
+      // The failure message must reach Slack so the requester knows what happened.
+      expect(slack.chat.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining('PR diff fetch returned empty'),
+        }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('normalizes non-attachable findings into summary-only review notes', () => {
     const output = normalizePrReviewAgentOutput('reviewer', {
       ok: true,
