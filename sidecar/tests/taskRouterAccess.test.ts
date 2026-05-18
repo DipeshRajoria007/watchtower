@@ -484,13 +484,15 @@ describe('routeTask investigation resume gate', () => {
 
   it('falls through to the classifier when affirmation has no pending findings', async () => {
     // No investigation_findings row for this thread — gate must not fire.
+    // Confidence ≥ 0.75 so the classifier confidence floor (D3) accepts the
+    // override; this test exists to verify the resume-gate path specifically.
     const config = makeConfig('enforce');
     const slack = makeSlack();
     const logStep = vi.fn();
     const store = storeWithFindings(undefined);
     classifyWorkflowIntent.mockResolvedValueOnce({
       intent: 'CONVERSATIONAL',
-      confidence: 0.6,
+      confidence: 0.85,
       reasoning: 'just a yes',
     });
 
@@ -514,15 +516,120 @@ describe('routeTask investigation resume gate', () => {
     expect(logStep).not.toHaveBeenCalledWith(expect.objectContaining({ stage: 'router.investigation.resume_gate' }));
   });
 
+  it('holds the original intent when a low-confidence classifier override drops the access tier', async () => {
+    // Regression for RCA Slack thread p1779086230428739 (2026-05-18). A bare
+    // "yes" tagged at miniOG used to get reclassified IMPLEMENTATION →
+    // CONVERSATIONAL at confidence 0.60 — the conversational workflow then
+    // hallucinated a "fix done" reply. The floor refuses the override when
+    // confidence < 0.75 AND the proposed intent requires a strictly lower
+    // access tier (CONVERSATIONAL → viewer, IMPLEMENTATION → builder).
+    const config = makeConfig('enforce');
+    const slack = makeSlack();
+    const logStep = vi.fn();
+    classifyWorkflowIntent.mockResolvedValueOnce({
+      intent: 'CONVERSATIONAL',
+      confidence: 0.6,
+      reasoning: 'short message',
+    });
+
+    const result = await routeTask({
+      task: makeTask({
+        userId: 'UBUILDER',
+        channelId: 'C-BUILD',
+        text: '<@UBOT1> yes',
+        intent: 'IMPLEMENTATION',
+      }),
+      config,
+      slack: slack as never,
+      store: {} as never,
+      logStep,
+    });
+
+    expect(classifyWorkflowIntent).toHaveBeenCalledOnce();
+    expect(runImplementationWorkflow).toHaveBeenCalledOnce(); // original intent honored
+    expect(runConversationalWorkflow).not.toHaveBeenCalled();
+    expect(result.status).toBe('SUCCESS');
+    expect(logStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'router.classify.low_confidence_hold',
+        level: 'WARN',
+        data: expect.objectContaining({
+          originalIntent: 'IMPLEMENTATION',
+          classifiedIntent: 'CONVERSATIONAL',
+          confidence: 0.6,
+          originalRequiredLevel: 'builder',
+          proposedRequiredLevel: 'viewer',
+        }),
+      }),
+    );
+  });
+
+  it('accepts a high-confidence access-dropping override', async () => {
+    // 0.80 ≥ 0.75 floor — classifier judgment is trusted.
+    const config = makeConfig('enforce');
+    const slack = makeSlack();
+    classifyWorkflowIntent.mockResolvedValueOnce({
+      intent: 'CONVERSATIONAL',
+      confidence: 0.8,
+      reasoning: 'clearly chat',
+    });
+
+    await routeTask({
+      task: makeTask({
+        userId: 'UBUILDER',
+        channelId: 'C-BUILD',
+        text: '<@UBOT1> thanks!',
+        intent: 'IMPLEMENTATION',
+      }),
+      config,
+      slack: slack as never,
+      store: {} as never,
+      logStep: vi.fn(),
+    });
+
+    expect(runImplementationWorkflow).not.toHaveBeenCalled();
+    expect(runConversationalWorkflow).toHaveBeenCalledOnce();
+  });
+
+  it('does not gate sideways/upward overrides regardless of confidence', async () => {
+    // INFORMATIONAL (viewer) → IMPLEMENTATION (builder) raises the tier; the
+    // floor only applies to access-dropping moves. A low-confidence upward
+    // shift is still acceptable because access checks still gate it.
+    const config = makeConfig('enforce');
+    const slack = makeSlack();
+    classifyWorkflowIntent.mockResolvedValueOnce({
+      intent: 'IMPLEMENTATION',
+      confidence: 0.5,
+      reasoning: 'might be a fix request',
+    });
+
+    await routeTask({
+      task: makeTask({
+        userId: 'UBUILDER',
+        channelId: 'C-BUILD',
+        text: '<@UBOT1> please look into this',
+        intent: 'INFORMATIONAL',
+      }),
+      config,
+      slack: slack as never,
+      store: {} as never,
+      logStep: vi.fn(),
+    });
+
+    expect(runImplementationWorkflow).toHaveBeenCalledOnce();
+    expect(runInformationalWorkflow).not.toHaveBeenCalled();
+  });
+
   it('falls through to the classifier when text is not an affirmation, even with pending findings', async () => {
     // Findings exist but the message is not a "yes, fix it" — classifier still
     // decides intent. This is the path for "actually wait" / "no, the bug is X".
+    // Confidence ≥ 0.75 so the D3 floor accepts the override.
     const config = makeConfig('enforce');
     const slack = makeSlack();
     const store = storeWithFindings({ summary: 'prior RCA' });
     classifyWorkflowIntent.mockResolvedValueOnce({
       intent: 'CONVERSATIONAL',
-      confidence: 0.7,
+      confidence: 0.85,
       reasoning: 'follow-up discussion',
     });
 

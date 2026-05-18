@@ -10,7 +10,7 @@ import type {
 
 export const ACCESS_GROUP_KEYS: AccessGroupKey[] = ['viewer', 'reviewer', 'builder', 'admin', 'owner'];
 
-const ACCESS_RANK: Record<AccessLevel, number> = {
+export const ACCESS_RANK: Record<AccessLevel, number> = {
   viewer: 0,
   reviewer: 1,
   builder: 2,
