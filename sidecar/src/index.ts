@@ -2,6 +2,7 @@ import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { WebClient } from '@slack/web-api';
 import { getAdminUserIds, getConfiguredAccessControl, setResolvedGroupMembers } from './access/control.js';
+import { shouldResumeFromReaction } from './router/investigationResumeGate.js';
 import { loadConfigFromDb, readAgentBackend, readSettingsForAlert, MiniOgRepoRootViolationError } from './config.js';
 import { setActiveBackend } from './codex/runCodex.js';
 import { diagnoseFailure } from './learning/failureDoctor.js';
@@ -210,7 +211,7 @@ function reactionToSentiment(reaction: string): -1 | 0 | 1 {
   return 0;
 }
 
-async function processReactionFeedback(event: SlackReactionEvent): Promise<void> {
+async function processReactionFeedback(event: SlackReactionEvent, client: WebClient): Promise<void> {
   if (!event.channelId || !event.threadTs || !event.userId) {
     return;
   }
@@ -240,6 +241,66 @@ async function processReactionFeedback(event: SlackReactionEvent): Promise<void>
     },
     'reaction feedback ingested',
   );
+
+  // Investigation resume gate — ✅ on miniOG's "Want me to fix this?" prompt
+  // dispatches a synthetic event with the affirmation text so the router's
+  // resume gate (PR #299) routes it straight to IMPLEMENTATION. Closes the
+  // un-tagged-resume miss documented in RCA thread p1779086332488579
+  // (2026-05-18) where Mihir replied "yes fix it" without @mentioning the
+  // bot and the message was never ingested.
+  //
+  // The reaction target's ts is exposed as `threadTs` per
+  // SocketSlackClient.normalizeReactionEnvelope (item.ts).
+  const findings = store.investigationStore().getByPromptMessageTs(event.channelId, event.threadTs);
+  const resume = shouldResumeFromReaction({
+    reaction: event.reaction,
+    reactorUserId: event.userId,
+    findings,
+    adminUserIds: getAdminUserIds(config),
+  });
+  if (!resume.ok) {
+    if (findings && resume.reason === 'reactor_not_allowed') {
+      logger.info(
+        { reactorUserId: event.userId, requesterUserId: findings.requesterUserId, threadTs: findings.threadTs },
+        'investigation resume reaction ignored — reactor is not the original requester or an admin',
+      );
+    }
+    return;
+  }
+  // shouldResumeFromReaction only returns ok=true when findings exists;
+  // narrow the type for the rest of the function.
+  if (!findings) {
+    return;
+  }
+
+  // Clear findings before enqueueing the synthetic event so a concurrent
+  // tagged "yes" or a second reaction can't double-fire. The resume path
+  // through implementationWorkflow re-reads findings from the saved JSON
+  // in its own copy, so deletion here is safe.
+  store.investigationStore().clear(findings.threadTs);
+
+  const syntheticEventId = `reaction-resume:${event.eventId}`;
+  const syntheticEvent: SlackEventEnvelope = {
+    eventId: syntheticEventId,
+    channelId: findings.channelId,
+    threadTs: findings.threadTs,
+    eventTs: event.eventTs,
+    userId: event.userId,
+    text: `<@${config.botUserId}> yes, fix it`,
+    rawEvent: { source: 'investigation_reaction_resume', findingsJobId: findings.jobId },
+  };
+
+  logger.info(
+    {
+      reactorUserId: event.userId,
+      threadTs: findings.threadTs,
+      promptMessageTs: findings.promptMessageTs,
+      findingsJobId: findings.jobId,
+    },
+    'investigation resume reaction confirmed — dispatching synthetic event',
+  );
+
+  await enqueueSlackEvent(syntheticEvent, client, 'socket');
 }
 
 function buildOpsFeedAlert(): string | undefined {
@@ -1168,8 +1229,8 @@ async function main(): Promise<void> {
     async (event, webClient) => {
       await enqueueSlackEvent(event, webClient as WebClient, 'socket');
     },
-    async event => {
-      await processReactionFeedback(event);
+    async (event, webClient) => {
+      await processReactionFeedback(event, webClient as WebClient);
     },
   );
 

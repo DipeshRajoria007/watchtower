@@ -155,22 +155,32 @@ Return strict JSON:
     })
     .catch(() => {});
 
+  let promptMessageTs: string | undefined;
   if (findings.requiresMoreInfo) {
-    await slack.chat
+    const ack = await slack.chat
       .postMessage({
         channel: task.event.channelId,
         thread_ts: task.event.threadTs,
         text: `_${findings.requiresMoreInfo}_\n\nReply here with more context and tag me again to continue.`,
       })
-      .catch(() => {});
+      .catch(() => undefined);
+    promptMessageTs = typeof ack?.ts === 'string' ? ack.ts : undefined;
   } else {
-    await slack.chat
+    // Two confirmation paths. The ✅ reaction is the primary, frictionless
+    // path — the reaction_added handler matches the reacted message ts back
+    // to the saved findings (`prompt_message_ts`) and dispatches a synthetic
+    // resume event. The tag fallback is still here for users who prefer to
+    // reply with text and remembers to mention the bot.
+    const ack = await slack.chat
       .postMessage({
         channel: task.event.channelId,
         thread_ts: task.event.threadTs,
-        text: 'Want me to fix this? Tag me again in this thread with "yes, fix it" (or tell me what you want me to do).',
+        text:
+          'Want me to fix this? React ✅ on this message to confirm, ' +
+          'or tag me again in this thread with "yes, fix it" (or feedback).',
       })
-      .catch(() => {});
+      .catch(() => undefined);
+    promptMessageTs = typeof ack?.ts === 'string' ? ack.ts : undefined;
   }
 
   if (investigationStore && jobId) {
@@ -183,6 +193,8 @@ Return strict JSON:
         repoPath,
         summary: findings.summary ?? findings.rootCauseHypothesis ?? '',
         findingsJson: JSON.stringify(findings),
+        promptMessageTs,
+        requesterUserId: task.event.userId,
       });
       logStep?.({
         stage: 'investigation.saved',
