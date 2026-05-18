@@ -27,6 +27,7 @@ import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
 import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import { classifyWorkflowIntent } from './classifyIntent.js';
+import { looksLikeFixAffirmation } from './resumeIntentParser.js';
 import { isPresencePing } from '../workflows/shared/workflowUtils.js';
 import { formatDossierForPrompt } from '../state/dossierStore.js';
 
@@ -77,6 +78,22 @@ export async function routeTask(params: {
   if (task.intent !== 'DEV_ASSIST' && task.intent !== 'DEPLOY' && task.intent !== 'MINIOG_DOSSIER') {
     if (isPresencePing(userMessage)) {
       resolvedIntent = 'CONVERSATIONAL';
+    } else if (looksLikeFixAffirmation(userMessage) && store.investigationStore().getForThread(task.event.threadTs)) {
+      // Resume gate: investigationWorkflow prompts the user to reply with
+      // "yes, fix it" to continue from saved findings, but a bare affirmation
+      // gets classified as CONVERSATIONAL by the AI classifier — see RCA on
+      // Slack thread p1779086230428739 (2026-05-18). When the message is an
+      // anchored affirmation AND investigation_findings exist for this thread,
+      // force IMPLEMENTATION (or OWNER_AUTOPILOT for owners) and skip the
+      // classifier. implementationWorkflow.ts already consumes those findings
+      // via investigationStore.getForThread.
+      resolvedIntent = task.isOwnerAuthor ? 'OWNER_AUTOPILOT' : 'IMPLEMENTATION';
+      logStep?.({
+        stage: 'router.investigation.resume_gate',
+        message:
+          'Affirmation reply in a thread with pending investigation findings — resuming as ' + resolvedIntent + '.',
+        data: { userMessage, threadTs: task.event.threadTs, resolvedIntent },
+      });
     } else {
       // For all other intents, use AI to classify.
       // Pass mentionType so the classifier knows if this is a direct @miniOG mention

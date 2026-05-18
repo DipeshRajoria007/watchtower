@@ -410,3 +410,136 @@ describe('routeTask access control', () => {
     expect(runDeployWorkflow).toHaveBeenCalledOnce();
   });
 });
+
+describe('routeTask investigation resume gate', () => {
+  function storeWithFindings(findings: Record<string, unknown> | undefined) {
+    const getForThread = vi.fn().mockReturnValue(findings);
+    const investigationStore = vi.fn().mockReturnValue({ getForThread });
+    const dossierStore = vi.fn().mockReturnValue({
+      getDossier: () => ({ profile: undefined, affinity: [], productAffinity: [], metrics: {}, tone: 'normal' }),
+    });
+    return { investigationStore, dossierStore, getForThread, getPersonalityMode: vi.fn().mockReturnValue('normal') };
+  }
+
+  it('routes "yes" with pending findings to IMPLEMENTATION for non-owner (bypasses classifier)', async () => {
+    const config = makeConfig('enforce');
+    const slack = makeSlack();
+    const logStep = vi.fn();
+    const store = storeWithFindings({ summary: 'prior RCA', repoName: 'newton-web' });
+
+    const result = await routeTask({
+      task: makeTask({
+        userId: 'UBUILDER',
+        channelId: 'C-BUILD',
+        text: '<@UBOT1> yes',
+        intent: 'IMPLEMENTATION',
+      }),
+      config,
+      slack: slack as never,
+      store: store as never,
+      logStep,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(runImplementationWorkflow).toHaveBeenCalledOnce();
+    expect(classifyWorkflowIntent).not.toHaveBeenCalled();
+    expect(store.getForThread).toHaveBeenCalledWith('111.22');
+    expect(logStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'router.investigation.resume_gate',
+        data: expect.objectContaining({ resolvedIntent: 'IMPLEMENTATION' }),
+      }),
+    );
+  });
+
+  it('routes "yes, fix it" with pending findings to OWNER_AUTOPILOT for the owner', async () => {
+    const config = makeConfig('enforce');
+    const slack = makeSlack();
+    const logStep = vi.fn();
+    const store = storeWithFindings({ summary: 'prior RCA' });
+
+    const result = await routeTask({
+      task: makeTask({
+        userId: 'UOWNER1',
+        channelId: 'C-UNLISTED',
+        text: '<@UBOT1> yes, fix it',
+        intent: 'OWNER_AUTOPILOT',
+      }),
+      config,
+      slack: slack as never,
+      store: store as never,
+      logStep,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(runImplementationWorkflow).toHaveBeenCalledOnce();
+    expect(classifyWorkflowIntent).not.toHaveBeenCalled();
+    expect(logStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'router.investigation.resume_gate',
+        data: expect.objectContaining({ resolvedIntent: 'OWNER_AUTOPILOT' }),
+      }),
+    );
+  });
+
+  it('falls through to the classifier when affirmation has no pending findings', async () => {
+    // No investigation_findings row for this thread — gate must not fire.
+    const config = makeConfig('enforce');
+    const slack = makeSlack();
+    const logStep = vi.fn();
+    const store = storeWithFindings(undefined);
+    classifyWorkflowIntent.mockResolvedValueOnce({
+      intent: 'CONVERSATIONAL',
+      confidence: 0.6,
+      reasoning: 'just a yes',
+    });
+
+    const result = await routeTask({
+      task: makeTask({
+        userId: 'UBUILDER',
+        channelId: 'C-BUILD',
+        text: '<@UBOT1> yes',
+        intent: 'IMPLEMENTATION',
+      }),
+      config,
+      slack: slack as never,
+      store: store as never,
+      logStep,
+    });
+
+    expect(classifyWorkflowIntent).toHaveBeenCalledOnce();
+    expect(runImplementationWorkflow).not.toHaveBeenCalled();
+    expect(runConversationalWorkflow).toHaveBeenCalledOnce();
+    expect(result.status).toBe('SUCCESS');
+    expect(logStep).not.toHaveBeenCalledWith(expect.objectContaining({ stage: 'router.investigation.resume_gate' }));
+  });
+
+  it('falls through to the classifier when text is not an affirmation, even with pending findings', async () => {
+    // Findings exist but the message is not a "yes, fix it" — classifier still
+    // decides intent. This is the path for "actually wait" / "no, the bug is X".
+    const config = makeConfig('enforce');
+    const slack = makeSlack();
+    const store = storeWithFindings({ summary: 'prior RCA' });
+    classifyWorkflowIntent.mockResolvedValueOnce({
+      intent: 'CONVERSATIONAL',
+      confidence: 0.7,
+      reasoning: 'follow-up discussion',
+    });
+
+    await routeTask({
+      task: makeTask({
+        userId: 'UBUILDER',
+        channelId: 'C-BUILD',
+        text: '<@UBOT1> actually wait, let me check first',
+        intent: 'IMPLEMENTATION',
+      }),
+      config,
+      slack: slack as never,
+      store: store as never,
+      logStep: vi.fn(),
+    });
+
+    expect(classifyWorkflowIntent).toHaveBeenCalledOnce();
+    expect(runImplementationWorkflow).not.toHaveBeenCalled();
+  });
+});
