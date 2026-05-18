@@ -147,6 +147,171 @@ describe('conversationalWorkflow', () => {
     expect(result.message).toBeTruthy();
   });
 
+  it('rewrites a "fix is done" reply when investigation findings are pending on this thread', async () => {
+    // Regression for RCA on Slack thread p1779086230428739 (2026-05-18). If the
+    // conversational workflow runs in a thread with pending investigation_findings
+    // and the agent still produces a completion-claim reply (despite the truth
+    // guardrail in the prompt), the workflow must rewrite the message to a
+    // steer ("on it") before posting — never tell the user "the fix is done"
+    // when no code work happened in this turn.
+    vi.mocked(runCodex).mockResolvedValueOnce({
+      ok: true,
+      exitCode: 0,
+      timedOut: false,
+      stdout: '',
+      stderr: '',
+      lastMessage: 'All exports exist. The fix is done.',
+      parsedJson: undefined,
+    });
+
+    const slack = makeSlack();
+    const logStep = vi.fn();
+    const investigationStore = {
+      getForThread: vi.fn().mockReturnValue({
+        threadTs: '1.1',
+        channelId: 'C1',
+        jobId: 'job-prior',
+        repoName: 'newton-web',
+        summary: 'prior RCA exists',
+      }),
+    };
+
+    const result = await runConversationalWorkflow({
+      task: {
+        event: {
+          eventId: 'EvSteer',
+          channelId: 'C1',
+          threadTs: '1.1',
+          eventTs: '1.1',
+          userId: 'U1',
+          text: '<@UBOT1> yes',
+          rawEvent: {},
+        },
+        mentionDetected: true,
+        mentionType: 'bot',
+        isOwnerAuthor: false,
+        isCoreDevAuthor: false,
+        intent: 'CONVERSATIONAL',
+      },
+      config,
+      slack,
+      logStep,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      investigationStore: investigationStore as any,
+    });
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.message).not.toMatch(/fix is done|all exports exist/i);
+    expect(result.message).toMatch(/on it|will share the PR/i);
+    expect(slack.chat.postMessage as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('On it'),
+      }),
+    );
+    expect(logStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'conversational.investigation_pending.steer_applied',
+        data: expect.objectContaining({
+          originalReply: 'All exports exist. The fix is done.',
+        }),
+      }),
+    );
+  });
+
+  it('leaves a normal reply untouched even when investigation findings are pending', async () => {
+    // The guardrail must only kick in for completion-claim text. Normal
+    // steering replies pass through unchanged.
+    vi.mocked(runCodex).mockResolvedValueOnce({
+      ok: true,
+      exitCode: 0,
+      timedOut: false,
+      stdout: '',
+      stderr: '',
+      lastMessage: 'Sounds good — let me know if you want me to fix it.',
+      parsedJson: undefined,
+    });
+
+    const slack = makeSlack();
+    const investigationStore = {
+      getForThread: vi.fn().mockReturnValue({
+        threadTs: '1.1',
+        channelId: 'C1',
+        jobId: 'job-prior',
+        repoName: 'newton-web',
+        summary: 'prior RCA exists',
+      }),
+    };
+
+    const result = await runConversationalWorkflow({
+      task: {
+        event: {
+          eventId: 'EvNoSteer',
+          channelId: 'C1',
+          threadTs: '1.1',
+          eventTs: '1.1',
+          userId: 'U1',
+          text: '<@UBOT1> just acknowledging',
+          rawEvent: {},
+        },
+        mentionDetected: true,
+        mentionType: 'bot',
+        isOwnerAuthor: false,
+        isCoreDevAuthor: false,
+        intent: 'CONVERSATIONAL',
+      },
+      config,
+      slack,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      investigationStore: investigationStore as any,
+    });
+
+    expect(result.message).toContain('Sounds good');
+  });
+
+  it('does not apply the steer when no investigation findings exist', async () => {
+    // Casual chat in a thread with no pending findings must not be rewritten,
+    // even if the reply mentions "fix" or other guardrail-adjacent words.
+    vi.mocked(runCodex).mockResolvedValueOnce({
+      ok: true,
+      exitCode: 0,
+      timedOut: false,
+      stdout: '',
+      stderr: '',
+      lastMessage: 'The fix is done in my dreams, but no — chatting only here.',
+      parsedJson: undefined,
+    });
+
+    const slack = makeSlack();
+    const investigationStore = {
+      getForThread: vi.fn().mockReturnValue(undefined),
+    };
+
+    const result = await runConversationalWorkflow({
+      task: {
+        event: {
+          eventId: 'EvCasual',
+          channelId: 'C1',
+          threadTs: '1.1',
+          eventTs: '1.1',
+          userId: 'U1',
+          text: '<@UBOT1> banter',
+          rawEvent: {},
+        },
+        mentionDetected: true,
+        mentionType: 'bot',
+        isOwnerAuthor: false,
+        isCoreDevAuthor: false,
+        intent: 'CONVERSATIONAL',
+      },
+      config,
+      slack,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      investigationStore: investigationStore as any,
+    });
+
+    expect(result.message).toContain('in my dreams');
+  });
+
   it('posts reply to correct channel and thread', async () => {
     vi.mocked(runCodex).mockResolvedValueOnce({
       ok: true,
