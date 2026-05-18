@@ -9,7 +9,12 @@ import type {
   WorkflowResult,
   WorkflowStepLogger,
 } from '../types/contracts.js';
-import { evaluateAccess, getConfiguredAccessControl, resolveRequiredAccessLevel } from '../access/control.js';
+import {
+  ACCESS_RANK,
+  evaluateAccess,
+  getConfiguredAccessControl,
+  resolveRequiredAccessLevel,
+} from '../access/control.js';
 import type { JobStore } from '../state/jobStore.js';
 import { runDevAssistWorkflow } from '../workflows/devAssistWorkflow.js';
 import { runMiniogDossierWorkflow } from '../workflows/miniogDossierWorkflow.js';
@@ -28,6 +33,14 @@ import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { resolveGithubTokenForCodex } from '../github/githubAuth.js';
 import { classifyWorkflowIntent } from './classifyIntent.js';
 import { looksLikeFixAffirmation } from './resumeIntentParser.js';
+
+// Confidence threshold below which the router refuses to honor a classifier
+// override that drops the required access tier. RCA on Slack thread
+// p1779086230428739 (2026-05-18) caught a 0.60-confidence
+// IMPLEMENTATION → CONVERSATIONAL reclassification of a bare "yes"; the
+// conversational workflow then hallucinated a "fix done" reply. Typical
+// successful classifications run 0.85+, so 0.75 is a conservative floor.
+export const CLASSIFIER_CONFIDENCE_FLOOR = 0.75;
 import { isPresencePing } from '../workflows/shared/workflowUtils.js';
 import { formatDossierForPrompt } from '../state/dossierStore.js';
 
@@ -78,7 +91,11 @@ export async function routeTask(params: {
   if (task.intent !== 'DEV_ASSIST' && task.intent !== 'DEPLOY' && task.intent !== 'MINIOG_DOSSIER') {
     if (isPresencePing(userMessage)) {
       resolvedIntent = 'CONVERSATIONAL';
-    } else if (looksLikeFixAffirmation(userMessage) && store.investigationStore().getForThread(task.event.threadTs)) {
+    } else if (
+      looksLikeFixAffirmation(userMessage) &&
+      typeof store?.investigationStore === 'function' &&
+      store.investigationStore().getForThread(task.event.threadTs)
+    ) {
       // Resume gate: investigationWorkflow prompts the user to reply with
       // "yes, fix it" to continue from saved findings, but a bare affirmation
       // gets classified as CONVERSATIONAL by the AI classifier — see RCA on
@@ -122,20 +139,59 @@ export async function routeTask(params: {
       });
       classificationReasoning = classification.reasoning;
 
-      if (classification.intent !== task.intent) {
+      // Confidence floor on access-dropping overrides. RCA (Slack thread
+      // p1779086230428739, 2026-05-18) showed a 0.60-confidence
+      // IMPLEMENTATION → CONVERSATIONAL reclassification of a bare "yes" —
+      // the conversational workflow then hallucinated a "fix done" reply
+      // and the user thought the bug was fixed. Typical successful
+      // classifications run 0.85+; 0.60 is too noisy to trust when it
+      // would also reduce the workflow's required access tier (and thus
+      // the safety guardrails downstream).
+      //
+      // Rule: if the proposed intent requires a strictly lower access tier
+      // than the original AND confidence < 0.75, reject the override and
+      // keep the original intent. Sideways or upward overrides (same or
+      // higher access) accept regardless of confidence.
+      const originalRequiredLevel = resolveRequiredAccessLevel(task.intent);
+      const proposedRequiredLevel = resolveRequiredAccessLevel(classification.intent);
+      const accessDropping = ACCESS_RANK[proposedRequiredLevel] < ACCESS_RANK[originalRequiredLevel];
+      const lowConfidence = classification.confidence < CLASSIFIER_CONFIDENCE_FLOOR;
+      // (Floor constant declared at module scope below for easy override in tests.)
+      const holdOverride = classification.intent !== task.intent && accessDropping && lowConfidence;
+
+      if (holdOverride) {
         logStep?.({
-          stage: 'router.classify.override',
-          message: `AI classifier resolved intent: ${task.intent} → ${classification.intent} (confidence=${classification.confidence.toFixed(2)}).`,
+          stage: 'router.classify.low_confidence_hold',
+          level: 'WARN',
+          message:
+            `AI classifier proposed ${task.intent} → ${classification.intent} at ` +
+            `confidence=${classification.confidence.toFixed(2)} (below ${CLASSIFIER_CONFIDENCE_FLOOR.toFixed(2)}); ` +
+            `override drops required access from ${originalRequiredLevel} to ${proposedRequiredLevel}. Holding original intent.`,
           data: {
             originalIntent: task.intent,
             classifiedIntent: classification.intent,
             confidence: classification.confidence,
+            originalRequiredLevel,
+            proposedRequiredLevel,
             reasoning: classification.reasoning,
           },
         });
+        resolvedIntent = task.intent;
+      } else {
+        if (classification.intent !== task.intent) {
+          logStep?.({
+            stage: 'router.classify.override',
+            message: `AI classifier resolved intent: ${task.intent} → ${classification.intent} (confidence=${classification.confidence.toFixed(2)}).`,
+            data: {
+              originalIntent: task.intent,
+              classifiedIntent: classification.intent,
+              confidence: classification.confidence,
+              reasoning: classification.reasoning,
+            },
+          });
+        }
+        resolvedIntent = classification.intent;
       }
-
-      resolvedIntent = classification.intent;
     }
   }
 
@@ -241,13 +297,16 @@ export async function routeTask(params: {
     return runPrReviewWorkflow({ task: routedTask, config, slack, store, jobId, logStep, signal });
   }
 
+  const lazyInvestigationStore =
+    typeof store?.investigationStore === 'function' ? store.investigationStore() : undefined;
+
   if (resolvedIntent === 'IMPLEMENTATION' || resolvedIntent === 'OWNER_AUTOPILOT') {
     return runImplementationWorkflow({
       task: routedTask,
       config,
       slack,
       store,
-      investigationStore: store?.investigationStore(),
+      investigationStore: lazyInvestigationStore,
       jobId,
       logStep,
       signal,
@@ -260,7 +319,7 @@ export async function routeTask(params: {
       config,
       slack,
       store,
-      investigationStore: store?.investigationStore(),
+      investigationStore: lazyInvestigationStore,
       jobId,
       logStep,
       signal,
