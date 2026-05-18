@@ -552,6 +552,35 @@ export class JobStore {
     }
 
     try {
+      // Slack ts of the "Want me to fix this?" prompt — needed so the reaction
+      // handler can match a ✅ on the prompt message back to the saved
+      // findings and dispatch a synthetic resume event without requiring the
+      // user to re-tag the bot. See RCA on thread p1779086332488579 (2026-05-18).
+      this.db.exec(`ALTER TABLE investigation_findings ADD COLUMN prompt_message_ts TEXT`);
+    } catch {
+      /* column already exists */
+    }
+
+    try {
+      // User who triggered the investigation. Reaction-resume gate uses this
+      // to decide whether the reactor is permitted to confirm (requester or
+      // admin only).
+      this.db.exec(`ALTER TABLE investigation_findings ADD COLUMN requester_user_id TEXT`);
+    } catch {
+      /* column already exists */
+    }
+
+    try {
+      // Indexed lookup for the reaction-resume path: getByPromptMessageTs
+      // joins on (channel_id, prompt_message_ts).
+      this.db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_investigation_findings_prompt_ts ON investigation_findings(channel_id, prompt_message_ts)`,
+      );
+    } catch {
+      /* index already exists */
+    }
+
+    try {
       this.db.exec(`UPDATE app_settings SET agent_backend = 'codex' WHERE agent_backend = 'cursor'`);
     } catch {
       /* column may not exist on very old installs; harmless */
