@@ -272,7 +272,13 @@ export async function routeTask(params: {
   }
 
   if (resolvedIntent === 'CONVERSATIONAL') {
-    return runConversationalWorkflow({ task: routedTask, config, slack, logStep });
+    return runConversationalWorkflow({
+      task: routedTask,
+      config,
+      slack,
+      logStep,
+      investigationStore: typeof store?.investigationStore === 'function' ? store.investigationStore() : undefined,
+    });
   }
 
   if (resolvedIntent === 'DEV_ASSIST') {
