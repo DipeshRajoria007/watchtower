@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { runInformationalWorkflow } from '../src/workflows/informationalWorkflow.js';
 import { runCodex } from '../src/codex/runCodex.js';
 import { resolveWatchtowerPath } from '../src/workflows/shared/selfInquiryContext.js';
+import { assertThreadParentExists } from '../src/slack/threadContext.js';
 import type { WebClient } from '@slack/web-api';
 import type { CodexRunResult } from '../src/types/contracts.js';
 
@@ -12,6 +13,7 @@ vi.mock('../src/codex/runCodex.js', () => ({
 
 vi.mock('../src/slack/threadContext.js', () => ({
   fetchThreadContext: vi.fn().mockResolvedValue([]),
+  assertThreadParentExists: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock('../src/github/githubAuth.js', () => ({
@@ -125,6 +127,25 @@ describe('informationalWorkflow', () => {
     vi.mocked(runCodex).mockReset();
     vi.mocked(resolveWatchtowerPath).mockReset();
     vi.mocked(resolveWatchtowerPath).mockResolvedValue(undefined);
+    vi.mocked(assertThreadParentExists).mockReset();
+    vi.mocked(assertThreadParentExists).mockResolvedValue(true);
+  });
+
+  it('cancels without fanning out when the source mention was already deleted', async () => {
+    // Pre-flight gate: a deleted parent means any post we make would be
+    // promoted to channel root (the bug we're fixing). Skip the per-repo
+    // Codex calls and short-circuit to CANCELLED.
+    vi.mocked(assertThreadParentExists).mockResolvedValue(false);
+
+    const slack = makeSlack();
+    const result = await runInformationalWorkflow({ task: makeTask(), config: baseConfig, slack });
+
+    expect(runCodex).not.toHaveBeenCalled();
+    expect(result.status).toBe('CANCELLED');
+    expect(result.slackPosted).toBe(false);
+    // No best-effort "we're sorry, message deleted" post — silent cancel is
+    // the chosen UX (see PR plan: leave bot posts, stop further activity).
+    expect(vi.mocked(slack.chat.postMessage)).not.toHaveBeenCalled();
   });
 
   it('fans out to both repos and combines answers with section headers', async () => {

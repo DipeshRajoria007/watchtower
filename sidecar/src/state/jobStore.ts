@@ -822,6 +822,44 @@ export class JobStore {
     return Boolean(row?.id);
   }
 
+  /**
+   * Find the job (if any) currently RUNNING or PAUSED for a given Slack
+   * message ts. Used by the `message_deleted` handler to cancel jobs whose
+   * source message the author just removed. Unlike `activeJobForThread`,
+   * this matches the underlying message identity (`payload_json.eventTs`)
+   * rather than the thread root — so it catches the case where the deleted
+   * message was a top-level mention that owns its own thread.
+   */
+  activeJobForEventTs(
+    channelId: string,
+    eventTs: string,
+  ): { id: string; workflow: WorkflowIntent; status: JobRecord['status']; threadTs: string } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, workflow, status, thread_ts
+         FROM jobs
+         WHERE channel_id = ?
+           AND json_extract(payload_json, '$.eventTs') = ?
+           AND status IN ('RUNNING', 'PAUSED')
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+      )
+      .get(channelId, eventTs) as
+      | { id?: string; workflow?: WorkflowIntent; status?: JobRecord['status']; thread_ts?: string }
+      | undefined;
+
+    if (!row?.id || !row?.workflow || !row?.status || row?.thread_ts === undefined) {
+      return undefined;
+    }
+
+    return {
+      id: row.id,
+      workflow: row.workflow,
+      status: row.status,
+      threadTs: row.thread_ts,
+    };
+  }
+
   listKnownChannels(limit = 200): string[] {
     const stmt = this.db.prepare(
       `SELECT channel_id

@@ -74,7 +74,12 @@ const DAILY_DIGEST_TICK_MS = 60 * 1000;
 const INCIDENT_TICK_MS = 5 * 60 * 1000;
 const INCIDENT_CADENCE_MINUTES = 30;
 
-const nonActionableSubtypes = new Set(['message_changed', 'message_deleted', 'bot_message']);
+// `message_deleted` is INTENTIONALLY not in this set: a deletion of the source
+// mention needs to cancel any active job for that message (see
+// processMessageDeleted below). `message_changed` and `bot_message` remain
+// non-actionable — edits keep the same ts and the in-flight job is still
+// valid; bot_message would loop on miniOG's own posts.
+const nonActionableSubtypes = new Set(['message_changed', 'bot_message']);
 
 /**
  * In-memory in-flight claim keyed by `${channelId}:${eventTs}` (i.e. the
@@ -156,12 +161,9 @@ async function postViaResponseUrl(params: { responseUrl: string; text: string; t
 }
 
 function buildEventAwareClient(client: WebClient, event: SlackEventEnvelope): WebClient {
-  if (!event.responseUrl) {
-    return client;
-  }
-
   const wrappedClient = Object.create(client) as WebClient;
   const originalPostMessage = client.chat.postMessage.bind(client.chat);
+  const originalDelete = client.chat.delete.bind(client.chat);
   const wrappedChat = Object.create(client.chat) as typeof client.chat;
 
   wrappedChat.postMessage = async (...args: Parameters<typeof client.chat.postMessage>) => {
@@ -170,8 +172,9 @@ function buildEventAwareClient(client: WebClient, event: SlackEventEnvelope): We
       thread_ts?: string;
       text?: string;
     };
+    let response: Awaited<ReturnType<typeof client.chat.postMessage>>;
     try {
-      return await originalPostMessage(...args);
+      response = await originalPostMessage(...args);
     } catch (error) {
       const errorCode = extractSlackErrorCode(error);
       const sameChannel = payload.channel === event.channelId;
@@ -191,6 +194,74 @@ function buildEventAwareClient(client: WebClient, event: SlackEventEnvelope): We
       }
       throw error;
     }
+
+    // Detect Slack's silent orphan-promotion. When we ask to post into a
+    // thread whose parent was just deleted, Slack accepts the call but
+    // strips `thread_ts` and lands the message at channel root — confusing
+    // junk that no human asked for. Compare the requested thread_ts to the
+    // one Slack actually stamped on the response and undo the post if they
+    // diverged. RCA: Slack thread 1779174569.451259 (2026-05-19).
+    const requestedThreadTs = payload.thread_ts;
+    if (requestedThreadTs && response?.ok && response?.ts && payload.channel) {
+      const responseMessage = (response as { message?: { thread_ts?: string } }).message;
+      const actualThreadTs = responseMessage?.thread_ts;
+      if (actualThreadTs !== requestedThreadTs) {
+        const orphanTs = response.ts;
+        // Best-effort delete of the orphan. If this itself fails (e.g. token
+        // can't delete its own bot post), we still log+cancel so observers
+        // can see what happened.
+        try {
+          await originalDelete({ channel: payload.channel, ts: orphanTs });
+        } catch (deleteError) {
+          logger.warn(
+            { channel: payload.channel, orphanTs, error: String(deleteError) },
+            'failed to delete orphan-promoted post (non-fatal)',
+          );
+        }
+        logger.warn(
+          {
+            channel: payload.channel,
+            requestedThreadTs,
+            actualThreadTs: actualThreadTs ?? null,
+            orphanTs,
+            eventTs: event.eventTs,
+          },
+          'slack.post.orphan_promoted: parent deleted mid-flight; deleted the orphan and cancelling job',
+        );
+        // Find and cancel the active job tied to this Slack event. If no
+        // active job is found (post was made outside a workflow), we just
+        // delete the orphan and continue without cancellation.
+        const active = store.activeJobForEventTs(event.channelId, event.eventTs);
+        if (active) {
+          cancelJob(active.id);
+          store.markJob(active.id, 'CANCELLED', {
+            errorMessage: 'Source message deleted during post (orphan-promoted reply).',
+          });
+          store.appendJobLog({
+            jobId: active.id,
+            stage: 'job.source_deleted',
+            level: 'WARN',
+            message: 'Slack promoted our thread reply to a channel-root orphan; cancelling.',
+            data: {
+              channelId: payload.channel,
+              requestedThreadTs,
+              actualThreadTs: actualThreadTs ?? null,
+              orphanTs,
+              eventTs: event.eventTs,
+            },
+          });
+        }
+        // Synthesize an "ok: false" return so callers see the post as a
+        // no-op rather than a successful publish. Workflows already wrap
+        // postMessage in .catch(() => {}); throwing here would surprise.
+        return {
+          ok: false,
+          error: 'thread_parent_deleted',
+        } as unknown as Awaited<ReturnType<typeof client.chat.postMessage>>;
+      }
+    }
+
+    return response;
   };
 
   (wrappedClient as unknown as { chat: typeof client.chat }).chat = wrappedChat;
@@ -209,6 +280,83 @@ function reactionToSentiment(reaction: string): -1 | 0 | 1 {
     return 1;
   }
   return 0;
+}
+
+/**
+ * Handles `message_deleted` events: when a user deletes their @miniOG mention,
+ * cancel any active job that was processing it. Without this, a job that
+ * already started its planner (a 5+ minute call) keeps running and eventually
+ * tries to post the plan into a thread whose parent no longer exists — Slack
+ * silently strips `thread_ts` and the plan lands as an orphan in the channel
+ * root, confusing readers and burning compute. RCA: Slack thread
+ * 1779174569.451259 (2026-05-19).
+ *
+ * Only cancels jobs whose underlying message identity matches the deleted ts.
+ * Catchup-replay siblings (different threadTs / different eventTs) are left
+ * alone — they're independent jobs for independent (surviving) messages.
+ */
+async function processMessageDeleted(event: SlackEventEnvelope, client: WebClient): Promise<void> {
+  const deletedTs = event.deletedTs ?? event.previousMessage?.ts;
+  if (!event.channelId || !deletedTs) {
+    logger.info(
+      { eventId: event.eventId, channelId: event.channelId, deletedTs: deletedTs ?? null },
+      'message_deleted ignored: missing channel or deleted ts',
+    );
+    return;
+  }
+
+  if (store.hasEvent(event.eventId)) {
+    return;
+  }
+  store.recordEvent(event.eventId, event.channelId, event.threadTs);
+
+  const active = store.activeJobForEventTs(event.channelId, deletedTs);
+  if (!active) {
+    logger.info(
+      { eventId: event.eventId, channelId: event.channelId, deletedTs },
+      'message_deleted: no active job to cancel',
+    );
+    return;
+  }
+
+  const cancelled = cancelJob(active.id);
+  store.markJob(active.id, 'CANCELLED', {
+    errorMessage: 'Source message deleted by author.',
+  });
+  store.appendJobLog({
+    jobId: active.id,
+    stage: 'job.source_deleted',
+    level: 'WARN',
+    message: 'Source mention was deleted in Slack — cancelled the job.',
+    data: {
+      channelId: event.channelId,
+      deletedTs,
+      deletedByUserId: event.previousMessage?.userId ?? null,
+      workflow: active.workflow,
+      previousStatus: active.status,
+      abortSignalled: cancelled,
+    },
+  });
+
+  // Clear the :eyes: reaction on the cancelled job's anchor. The anchor
+  // message itself may be gone (the user just deleted it), so reactions.remove
+  // will fail with `message_not_found` — that's expected; we swallow it.
+  const anchor = store.eventAnchorFor(active.id);
+  if (anchor) {
+    await removeReaction(client, anchor.channelId, anchor.eventTs, 'eyes');
+  }
+
+  logger.info(
+    {
+      eventId: event.eventId,
+      channelId: event.channelId,
+      deletedTs,
+      jobId: active.id,
+      workflow: active.workflow,
+      abortSignalled: cancelled,
+    },
+    'cancelled job after source message deletion',
+  );
 }
 
 async function processReactionFeedback(event: SlackReactionEvent, client: WebClient): Promise<void> {
@@ -538,6 +686,15 @@ async function processEvent(event: SlackEventEnvelope, client: WebClient): Promi
 
   if (event.messageSubtype && nonActionableSubtypes.has(event.messageSubtype)) {
     logger.info({ eventId: event.eventId, subtype: event.messageSubtype }, 'skip message subtype');
+    return;
+  }
+
+  // `message_deleted` is routed before the user/bot/duplicate gates: it never
+  // creates a job, only cancels existing ones, and the author of the wrapper
+  // event is the deleter (often Slackbot or the original author themselves —
+  // not relevant to the dedup gates).
+  if (event.messageSubtype === 'message_deleted') {
+    await processMessageDeleted(event, client);
     return;
   }
 

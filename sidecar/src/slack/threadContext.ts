@@ -8,6 +8,33 @@ export type ThreadMessage = {
   files?: SlackFileAttachment[];
 };
 
+/**
+ * Returns `false` if Slack reports the thread parent does not exist
+ * (`thread_not_found`), `true` otherwise. Used by long-running workflows
+ * (planner, multi-agent pipelines) to short-circuit before doing expensive
+ * work whose output would be orphaned by a deleted parent — Slack silently
+ * promotes thread-less replies to channel root, which manifests as junk
+ * sitting at the top of the channel with no source mention above it.
+ *
+ * Any error OTHER than `thread_not_found` is re-thrown so we don't silently
+ * swallow rate limits, auth failures, or network blips as "parent gone".
+ */
+export async function assertThreadParentExists(client: WebClient, channel: string, threadTs: string): Promise<boolean> {
+  try {
+    await client.conversations.replies({ channel, ts: threadTs, inclusive: true, limit: 1 });
+    return true;
+  } catch (error) {
+    const code =
+      error && typeof error === 'object'
+        ? ((error as { data?: { error?: unknown } }).data?.error as string | undefined)
+        : undefined;
+    if (code === 'thread_not_found' || code === 'message_not_found') {
+      return false;
+    }
+    throw error;
+  }
+}
+
 export async function fetchThreadContext(
   client: WebClient,
   channel: string,

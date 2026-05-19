@@ -69,8 +69,14 @@ export async function runDevAssistWorkflow(params: {
   slack: WebClient;
   store: JobStore;
   logStep?: WorkflowStepLogger;
+  /** Accepted for parity with the other workflows. DEV_ASSIST is a fast
+   *  synchronous command path with no long-running subprocesses, so we don't
+   *  actively poll the signal — but cancelJob() callers can still rely on
+   *  the controller being registered uniformly. */
+  signal?: AbortSignal;
 }): Promise<WorkflowResult> {
   const { task, config, slack, store, logStep } = params;
+  void params.signal;
 
   const command = parseDevAssistCommand(task.event.text);
 

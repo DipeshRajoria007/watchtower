@@ -753,6 +753,7 @@ describe('agentPipeline', () => {
 
 vi.mock('../src/slack/threadContext.js', () => ({
   fetchThreadContext: vi.fn(),
+  assertThreadParentExists: vi.fn().mockResolvedValue(true),
 }));
 
 describe('waitForApproval', () => {

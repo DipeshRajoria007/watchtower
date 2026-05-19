@@ -9,6 +9,12 @@ const CATCHUP_STATE_KEY = 'mention_catchup_cursor_ts';
 const CATCHUP_INTERVAL_MS = 2 * 60 * 1000;
 const CATCHUP_LOOKBACK_SECONDS = 60 * 60 * 24;
 const CATCHUP_MAX_MESSAGES_PER_CHANNEL = 200;
+// Catchup is a recovery scanner — it walks `conversations.history` and replays
+// mentions whose live socket delivery we may have missed. Deletions only flow
+// through the live socket path (where processMessageDeleted reacts); a
+// deletion that landed while the sidecar was down can't be retroactively
+// resurrected from history anyway, so this scanner intentionally still skips
+// `message_deleted` rows it stumbles across.
 const NON_ACTIONABLE_SUBTYPES = new Set(['message_changed', 'message_deleted', 'bot_message']);
 
 type CatchupDeps = {

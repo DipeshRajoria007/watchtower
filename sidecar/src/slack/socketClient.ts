@@ -6,6 +6,68 @@ import { logger } from '../logging/logger.js';
 type SlackEventHandler = (event: SlackEventEnvelope, client: WebClient) => Promise<void>;
 type SlackReactionHandler = (event: SlackReactionEvent, client: WebClient) => Promise<void>;
 
+/**
+ * Translate a raw Slack `message` (or `app_mention`) event payload into the
+ * sidecar's normalized envelope. Pulled out as a free function so unit tests
+ * can exercise it without spinning up the Bolt App. Handles the
+ * `message_deleted` subtype specially: the deletion notification's `ts` and
+ * `user` describe the *deletion event* itself, while the deleted message
+ * lives under `event.previous_message` — we want the latter for routing.
+ */
+export function normalizeMessageEnvelope(
+  event: Record<string, unknown>,
+  body: Record<string, unknown>,
+): SlackEventEnvelope {
+  const channelId = String(event.channel ?? '');
+  const channelType = String(event.channel_type ?? '');
+  const messageSubtype = event.subtype ? String(event.subtype) : undefined;
+
+  const previousMessage =
+    messageSubtype === 'message_deleted' && event.previous_message && typeof event.previous_message === 'object'
+      ? (event.previous_message as Record<string, unknown>)
+      : undefined;
+  const deletedTs =
+    messageSubtype === 'message_deleted'
+      ? String(event.deleted_ts ?? previousMessage?.ts ?? '') || undefined
+      : undefined;
+
+  const eventTs = String(event.ts ?? body.event_ts ?? '');
+  const threadTs = String(
+    messageSubtype === 'message_deleted'
+      ? (previousMessage?.thread_ts ?? previousMessage?.ts ?? deletedTs ?? eventTs)
+      : (event.thread_ts ?? event.ts ?? ''),
+  );
+  const text = String(messageSubtype === 'message_deleted' ? (previousMessage?.text ?? '') : (event.text ?? ''));
+  const userId = String(messageSubtype === 'message_deleted' ? (previousMessage?.user ?? '') : (event.user ?? ''));
+  const eventId = String(body.event_id ?? `${channelId}:${eventTs}`);
+
+  const envelope: SlackEventEnvelope = {
+    eventId,
+    channelId,
+    channelType,
+    threadTs,
+    eventTs,
+    userId,
+    text,
+    messageSubtype,
+    rawEvent: event,
+  };
+
+  if (deletedTs) {
+    envelope.deletedTs = deletedTs;
+  }
+  if (previousMessage) {
+    envelope.previousMessage = {
+      ts: String(previousMessage.ts ?? deletedTs ?? ''),
+      userId: String(previousMessage.user ?? ''),
+      threadTs: previousMessage.thread_ts ? String(previousMessage.thread_ts) : undefined,
+      text: previousMessage.text ? String(previousMessage.text) : undefined,
+    };
+  }
+
+  return envelope;
+}
+
 export class SocketSlackClient {
   private app: App;
   private readonly config: AppConfig;
@@ -172,26 +234,7 @@ export class SocketSlackClient {
   }
 
   private normalizeEnvelope(event: Record<string, unknown>, body: Record<string, unknown>): SlackEventEnvelope {
-    const channelId = String(event.channel ?? '');
-    const channelType = String(event.channel_type ?? '');
-    const eventTs = String(event.ts ?? body.event_ts ?? '');
-    const threadTs = String(event.thread_ts ?? event.ts ?? '');
-    const text = String(event.text ?? '');
-    const userId = String(event.user ?? '');
-    const messageSubtype = event.subtype ? String(event.subtype) : undefined;
-    const eventId = String(body.event_id ?? `${channelId}:${eventTs}`);
-
-    return {
-      eventId,
-      channelId,
-      channelType,
-      threadTs,
-      eventTs,
-      userId,
-      text,
-      messageSubtype,
-      rawEvent: event,
-    };
+    return normalizeMessageEnvelope(event, body);
   }
 
   private normalizeCommandEnvelope(command: Record<string, unknown>, namespace?: string): SlackEventEnvelope {
