@@ -250,6 +250,49 @@ describe('resolveRepoOrAsk', () => {
     expect(inferRepoFromAffectedFiles(['src/foo.ts', 'README.md'])).toBeNull();
   });
 
+  it('inferRepoFromAffectedFiles ignores a single stray cross-repo reference', () => {
+    // Regression for Slack thread p1779196094091969 (2026-05-19): the planner
+    // for a newton-web feature listed ~25 repo-relative paths plus a single
+    // context citation `newton-api/courses/enums.py:955-960`. The pre-fix
+    // any-hit-wins logic routed the coder to newton-api with no code to edit.
+    // After the fix, this case falls through to the AI classifier instead.
+    const plannerOutput = [
+      'src/containers/Nsat/components/RequestLoanFormNudge/index.js',
+      'src/containers/Nsat/constants.js:600-604',
+      'newton-api/courses/enums.py:955-960', // <-- the stray cross-reference
+      'src/containers/Nsat/constants.js',
+      'src/containers/NsatTimelineV2/constants.js',
+      'src/containers/NsatTimelineV2/components/CampusVisitForm/index.js',
+      'src/containers/NsatTimelineV2/components/CampusVisitForm/index.styles.js',
+      'src/containers/NsatTimelineV2/timelineSteps/BlockFeePayment/index.js',
+      'src/tracking/EVENTS/nsatTimelineV2.js',
+      'src/utils/popupHandler.js',
+    ];
+    expect(inferRepoFromAffectedFiles(plannerOutput)).toBeNull();
+  });
+
+  it('inferRepoFromAffectedFiles still picks the clear-majority repo', () => {
+    // When the planner DOES write fully-qualified paths, the deterministic
+    // check should still fire — no extra round-trip to the classifier.
+    const allWeb = [
+      '/Users/dev/code/newton-web/src/a.tsx',
+      '/Users/dev/code/newton-web/src/b.tsx',
+      '/Users/dev/code/newton-web/src/c.tsx',
+    ];
+    expect(inferRepoFromAffectedFiles(allWeb)).toBe('newton-web');
+
+    // Even with a single stray cross-reference, a strong majority still wins.
+    expect(
+      inferRepoFromAffectedFiles([
+        '/repos/newton-web/src/a.tsx',
+        '/repos/newton-web/src/b.tsx',
+        '/repos/newton-web/src/c.tsx',
+        '/repos/newton-web/src/d.tsx',
+        'newton-api/courses/enums.py', // 1 out of 5 → not enough to flip
+      ]),
+    ).toBe('newton-web');
+  });
+
   it('repoPathFor returns the configured path for the given repo', () => {
     const cfg = baseConfig();
     expect(repoPathFor('newton-web', cfg)).toBe('/repos/web');
