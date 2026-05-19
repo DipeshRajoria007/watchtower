@@ -19,6 +19,12 @@ export interface ClassifyRepoParams {
   affinity?: RepoAffinity;
   /** Planner's affectedFiles — passed to the agent as advisory context, not pattern-matched. */
   planAffectedFiles?: string[];
+  /**
+   * Planner's full plan markdown. When provided, the classifier reads the
+   * plan's own reasoning ("we'll modify X in newton-web because Y") rather
+   * than guessing from filenames. Highest-signal input when available.
+   */
+  planMarkdown?: string;
   logStep?: WorkflowStepLogger;
 }
 
@@ -30,12 +36,24 @@ The user has sent a task. Route it to one of two repositories:
 
 - "newton-api" — the backend repo (Python + Django). Owns HTTP endpoints, request handlers, serializers, models, migrations, Celery tasks, Postgres queries, server-side business logic, integrations with third-party APIs, background jobs, and HTTP 5xx errors.
 
+Repo signals you can use beyond intent:
+
+- newton-web (React) file patterns:
+  • directories: \`src/containers/\`, \`src/components/\`, \`src/hooks/\`, \`src/utils/\`, \`src/tracking/\`, \`src/pages/\`
+  • extensions: \`.tsx\`, \`.jsx\`, \`.ts\`, \`.js\`, \`.styles.js\`, \`.styles.ts\`
+  • keywords inside the plan: \`useState\`, \`useEffect\`, \`useSelector\`, \`useDispatch\`, \`styled-components\`, \`NSTypography\`, \`NSButton\`, \`NSIcon\`, \`@newtonschool/grauity\`, \`useNsatTimelineData\`, \`useSendAnalyticsEvent\`
+- newton-api (Django) file patterns:
+  • directories: \`courses/\`, \`users/\`, \`payments/\`, \`migrations/\`, \`management/commands/\`
+  • files: \`models.py\`, \`views.py\`, \`serializers.py\`, \`enums.py\`, \`urls.py\`, \`tasks.py\`, \`signals.py\`, \`apps.py\`
+  • keywords: \`Model\`, \`Serializer\`, \`ViewSet\`, \`APIView\`, \`Celery\`, \`@receiver\`, \`migrations.RunPython\`, \`PreferredCampus enum\`
+
 Rules:
 - A task that asks to add, remove, hide, or restyle something visible on a URL is almost always "newton-web".
 - A task about an endpoint, request/response shape, server error, database/model change, or background job is "newton-api".
-- A task that needs both: pick the repo where the bulk of the change lives.
-- If genuinely ambiguous (no signal either way), return null and let an admin decide.
-- The current task always wins over thread context. Thread messages are quoted for background only — don't classify based on what an earlier message said unless the current task references it.
+- A task that needs both: pick the repo where the BULK of the change lives. Cross-repo references (e.g. a frontend plan citing a backend enum for context) DO NOT flip the verdict — the repo with the actual code changes wins.
+- If a plan markdown is provided, trust the plan's own per-file rationale over a raw filename. The planner already explored the repos.
+- The current task always wins over thread context. Thread messages are quoted for background only.
+- Only return null if you genuinely cannot tell after considering all signals. Aim for a decisive verdict — ambiguous output makes the bot stall for an admin gate.
 
 Return strict JSON:
 {
@@ -52,7 +70,7 @@ const FALLBACK: RepoClassificationResult = {
 };
 
 export async function classifyRepo(params: ClassifyRepoParams): Promise<RepoClassificationResult> {
-  const { task, threadMessages, threshold, affinity, planAffectedFiles, logStep } = params;
+  const { task, threadMessages, threshold, affinity, planAffectedFiles, planMarkdown, logStep } = params;
 
   const trimmedTask = typeof task === 'string' ? task.trim() : '';
   if (!trimmedTask) {
@@ -75,6 +93,18 @@ export async function classifyRepo(params: ClassifyRepoParams): Promise<RepoClas
   }
   if (planAffectedFiles && planAffectedFiles.length > 0) {
     sections.push(`Planner's affected files (advisory):\n${planAffectedFiles.join('\n')}`);
+  }
+  if (typeof planMarkdown === 'string' && planMarkdown.trim().length > 0) {
+    // Truncate to a generous but bounded slice — full plans can be tens of
+    // KB on large features. The first ~4k chars cover the intent, file
+    // table, and rationale; the implementation-steps tail rarely adds new
+    // repo signal beyond what the file table already carried.
+    const MAX_PLAN_CHARS = 4000;
+    const truncated =
+      planMarkdown.length > MAX_PLAN_CHARS ? `${planMarkdown.slice(0, MAX_PLAN_CHARS)}…[truncated]` : planMarkdown;
+    sections.push(
+      `Planner's full plan markdown (HIGH-SIGNAL — the plan's own per-file rationale is the most trustworthy signal):\n${truncated}`,
+    );
   }
   if (affinity && ((affinity.newtonWebHits ?? 0) > 0 || (affinity.newtonApiHits ?? 0) > 0)) {
     sections.push(

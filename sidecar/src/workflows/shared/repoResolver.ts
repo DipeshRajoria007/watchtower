@@ -13,31 +13,31 @@ export type RepoResolution =
 export type ResolutionSource = 'plan-affected-files' | 'classifier' | 'admin-choice';
 
 /**
- * Deterministic substring check: returns the repo name if `files` unambiguously
- * point inside one of our known repos, else null. Shared between the initial
- * repo resolution and the post-revision recheck — revisions can swing a plan
- * from newton-api → newton-web (or vice versa) and the worktree must follow.
+ * Deterministic fast-path: returns a repo name only when the planner's
+ * affected-files list is overwhelmingly unambiguous. This is the cheap
+ * pre-check that saves an LLM round-trip when the planner wrote fully-
+ * qualified paths in exactly one repo; in every other case we hand the
+ * decision to the AI classifier, which is intent-aware and reads the full
+ * plan markdown.
  *
- * Decision rule: a repo is "picked" only when its hits represent a CLEAR
- * MAJORITY of all paths (>50% AND strictly more than the other repo). This
- * prevents a single stray cross-repo reference from silently picking the
- * wrong worktree — the failure mode seen on Slack thread p1779196094091969
- * (2026-05-19), where a planner output 25 newton-web-relative paths plus
- * one context citation of `newton-api/courses/enums.py:955-960`, and the
- * pre-fix logic (any-hit-wins) routed the coder to newton-api with zero
- * code to actually edit.
+ * Rule: ≥2 hits in the chosen repo, ZERO hits in the other. This is a
+ * stricter cousin of the pre-#307 logic — it deliberately misses borderline
+ * cases on purpose, so they fall through to the LLM. The cost of a false
+ * deterministic decision is high (wrong worktree → coder bails), so we
+ * favor an extra ~3-5 s of LLM time over silent mis-routing.
  *
- * When the signal is ambiguous, return null and let the upstream AI repo
- * classifier (which is intent-aware) decide.
+ * Failure mode this protects against: Slack thread p1779196094091969
+ * (2026-05-19) — a planner output 24 newton-web-relative paths plus a
+ * single `newton-api/courses/enums.py` context citation. The any-hit-wins
+ * predecessor mis-routed the coder to newton-api with no React files to
+ * touch.
  */
 export function inferRepoFromAffectedFiles(files: string[]): RepoName | null {
   if (files.length === 0) return null;
   const webHits = files.filter(f => f.includes('newton-web')).length;
   const apiHits = files.filter(f => f.includes('newton-api')).length;
-  const total = files.length;
-  const half = total / 2;
-  if (webHits > apiHits && webHits >= half) return 'newton-web';
-  if (apiHits > webHits && apiHits >= half) return 'newton-api';
+  if (webHits >= 2 && apiHits === 0) return 'newton-web';
+  if (apiHits >= 2 && webHits === 0) return 'newton-api';
   return null;
 }
 
@@ -52,6 +52,15 @@ export async function resolveRepoOrAsk(params: {
   logStep?: WorkflowStepLogger;
   threadMessages: Array<{ text: string }>;
   planAffectedFiles?: string[];
+  /**
+   * Optional. When available (i.e. the planner has already produced its plan
+   * for this run), pass the full plan markdown — it carries far more signal
+   * than just the affected-files list (the planner explains its reasoning
+   * per file, the imports it's referencing, the framework conventions it's
+   * following). Lifts the LLM classifier from "guess from filenames" to
+   * "weigh the plan author's own reasoning."
+   */
+  planMarkdown?: string;
   signal?: AbortSignal;
   askAdminsOnUncertain?: boolean;
   /**
@@ -67,6 +76,7 @@ export async function resolveRepoOrAsk(params: {
     logStep,
     threadMessages,
     planAffectedFiles = [],
+    planMarkdown,
     signal,
     askAdminsOnUncertain = true,
     repoAffinity,
@@ -84,6 +94,7 @@ export async function resolveRepoOrAsk(params: {
     threshold: config.repoClassifierThreshold,
     affinity: repoAffinity,
     planAffectedFiles,
+    planMarkdown,
     logStep,
   });
   if (!classification.uncertain && classification.selectedRepo) {
