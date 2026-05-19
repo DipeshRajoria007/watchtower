@@ -17,13 +17,27 @@ export type ResolutionSource = 'plan-affected-files' | 'classifier' | 'admin-cho
  * point inside one of our known repos, else null. Shared between the initial
  * repo resolution and the post-revision recheck — revisions can swing a plan
  * from newton-api → newton-web (or vice versa) and the worktree must follow.
+ *
+ * Decision rule: a repo is "picked" only when its hits represent a CLEAR
+ * MAJORITY of all paths (>50% AND strictly more than the other repo). This
+ * prevents a single stray cross-repo reference from silently picking the
+ * wrong worktree — the failure mode seen on Slack thread p1779196094091969
+ * (2026-05-19), where a planner output 25 newton-web-relative paths plus
+ * one context citation of `newton-api/courses/enums.py:955-960`, and the
+ * pre-fix logic (any-hit-wins) routed the coder to newton-api with zero
+ * code to actually edit.
+ *
+ * When the signal is ambiguous, return null and let the upstream AI repo
+ * classifier (which is intent-aware) decide.
  */
 export function inferRepoFromAffectedFiles(files: string[]): RepoName | null {
   if (files.length === 0) return null;
-  const hasWebFiles = files.some(f => f.includes('newton-web'));
-  const hasApiFiles = files.some(f => f.includes('newton-api'));
-  if (hasWebFiles && !hasApiFiles) return 'newton-web';
-  if (hasApiFiles && !hasWebFiles) return 'newton-api';
+  const webHits = files.filter(f => f.includes('newton-web')).length;
+  const apiHits = files.filter(f => f.includes('newton-api')).length;
+  const total = files.length;
+  const half = total / 2;
+  if (webHits > apiHits && webHits >= half) return 'newton-web';
+  if (apiHits > webHits && apiHits >= half) return 'newton-api';
   return null;
 }
 
