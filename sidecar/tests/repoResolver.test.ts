@@ -95,12 +95,14 @@ describe('resolveRepoOrAsk', () => {
   });
 
   it('short-circuits to newton-web when planAffectedFiles all point inside a newton-web path', async () => {
+    // ≥2 hits required for the deterministic fast-path; single-file lists
+    // defer to the LLM classifier to avoid mis-routing on stray references.
     const res = await resolveRepoOrAsk({
       task: baseTask('do a thing'),
       config: baseConfig(),
       slack,
       threadMessages: [],
-      planAffectedFiles: ['/repos/newton-web/src/foo.tsx'],
+      planAffectedFiles: ['/repos/newton-web/src/foo.tsx', '/repos/newton-web/src/bar.tsx'],
     });
     expect(res).toEqual(
       expect.objectContaining({ outcome: 'resolved', name: 'newton-web', source: 'plan-affected-files' }),
@@ -114,7 +116,7 @@ describe('resolveRepoOrAsk', () => {
       config: baseConfig(),
       slack,
       threadMessages: [],
-      planAffectedFiles: ['/repos/newton-api/handlers/foo.py'],
+      planAffectedFiles: ['/repos/newton-api/handlers/foo.py', '/repos/newton-api/serializers/bar.py'],
     });
     expect(res).toEqual(
       expect.objectContaining({ outcome: 'resolved', name: 'newton-api', source: 'plan-affected-files' }),
@@ -240,13 +242,30 @@ describe('resolveRepoOrAsk', () => {
     expect(waitForRepoChoice).not.toHaveBeenCalled();
   });
 
-  it('inferRepoFromAffectedFiles returns the unambiguous repo or null', () => {
+  it('inferRepoFromAffectedFiles returns the repo only on ≥2 hits with zero cross-repo references', () => {
+    // The deterministic fast-path is now conservative — single hits and any
+    // cross-repo reference defer to the LLM classifier. Verified by:
     expect(inferRepoFromAffectedFiles([])).toBeNull();
-    expect(inferRepoFromAffectedFiles(['/repos/newton-web/src/a.tsx'])).toBe('newton-web');
-    expect(inferRepoFromAffectedFiles(['handlers/x.py', '/repos/newton-api/y.py'])).toBe('newton-api');
-    // mixed → null so we don't silently pick one
+    // Single fully-qualified path → defer to LLM (was 'newton-web' pre-fix).
+    expect(inferRepoFromAffectedFiles(['/repos/newton-web/src/a.tsx'])).toBeNull();
+    // 2+ fully-qualified paths in one repo with no cross-references → fires.
+    expect(inferRepoFromAffectedFiles(['/repos/newton-web/src/a.tsx', '/repos/newton-web/src/b.tsx'])).toBe(
+      'newton-web',
+    );
+    expect(inferRepoFromAffectedFiles(['/repos/newton-api/handlers/x.py', '/repos/newton-api/y.py'])).toBe(
+      'newton-api',
+    );
+    // Any cross-repo hit → defer to LLM, regardless of majority.
+    expect(
+      inferRepoFromAffectedFiles([
+        '/repos/newton-web/src/a.tsx',
+        '/repos/newton-web/src/b.tsx',
+        '/repos/newton-web/src/c.tsx',
+        '/repos/newton-api/handlers/d.py',
+      ]),
+    ).toBeNull();
     expect(inferRepoFromAffectedFiles(['/repos/newton-web/src/a.tsx', '/repos/newton-api/handlers/b.py'])).toBeNull();
-    // neither → null (no signal at all)
+    // No repo prefix at all → null (no signal).
     expect(inferRepoFromAffectedFiles(['src/foo.ts', 'README.md'])).toBeNull();
   });
 
@@ -271,9 +290,10 @@ describe('resolveRepoOrAsk', () => {
     expect(inferRepoFromAffectedFiles(plannerOutput)).toBeNull();
   });
 
-  it('inferRepoFromAffectedFiles still picks the clear-majority repo', () => {
-    // When the planner DOES write fully-qualified paths, the deterministic
-    // check should still fire — no extra round-trip to the classifier.
+  it('inferRepoFromAffectedFiles fires only on fully-prefixed, single-repo lists', () => {
+    // When the planner writes 3+ fully-qualified newton-web paths with no
+    // cross-references, the deterministic check fires cheaply — no LLM
+    // round-trip needed.
     const allWeb = [
       '/Users/dev/code/newton-web/src/a.tsx',
       '/Users/dev/code/newton-web/src/b.tsx',
@@ -281,16 +301,18 @@ describe('resolveRepoOrAsk', () => {
     ];
     expect(inferRepoFromAffectedFiles(allWeb)).toBe('newton-web');
 
-    // Even with a single stray cross-reference, a strong majority still wins.
+    // Even a strong majority with ONE cross-reference now defers to the LLM:
+    // a stray reference is a strong "you might be wrong" signal, so we let
+    // the intent-aware classifier decide rather than silently choose.
     expect(
       inferRepoFromAffectedFiles([
         '/repos/newton-web/src/a.tsx',
         '/repos/newton-web/src/b.tsx',
         '/repos/newton-web/src/c.tsx',
         '/repos/newton-web/src/d.tsx',
-        'newton-api/courses/enums.py', // 1 out of 5 → not enough to flip
+        'newton-api/courses/enums.py', // 1 cross-reference → defer to LLM
       ]),
-    ).toBe('newton-web');
+    ).toBeNull();
   });
 
   it('repoPathFor returns the configured path for the given repo', () => {

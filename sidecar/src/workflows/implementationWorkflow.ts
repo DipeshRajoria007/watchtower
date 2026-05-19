@@ -1087,6 +1087,7 @@ Write your response as a ready-to-post Slack message describing what you did.
         slack,
         logStep,
         planAffectedFiles,
+        planMarkdown,
         threadMessages: ctx.threadMessages,
         repoAffinity,
       });
