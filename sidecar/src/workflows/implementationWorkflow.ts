@@ -31,6 +31,7 @@ import type { PipelineStore } from '../agents/pipeline.js';
 import type { AgentStepResult, PipelineConfig } from '../agents/types.js';
 import type { InvestigationStore } from '../state/investigationStore.js';
 import { prepareWorkflowContext, sanitizeOwnerSummary, extractReplyFromCodexResult } from './shared/workflowUtils.js';
+import { assertThreadParentExists } from '../slack/threadContext.js';
 
 function buildOwnerPrimaryPrompt(params: {
   task: NormalizedTask;
@@ -710,6 +711,28 @@ export async function runImplementationWorkflow(params: {
       }
     }
     const plannerSchemaPath = path.resolve(process.cwd(), 'schemas/agent-planner-result.schema.json');
+
+    // Cheap pre-flight: if the user has already deleted the source mention,
+    // skip the 5-minute planner call. Slack would silently promote any post
+    // we make into an orphan channel-root message (see processMessageDeleted
+    // doc-comment in index.ts for the RCA). One ~50ms API call to save
+    // minutes of compute and a confusing channel artifact.
+    const parentAlive = await assertThreadParentExists(slack, task.event.channelId, task.event.threadTs);
+    if (!parentAlive) {
+      logStep?.({
+        stage: 'implementation.source_deleted',
+        level: 'WARN',
+        message: 'Source mention no longer exists — aborting before planner spawn.',
+        data: { channelId: task.event.channelId, threadTs: task.event.threadTs },
+      });
+      return {
+        workflow: 'IMPLEMENTATION',
+        status: 'CANCELLED',
+        message: 'Source message deleted before planner ran.',
+        notifyDesktop: false,
+        slackPosted: false,
+      };
+    }
 
     logStep?.({ stage: 'pipeline.agent.planner.start', message: 'Starting planner agent.' });
 

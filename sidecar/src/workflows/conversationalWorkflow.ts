@@ -38,8 +38,10 @@ export async function runConversationalWorkflow(params: {
    * reply still won't lie to the user.
    */
   investigationStore?: InvestigationStore;
+  /** Honors cancellation from cancelJob() (e.g. when the source mention was deleted mid-run). */
+  signal?: AbortSignal;
 }): Promise<WorkflowResult> {
-  const { task, config: _config, slack, logStep, investigationStore } = params;
+  const { task, config: _config, slack, logStep, investigationStore, signal } = params;
   const userInput = stripMentions(task.event.text);
   const pendingFindings = investigationStore?.getForThread(task.event.threadTs);
 
@@ -119,6 +121,7 @@ ${threadContext}
     reasoningEffort: profile.reasoningEffort,
     // timeoutMs: 30_000,
     onLog: logStep,
+    signal,
   });
 
   let reply = extractReplyFromCodexResult(result) || "I'm here. What do you need?";

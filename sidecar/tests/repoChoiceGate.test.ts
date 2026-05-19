@@ -11,6 +11,7 @@ vi.mock('../src/codex/runCodex.js', () => ({
 
 vi.mock('../src/slack/threadContext.js', () => ({
   fetchThreadContext: vi.fn(),
+  assertThreadParentExists: vi.fn().mockResolvedValue(true),
 }));
 
 const mockRunCodex = runCodex as unknown as ReturnType<typeof vi.fn>;

@@ -13,7 +13,7 @@ import type {
 } from '../types/contracts.js';
 import type { JobStore } from '../state/jobStore.js';
 import type { AgentFinding } from '../agents/types.js';
-import { fetchThreadContext } from '../slack/threadContext.js';
+import { assertThreadParentExists, fetchThreadContext } from '../slack/threadContext.js';
 import { extractPrContext } from '../router/intentParser.js';
 import { notifyDesktop } from '../notify/desktopNotifier.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
@@ -414,6 +414,27 @@ export async function runPrReviewWorkflow(params: {
     stage: 'pr_review.context.fetch.start',
     message: 'Fetching Slack thread context for PR review.',
   });
+
+  // Pre-flight: if the source mention is gone, fetchThreadContext below would
+  // throw thread_not_found and the dispatcher would mark this FAILED. The
+  // actual cause is benign (user deleted), so short-circuit to CANCELLED. See
+  // processMessageDeleted in index.ts for the orphan-promotion RCA.
+  const parentAlive = await assertThreadParentExists(slack, task.event.channelId, task.event.threadTs);
+  if (!parentAlive) {
+    logStep?.({
+      stage: 'pr_review.source_deleted',
+      level: 'WARN',
+      message: 'Source mention no longer exists — aborting PR review.',
+      data: { channelId: task.event.channelId, threadTs: task.event.threadTs },
+    });
+    return {
+      workflow: 'PR_REVIEW',
+      status: 'CANCELLED',
+      message: 'Source message deleted before PR review ran.',
+      notifyDesktop: false,
+      slackPosted: false,
+    };
+  }
 
   const threadMessages = await fetchThreadContext(slack, task.event.channelId, task.event.threadTs);
   const threadTexts = threadMessages.map(message => message.text);

@@ -122,6 +122,25 @@ export interface SlackEventEnvelope {
   messageSubtype?: string;
   ingestSource?: EventIngestSource;
   launchpadRequestId?: string;
+  /**
+   * For `message_deleted` subtypes: the ts of the message that was deleted
+   * (Slack puts the deletion event itself in `event.ts`, and the original
+   * message's ts in `event.deleted_ts` / `event.previous_message.ts`).
+   * Populated only by `normalizeEnvelope` when subtype === 'message_deleted'.
+   */
+  deletedTs?: string;
+  /**
+   * For `message_deleted` subtypes: a snapshot of the deleted message so
+   * downstream handlers can identify which job to cancel without doing an
+   * extra API round-trip. The author and thread context come from the
+   * deletion event's `previous_message` block.
+   */
+  previousMessage?: {
+    ts: string;
+    userId: string;
+    threadTs?: string;
+    text?: string;
+  };
   rawEvent: Record<string, unknown>;
 }
 

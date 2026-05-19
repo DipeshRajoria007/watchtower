@@ -8,8 +8,11 @@ export async function runMiniogDossierWorkflow(params: {
   slack: WebClient;
   store: JobStore;
   logStep?: WorkflowStepLogger;
+  /** Accepted for parity with other workflows; this is a fast read-only path. */
+  signal?: AbortSignal;
 }): Promise<WorkflowResult> {
   const { task, slack, store, logStep } = params;
+  void params.signal;
   const sub = task.miniogSubcommand;
 
   if (!sub) {

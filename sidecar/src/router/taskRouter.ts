@@ -337,15 +337,16 @@ export async function routeTask(params: {
       slack,
       logStep,
       investigationStore: typeof store?.investigationStore === 'function' ? store.investigationStore() : undefined,
+      signal,
     });
   }
 
   if (resolvedIntent === 'DEV_ASSIST') {
-    return runDevAssistWorkflow({ task: routedTask, config, slack, store, logStep });
+    return runDevAssistWorkflow({ task: routedTask, config, slack, store, logStep, signal });
   }
 
   if (resolvedIntent === 'MINIOG_DOSSIER') {
-    return runMiniogDossierWorkflow({ task: routedTask, slack, store, logStep });
+    return runMiniogDossierWorkflow({ task: routedTask, slack, store, logStep, signal });
   }
 
   if (resolvedIntent === 'DEPLOY') {

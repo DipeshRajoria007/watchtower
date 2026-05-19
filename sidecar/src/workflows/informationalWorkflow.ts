@@ -12,6 +12,7 @@ import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { githubAuthModeHint } from '../github/githubAuth.js';
 import { prepareWorkflowContext, extractReplyFromCodexResult } from './shared/workflowUtils.js';
+import { assertThreadParentExists } from '../slack/threadContext.js';
 import { resolveWatchtowerPath, buildLiveStateSnapshot } from './shared/selfInquiryContext.js';
 import type { RecallCapableStore } from '../state/dossierStore.js';
 import type { JobStore } from '../state/jobStore.js';
@@ -47,6 +48,26 @@ export async function runInformationalWorkflow(params: {
     stage: 'informational.start',
     message: 'Running informational workflow.',
   });
+
+  // Pre-flight: bail before fanning out per-repo Codex calls if the source
+  // mention has already been deleted. See processMessageDeleted in index.ts
+  // for the orphan-promotion RCA.
+  const parentAlive = await assertThreadParentExists(slack, task.event.channelId, task.event.threadTs);
+  if (!parentAlive) {
+    logStep?.({
+      stage: 'informational.source_deleted',
+      level: 'WARN',
+      message: 'Source mention no longer exists — aborting before fanout.',
+      data: { channelId: task.event.channelId, threadTs: task.event.threadTs },
+    });
+    return {
+      workflow: 'INFORMATIONAL',
+      status: 'CANCELLED',
+      message: 'Source message deleted before informational fanout ran.',
+      notifyDesktop: false,
+      slackPosted: false,
+    };
+  }
 
   // Informational queries search both Newton repos in parallel — skip the
   // repo-clarify gate that prepareWorkflowContext would otherwise fire.

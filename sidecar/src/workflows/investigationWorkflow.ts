@@ -5,6 +5,7 @@ import { assembleRecall } from '../codex/recallAssembler.js';
 import { highReasoningProfile } from '../codex/modelProfiles.js';
 import { buildMentionSystemPrompt } from '../codex/mentionSystemPrompt.js';
 import { prepareWorkflowContext } from './shared/workflowUtils.js';
+import { assertThreadParentExists } from '../slack/threadContext.js';
 import type { PipelineStore } from '../agents/pipeline.js';
 import type { InvestigationStore } from '../state/investigationStore.js';
 import type { RecallCapableStore } from '../state/dossierStore.js';
@@ -101,6 +102,25 @@ Return strict JSON:
   "summary": string                         // one-line Slack summary of what you found
 }
 `.trim()}`;
+
+  // Bail before spawning the investigator if the source mention is gone.
+  // See processMessageDeleted in index.ts for the orphan-promotion RCA.
+  const parentAlive = await assertThreadParentExists(slack, task.event.channelId, task.event.threadTs);
+  if (!parentAlive) {
+    logStep?.({
+      stage: 'investigation.source_deleted',
+      level: 'WARN',
+      message: 'Source mention no longer exists — aborting investigation.',
+      data: { channelId: task.event.channelId, threadTs: task.event.threadTs },
+    });
+    return {
+      workflow: 'INVESTIGATION',
+      status: 'CANCELLED',
+      message: 'Source message deleted before investigator ran.',
+      notifyDesktop: false,
+      slackPosted: false,
+    };
+  }
 
   const profile = highReasoningProfile(getActiveBackendId());
   const investigatorResult = await runCodex({
