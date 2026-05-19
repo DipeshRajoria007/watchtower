@@ -207,7 +207,6 @@ async function runApprovalLoop(input: {
     pauseCountStart,
     plannerSchemaPath,
     plannerProfile,
-    workflowTimeoutMs,
     githubToken,
     resumeApprovalPromptTs,
     workflowIntent,
@@ -456,7 +455,8 @@ Return the JSON now.`;
         outputSchemaPath: plannerSchemaPath,
         githubToken,
         ...plannerProfile,
-        timeoutMs: Math.floor(workflowTimeoutMs * 0.15),
+        // No per-agent timeoutMs — see investigationWorkflow.ts for rationale.
+        // Outer abort signal remains the safety net.
         onLog: logStep,
       });
 
@@ -743,7 +743,8 @@ export async function runImplementationWorkflow(params: {
       githubToken: ctx.githubToken,
       planMode: plannerPlanMode,
       ...plannerProfile,
-      timeoutMs: Math.floor(workflowTimeoutMs * 0.15),
+      // No per-agent timeoutMs — see investigationWorkflow.ts for rationale.
+      // Outer abort signal remains the safety net.
       onLog: logStep,
     });
 
@@ -888,7 +889,8 @@ export async function runImplementationWorkflow(params: {
         outputSchemaPath: plannerSchemaPath,
         githubToken: ctx.githubToken,
         ...plannerProfile,
-        timeoutMs: Math.floor(workflowTimeoutMs * 0.15),
+        // No per-agent timeoutMs — see investigationWorkflow.ts for rationale.
+        // Outer abort signal remains the safety net.
         onLog: logStep,
       });
       plannerSessionId = plannerRunResult.sessionId ?? plannerSessionId;
