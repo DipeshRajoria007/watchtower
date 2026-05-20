@@ -390,16 +390,123 @@ describe('prReviewWorkflow', () => {
       });
 
       expect(result.status).toBe('FAILED');
-      expect(result.message).toContain('empty');
+      // 404 on the diff endpoint → reason 'fetch_failed' → user-facing "Couldn't fetch" message.
+      expect(result.message).toMatch(/Couldn't fetch the diff/);
+      expect(result.message).toContain('HTTP 404');
       // runCodex must NEVER be called when the diff is empty — the agents should not
       // get a chance to "approve" a PR they never saw.
       expect(runCodex).not.toHaveBeenCalled();
       // The failure message must reach Slack so the requester knows what happened.
       expect(slack.chat.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
-          text: expect.stringContaining('PR diff fetch returned empty'),
+          text: expect.stringMatching(/Couldn't fetch the diff/),
         }),
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('falls back to the files endpoint when the diff endpoint refuses with 406 too_large', async () => {
+    // GitHub returns 406 + {"errors":[{"code":"too_large"}]} on the .diff endpoint for
+    // PRs above ~300 files. The multi-agent path must paginate /pulls/<n>/files and
+    // reconstruct a unified diff so the review can proceed, and tell the user it's
+    // a best-effort reconstruction.
+    const originalFetch = globalThis.fetch;
+    vi.mocked(runCodex).mockResolvedValue({
+      ok: true,
+      parsedJson: { findings: [] },
+      stdout: '{}',
+      stderr: '',
+      exitCode: 0,
+      timedOut: false,
+    } as any);
+
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const accept = (init?.headers as Record<string, string> | undefined)?.Accept ?? '';
+      // Diff endpoint refuses with 406 + too_large
+      if (accept.includes('application/vnd.github.diff')) {
+        return new Response(JSON.stringify({ errors: [{ code: 'too_large' }] }), { status: 406 });
+      }
+      // Files endpoint pagination
+      if (url.includes('/pulls/777/files')) {
+        const pageMatch = url.match(/[?&]page=(\d+)/);
+        const page = pageMatch ? Number(pageMatch[1]) : 1;
+        if (page === 1) {
+          return new Response(
+            JSON.stringify([
+              {
+                filename: 'src/a.ts',
+                status: 'modified',
+                additions: 1,
+                deletions: 0,
+                patch: '@@ -1,1 +1,2 @@\n line\n+added',
+              },
+            ]),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      // Default for PR metadata, reviews submission etc.
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+
+    try {
+      const slack = {
+        conversations: {
+          replies: vi.fn().mockResolvedValue({
+            messages: [{ text: 'review https://github.com/Newton-School/newton-web/pull/777' }],
+          }),
+        },
+        chat: { postMessage: vi.fn().mockResolvedValue({ ok: true }) },
+      };
+
+      const task: NormalizedTask = {
+        event: {
+          eventId: 'EvHuge',
+          channelId: 'C1',
+          threadTs: '555.66',
+          eventTs: '555.66',
+          userId: 'U_HUGE',
+          text: '<@UBOT1> review https://github.com/Newton-School/newton-web/pull/777',
+          rawEvent: {},
+        },
+        mentionDetected: true,
+        mentionType: 'bot',
+        isOwnerAuthor: false,
+        isCoreDevAuthor: false,
+        intent: 'PR_REVIEW',
+        prContext: {
+          url: 'https://github.com/Newton-School/newton-web/pull/777',
+          owner: 'Newton-School',
+          repo: 'newton-web',
+          number: 777,
+        },
+      };
+
+      await runPrReviewWorkflow({
+        task,
+        config: { ...config, multiAgentEnabled: true },
+        slack: slack as any,
+        store: {
+          findLatestReviewedPrHeadSha: () => undefined,
+          getChannelPolicyPack: () => undefined,
+        } as any,
+        resolvePrHeadSha: async () => 'cafef00d',
+      });
+
+      // The "this PR is huge" heads-up must be posted to Slack so the requester knows
+      // the review is best-effort against a reconstructed diff.
+      expect(slack.chat.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringMatching(/Heads up.*huge/i),
+        }),
+      );
+      // runCodex must be invoked — proves the workflow proceeded past the diff fetch
+      // rather than failing with the empty-diff message.
+      expect(runCodex).toHaveBeenCalled();
     } finally {
       globalThis.fetch = originalFetch;
     }
