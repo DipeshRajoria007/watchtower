@@ -142,7 +142,31 @@ async function fetchPrMetadata(params: {
   }
 }
 
-async function fetchPrDiff(params: { prContext: PrContext; githubToken?: string; maxChars?: number }): Promise<string> {
+/**
+ * Reason a PR diff fetch returned short/empty content. Carried back to the
+ * caller so the user-facing failure message can be specific.
+ */
+type DiffFetchReason = 'ok' | 'too_large' | 'fetch_failed' | 'empty';
+
+export interface PrDiffResult {
+  diff: string;
+  /** Whether the returned diff was truncated to fit the char budget. */
+  truncated: boolean;
+  /** Total file count when known (only the files-endpoint fallback knows this). */
+  totalFiles?: number;
+  /** Reason explaining `diff === ''` or partial content. 'ok' = full diff. */
+  reason: DiffFetchReason;
+  /** GitHub HTTP status if the first call failed, for telemetry. */
+  status?: number;
+  /** True when the diff was reconstructed via the /pulls/<n>/files paginated endpoint. */
+  viaFilesFallback?: boolean;
+}
+
+async function fetchPrDiff(params: {
+  prContext: PrContext;
+  githubToken?: string;
+  maxChars?: number;
+}): Promise<PrDiffResult> {
   const { prContext, githubToken, maxChars = 100_000 } = params;
   const url = `https://api.github.com/repos/${prContext.owner}/${prContext.repo}/pulls/${prContext.number}`;
   const headers: Record<string, string> = { Accept: 'application/vnd.github.diff' };
@@ -150,15 +174,154 @@ async function fetchPrDiff(params: { prContext: PrContext; githubToken?: string;
 
   try {
     const response = await fetch(url, { headers });
-    if (!response.ok) return '';
-    const diff = await response.text();
-    if (diff.length > maxChars) {
-      return diff.slice(0, maxChars) + '\n\n... [diff truncated — too large for full review]';
+    if (response.ok) {
+      const diff = await response.text();
+      if (!diff) return { diff: '', truncated: false, reason: 'empty' };
+      if (diff.length > maxChars) {
+        return {
+          diff: `${diff.slice(0, maxChars)}\n\n... [diff truncated — too large for full review]`,
+          truncated: true,
+          reason: 'ok',
+        };
+      }
+      return { diff, truncated: false, reason: 'ok' };
     }
-    return diff;
+
+    // GitHub caps the diff endpoint at 300 files and returns 406 with
+    // `errors[].code === "too_large"` for anything bigger. Fall back to the
+    // paginated files endpoint, which has no such cap.
+    if (response.status === 406) {
+      const errorBody = await response.text().catch(() => '');
+      if (errorBody.includes('too_large') || errorBody.includes('exceeded the maximum number of files')) {
+        return await fetchPrDiffViaFilesEndpoint({ prContext, githubToken, maxChars });
+      }
+      return { diff: '', truncated: false, reason: 'fetch_failed', status: 406 };
+    }
+
+    return { diff: '', truncated: false, reason: 'fetch_failed', status: response.status };
   } catch {
-    return '';
+    return { diff: '', truncated: false, reason: 'fetch_failed' };
   }
+}
+
+/**
+ * Files-endpoint fallback for PRs that exceed GitHub's 300-file diff cap.
+ * Paginates `/pulls/<n>/files` (100 per page), reconstructs a synthetic
+ * unified diff from each file's `patch` field, and truncates to maxChars.
+ * Returns `reason: 'too_large'` when at least one page came back but the
+ * reconstructed diff couldn't fit the budget, so the caller can post a
+ * specific failure message.
+ */
+async function fetchPrDiffViaFilesEndpoint(params: {
+  prContext: PrContext;
+  githubToken?: string;
+  maxChars: number;
+}): Promise<PrDiffResult> {
+  const { prContext, githubToken, maxChars } = params;
+  const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
+  if (githubToken) headers.Authorization = `Bearer ${githubToken}`;
+
+  const baseUrl = `https://api.github.com/repos/${prContext.owner}/${prContext.repo}/pulls/${prContext.number}/files`;
+  const perPage = 100;
+  let page = 1;
+  const chunks: string[] = [];
+  let totalFiles = 0;
+  let runningLen = 0;
+  let truncated = false;
+
+  try {
+    while (true) {
+      const response = await fetch(`${baseUrl}?per_page=${perPage}&page=${page}`, { headers });
+      if (!response.ok) {
+        // First-page failure → we have nothing to return.
+        if (page === 1) {
+          return { diff: '', truncated: false, reason: 'fetch_failed', status: response.status };
+        }
+        break;
+      }
+      const filesPage = (await response.json()) as Array<{
+        filename?: string;
+        status?: string;
+        additions?: number;
+        deletions?: number;
+        patch?: string;
+      }>;
+      if (!Array.isArray(filesPage) || filesPage.length === 0) break;
+
+      for (const file of filesPage) {
+        totalFiles += 1;
+        const header = `diff --git a/${file.filename ?? '<unknown>'} b/${file.filename ?? '<unknown>'}\n`;
+        const statusLine =
+          file.status === 'removed'
+            ? `--- a/${file.filename}\n+++ /dev/null\n`
+            : file.status === 'added'
+              ? `--- /dev/null\n+++ b/${file.filename}\n`
+              : `--- a/${file.filename}\n+++ b/${file.filename}\n`;
+        // For removed-only files GitHub may not include a patch; fall back to
+        // a one-line summary so the reviewer still sees the file was removed.
+        const body =
+          file.patch ??
+          `[file ${file.status ?? 'changed'} — +${file.additions ?? 0} / -${file.deletions ?? 0} lines, patch omitted by GitHub]\n`;
+        const chunk = `${header}${statusLine}${body}\n`;
+        if (runningLen + chunk.length > maxChars) {
+          truncated = true;
+          break;
+        }
+        chunks.push(chunk);
+        runningLen += chunk.length;
+      }
+      if (truncated) break;
+      if (filesPage.length < perPage) break;
+      page += 1;
+    }
+  } catch {
+    if (chunks.length === 0) {
+      return { diff: '', truncated: false, reason: 'fetch_failed' };
+    }
+    // Partial-page fetch failed; return what we have so far.
+  }
+
+  if (chunks.length === 0) {
+    return { diff: '', truncated: false, reason: 'empty', totalFiles, viaFilesFallback: true };
+  }
+
+  const tail = truncated
+    ? `\n\n... [diff truncated at ${maxChars.toLocaleString()} chars; PR has ${totalFiles}+ files]`
+    : '';
+  return {
+    diff: chunks.join('') + tail,
+    truncated,
+    totalFiles,
+    reason: truncated ? 'too_large' : 'ok',
+    viaFilesFallback: true,
+  };
+}
+
+/**
+ * Build the user-facing Slack message when we couldn't get any reviewable
+ * diff content. Differentiates between the three failure modes so the user
+ * knows whether to split the PR (too large), retry (transient fetch error),
+ * or check the PR (empty / closed).
+ */
+function buildEmptyDiffMessage(result: PrDiffResult, prContext: PrContext): string {
+  if (result.reason === 'too_large') {
+    return (
+      `PR ${prContext.owner}/${prContext.repo}#${prContext.number} is too large to review in one shot — ` +
+      `GitHub caps the diff endpoint at 300 files and the files-endpoint fallback also exhausted the size budget. ` +
+      'Split the PR into smaller chunks (e.g. by directory) or ping me with a specific subset of paths to review.'
+    );
+  }
+  if (result.reason === 'fetch_failed') {
+    const statusNote = result.status ? ` (HTTP ${result.status})` : '';
+    return (
+      `Couldn't fetch the diff for ${prContext.owner}/${prContext.repo}#${prContext.number}${statusNote}. ` +
+      'Check that the PR is open and accessible, then re-trigger.'
+    );
+  }
+  return (
+    `PR ${prContext.owner}/${prContext.repo}#${prContext.number} returned no diff content — ` +
+    'looks empty. Confirm the PR has changes and re-trigger.'
+  );
 }
 
 async function checkoutPrBranch(repoPath: string, prNumber: number, logStep?: WorkflowStepLogger): Promise<boolean> {
@@ -650,15 +813,16 @@ export async function runPrReviewWorkflow(params: {
     const prMeta = await fetchPrMetadata({ prContext, githubToken, logStep });
     const prHeadSha = currentPrHeadSha ?? prMeta.headSha;
 
-    const diff = await fetchPrDiff({ prContext, githubToken });
+    const diffResult = await fetchPrDiff({ prContext, githubToken });
+    const diff = diffResult.diff;
     if (!diff) {
       logStep?.({
         stage: 'pr_review.diff.empty',
-        message: 'PR diff is empty — failing review to prevent silent approval of an unreviewed PR.',
+        message: `PR diff fetch produced no content (reason=${diffResult.reason}, status=${diffResult.status ?? 'n/a'}).`,
         level: 'ERROR',
+        data: { reason: diffResult.reason, status: diffResult.status, totalFiles: diffResult.totalFiles },
       });
-      const failureMessage =
-        'PR diff fetch returned empty — review not submitted. Re-trigger after confirming the PR has changes.';
+      const failureMessage = buildEmptyDiffMessage(diffResult, prContext);
       await slack.chat
         .postMessage({
           channel: task.event.channelId,
@@ -677,9 +841,35 @@ export async function runPrReviewWorkflow(params: {
 
     logStep?.({
       stage: 'pr_review.diff.fetched',
-      message: `Fetched PR diff (${diff.length} chars).`,
-      data: { diffChars: diff.length, prTitle: prMeta.title },
+      message:
+        diffResult.reason === 'too_large'
+          ? `Fetched PR diff via files-endpoint fallback (${diff.length} chars, ${diffResult.totalFiles ?? '?'}+ files, truncated).`
+          : `Fetched PR diff (${diff.length} chars${diffResult.truncated ? ', truncated' : ''}).`,
+      data: {
+        diffChars: diff.length,
+        prTitle: prMeta.title,
+        truncated: diffResult.truncated,
+        totalFiles: diffResult.totalFiles,
+        reason: diffResult.reason,
+      },
     });
+
+    // If GitHub refused the full diff endpoint (PR exceeds the 300-file cap),
+    // surface it in-thread so the requester knows we fell back to the
+    // /pulls/<n>/files reconstruction. Includes whether content was truncated.
+    if (diffResult.viaFilesFallback) {
+      const fileCount = diffResult.totalFiles ?? '300+';
+      const headsUp = diffResult.truncated
+        ? `Heads up — this PR is huge (${fileCount} files). GitHub refused the full diff endpoint, so I'm reviewing a best-effort sample reconstructed from the first ~${Math.round(diff.length / 1000)}k chars of the files-endpoint pagination. Consider splitting into smaller PRs for a thorough review.`
+        : `Heads up — this PR is huge (${fileCount} files). GitHub refused the full diff endpoint, so I'm reviewing a reconstruction via the files-endpoint pagination.`;
+      await slack.chat
+        .postMessage({
+          channel: task.event.channelId,
+          thread_ts: task.event.threadTs,
+          text: headsUp,
+        })
+        .catch(() => {});
+    }
 
     // 2. Checkout PR branch so agents see the actual PR code
     await checkoutPrBranch(repoPath, prContext.number, logStep);
