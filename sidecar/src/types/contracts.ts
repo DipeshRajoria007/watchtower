@@ -1,7 +1,58 @@
 export type AgentBackendId = 'codex' | 'claude-code';
 export type AccessMode = 'audit' | 'enforce';
+/**
+ * @deprecated The strict 5-tier hierarchy is being replaced by capability bundles
+ * (see `Capability` + `Bundle` below). Existing callers keep working via the
+ * `evaluateAccess` → `evaluateCapability` adapter; this type will be removed
+ * once the router-driven dispatcher is replaced by the agent-owned dispatcher.
+ */
 export type AccessGroupKey = 'viewer' | 'reviewer' | 'builder' | 'admin' | 'owner';
+/** @deprecated Alias of AccessGroupKey. See deprecation note on AccessGroupKey. */
 export type AccessLevel = AccessGroupKey;
+
+/**
+ * Fixed (but extensible) set of operations the agent can perform. Access
+ * decisions gate on these directly rather than on a workflow intent, so the
+ * model survives the upcoming agent-owned arch where there is no fixed
+ * `WorkflowIntent` enum. Add new capabilities here as new tools land.
+ */
+export type Capability =
+  | 'query_codebase'
+  | 'chat'
+  | 'submit_pr_review'
+  | 'comment_pr'
+  | 'start_implementation'
+  | 'investigate'
+  | 'deploy_prod'
+  | 'dev_assist'
+  | 'miniog_dossier_self'
+  | 'miniog_dossier_admin';
+
+/**
+ * A named set of capabilities that can be assigned to users via a Slack
+ * subteam handle and/or a comma-delimited list of manual user IDs. Bundles
+ * are peers (no hierarchy) — a user is granted the union of capabilities
+ * across every bundle they belong to.
+ */
+export interface Bundle {
+  name: string;
+  slackUserGroupHandle: string;
+  manualUserIds: string;
+  capabilities: Capability[];
+}
+
+/**
+ * Channel-scoping for the bot as a whole, orthogonal to capability grants.
+ * If a user has a capability, they can use it in any channel listed here
+ * (or in IM/MPIM when the corresponding flag is set). Replaces the per-group
+ * channel allowlists in the legacy `AccessControlConfig` shape.
+ */
+export interface ChannelAcl {
+  enabledChannelIds: string[];
+  enabledInIm: boolean;
+  enabledInMpim: boolean;
+}
+
 export type WorkflowIntent =
   | 'PR_REVIEW'
   | 'OWNER_AUTOPILOT'

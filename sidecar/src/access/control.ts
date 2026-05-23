@@ -8,8 +8,14 @@ import type {
   WorkflowIntent,
 } from '../types/contracts.js';
 
+/** @deprecated Tier-based hierarchy is being replaced by capability bundles. */
 export const ACCESS_GROUP_KEYS: AccessGroupKey[] = ['viewer', 'reviewer', 'builder', 'admin', 'owner'];
 
+/**
+ * @deprecated Rank ordering exists only to support the legacy tier model and
+ * the classifier confidence floor (`router/taskRouter.ts:142–194`). Capability
+ * bundles are peers — no ranking. Remove once `evaluateAccess` is gone.
+ */
 export const ACCESS_RANK: Record<AccessLevel, number> = {
   viewer: 0,
   reviewer: 1,
@@ -131,6 +137,12 @@ export function toResolvedAccessControlConfig(
   };
 }
 
+/**
+ * @deprecated Maps a workflow intent to a tier in the legacy hierarchy. The
+ * agent-owned arch will check capabilities directly via `evaluateCapability`;
+ * this mapping is the bridge so the router (`router/taskRouter.ts:221`) keeps
+ * compiling unchanged during the migration.
+ */
 export function resolveRequiredAccessLevel(intent: WorkflowIntent): AccessLevel {
   switch (intent) {
     case 'PR_REVIEW':
