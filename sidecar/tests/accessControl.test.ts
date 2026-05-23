@@ -2,13 +2,15 @@ import { describe, expect, it } from 'vitest';
 import {
   buildLegacyAccessControlConfig,
   evaluateAccess,
+  evaluateCapability,
   formatAdminMention,
   getAdminUserIds,
+  intentToCapability,
   resolveRequiredAccessLevel,
   setResolvedGroupMembers,
   toResolvedAccessControlConfig,
 } from '../src/access/control.js';
-import type { AppConfig } from '../src/types/contracts.js';
+import type { AppConfig, Capability, WorkflowIntent } from '../src/types/contracts.js';
 
 function makeConfig(overrides?: Partial<AppConfig>): AppConfig {
   return {
@@ -507,5 +509,167 @@ describe('formatAdminMention', () => {
   it('returns empty string when there is nothing to mention', () => {
     const config = baseConfig({ ownerSlackUserIds: [], coreDevSlackUserIds: [] });
     expect(formatAdminMention(config)).toBe('');
+  });
+});
+
+describe('capability-shaped access (D2 wrapper over legacy tiers)', () => {
+  it('intentToCapability maps every WorkflowIntent to a Capability', () => {
+    const cases: Array<[WorkflowIntent, Capability]> = [
+      ['PR_REVIEW', 'submit_pr_review'],
+      ['IMPLEMENTATION', 'start_implementation'],
+      ['OWNER_AUTOPILOT', 'start_implementation'],
+      ['INVESTIGATION', 'investigate'],
+      ['DEPLOY', 'deploy_prod'],
+      ['DEV_ASSIST', 'dev_assist'],
+      ['INFORMATIONAL', 'query_codebase'],
+      ['CONVERSATIONAL', 'chat'],
+      ['MINIOG_DOSSIER', 'miniog_dossier_self'],
+      ['UNKNOWN', 'query_codebase'],
+      ['NONE', 'query_codebase'],
+    ];
+    for (const [intent, expected] of cases) {
+      expect(intentToCapability(intent)).toBe(expected);
+    }
+  });
+
+  it('evaluateCapability returns owner bypass for owner IDs', () => {
+    const config = makeConfig();
+    const decision = evaluateCapability({
+      config,
+      userId: 'UOWNER1',
+      channelId: 'C-ANY',
+      capability: 'deploy_prod',
+    });
+    expect(decision.allowed).toBe(true);
+    expect(decision.ownerBypass).toBe(true);
+  });
+
+  it('evaluateCapability denies NOT_ON_ACCESS_LIST for users in zero groups', () => {
+    const config = makeConfig();
+    const decision = evaluateCapability({
+      config,
+      userId: 'UNOBODY',
+      channelId: 'C-VIEW',
+      capability: 'query_codebase',
+    });
+    expect(decision.allowed).toBe(false);
+    expect(decision.denyReason).toBe('NOT_ON_ACCESS_LIST');
+    expect(decision.reason).toBe("Sorry, you're not on the access list. Please ask an admin to add you.");
+  });
+
+  it('evaluateCapability denies INSUFFICIENT_ROLE when user has the wrong tier', () => {
+    const config = makeConfig();
+    // UVIEWER has viewer tier; deploy_prod requires admin tier → INSUFFICIENT_ROLE.
+    const decision = evaluateCapability({
+      config,
+      userId: 'UVIEWER',
+      channelId: 'C-VIEW',
+      capability: 'deploy_prod',
+    });
+    expect(decision.allowed).toBe(false);
+    expect(decision.denyReason).toBe('INSUFFICIENT_ROLE');
+    expect(decision.reason).toBe(
+      'Sorry, this kind of request needs a higher access level than your role allows. Please contact an admin.',
+    );
+  });
+
+  it('evaluateCapability denies CHANNEL_NOT_ENABLED when user has the tier but not the channel', () => {
+    const config = makeConfig();
+    // UADMIN belongs to the admin group, allowed in C-ADMIN. Trying to act in C-VIEW
+    // (a channel that admin is not enabled in) → CHANNEL_NOT_ENABLED.
+    const decision = evaluateCapability({
+      config,
+      userId: 'UADMIN',
+      channelId: 'C-VIEW',
+      capability: 'deploy_prod',
+    });
+    expect(decision.allowed).toBe(false);
+    expect(decision.denyReason).toBe('CHANNEL_NOT_ENABLED');
+    expect(decision.reason).toBe(
+      "Sorry, I'm not enabled for this kind of request in this channel. Please contact an admin.",
+    );
+  });
+
+  it('evaluateCapability allows the matched capability in the right channel', () => {
+    const config = makeConfig();
+    const decision = evaluateCapability({
+      config,
+      userId: 'UADMIN',
+      channelId: 'C-ADMIN',
+      capability: 'deploy_prod',
+    });
+    expect(decision.allowed).toBe(true);
+    expect(decision.ownerBypass).toBe(false);
+  });
+
+  it('evaluateCapability preserves the DM-specific channel-deny copy', () => {
+    const config = makeConfig();
+    // UVIEWER has viewer tier with allowIm=true, so DM is fine for viewer-level
+    // capabilities — but UREVIEW has reviewer tier with allowIm=false, so a
+    // DM-targeted reviewer capability fires the DM-specific CHANNEL_NOT_ENABLED
+    // copy.
+    const decision = evaluateCapability({
+      config,
+      userId: 'UREVIEW',
+      channelId: 'D-UREVIEW',
+      channelType: 'im',
+      capability: 'submit_pr_review',
+    });
+    expect(decision.allowed).toBe(false);
+    expect(decision.denyReason).toBe('CHANNEL_NOT_ENABLED');
+    expect(decision.reason).toBe("Sorry, DMs aren't enabled for your role. Please contact an admin.");
+  });
+
+  it('evaluateCapability and evaluateAccess agree for the canonical intent→capability path', () => {
+    // Behavior parity: for every WorkflowIntent, evaluateCapability(intentToCapability(i))
+    // must return the same `allowed` + `denyReason` as evaluateAccess(resolveRequiredAccessLevel(i)).
+    const intents: WorkflowIntent[] = [
+      'PR_REVIEW',
+      'IMPLEMENTATION',
+      'INVESTIGATION',
+      'DEPLOY',
+      'DEV_ASSIST',
+      'INFORMATIONAL',
+      'CONVERSATIONAL',
+    ];
+    const cases: Array<{ userId: string; channelId: string; channelType?: string }> = [
+      { userId: 'UVIEWER', channelId: 'C-VIEW' },
+      { userId: 'UREVIEW', channelId: 'C-REVIEW' },
+      { userId: 'UBUILDER', channelId: 'C-BUILD' },
+      { userId: 'UADMIN', channelId: 'C-ADMIN' },
+      { userId: 'UNOBODY', channelId: 'C-VIEW' },
+    ];
+    const config = makeConfig();
+    for (const intent of intents) {
+      for (const c of cases) {
+        const viaTier = evaluateAccess({
+          config,
+          userId: c.userId,
+          channelId: c.channelId,
+          channelType: c.channelType,
+          requiredLevel: resolveRequiredAccessLevel(intent),
+        });
+        const viaCapability = evaluateCapability({
+          config,
+          userId: c.userId,
+          channelId: c.channelId,
+          channelType: c.channelType,
+          capability: intentToCapability(intent),
+        });
+        expect({
+          intent,
+          user: c.userId,
+          channel: c.channelId,
+          allowed: viaCapability.allowed,
+          denyReason: viaCapability.denyReason,
+        }).toEqual({
+          intent,
+          user: c.userId,
+          channel: c.channelId,
+          allowed: viaTier.allowed,
+          denyReason: viaTier.denyReason,
+        });
+      }
+    }
   });
 });
