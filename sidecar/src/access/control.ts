@@ -5,6 +5,7 @@ import type {
   AccessGroupSettings,
   AccessLevel,
   AppConfig,
+  Capability,
   WorkflowIntent,
 } from '../types/contracts.js';
 
@@ -135,6 +136,61 @@ export function toResolvedAccessControlConfig(
       owner: toResolvedAccessGroup('owner', hydrated.groups.owner, ownerSlackUserIds),
     },
   };
+}
+
+/**
+ * Maps each capability to the *minimum* legacy tier that grants it. Used by
+ * the D2 `evaluateCapability` wrapper so capability checks reduce to a tier
+ * check while bundle storage is still being wired up (D3). When bundles
+ * become the source of truth, this constant is consulted only by the
+ * `evaluateAccess` legacy wrapper.
+ */
+const CAPABILITY_TO_LEGACY_TIER: Record<Capability, AccessLevel> = {
+  query_codebase: 'viewer',
+  chat: 'viewer',
+  miniog_dossier_self: 'viewer',
+  // INVESTIGATION today maps to viewer tier (`resolveRequiredAccessLevel` default).
+  // Keeping `investigate` at viewer preserves strict parity for D2; the seed in D3
+  // mirrors this so existing watchtower.db installs see no behavior change.
+  investigate: 'viewer',
+  submit_pr_review: 'reviewer',
+  comment_pr: 'reviewer',
+  start_implementation: 'builder',
+  deploy_prod: 'admin',
+  dev_assist: 'admin',
+  miniog_dossier_admin: 'admin',
+};
+
+/**
+ * Maps a `WorkflowIntent` to the canonical `Capability` that gates the
+ * workflow. The router (`router/taskRouter.ts:221`) still calls
+ * `evaluateAccess` with a tier; callers that want capability-shaped access
+ * should call this and then `evaluateCapability` directly (D4).
+ */
+export function intentToCapability(intent: WorkflowIntent): Capability {
+  switch (intent) {
+    case 'PR_REVIEW':
+      return 'submit_pr_review';
+    case 'IMPLEMENTATION':
+    case 'OWNER_AUTOPILOT':
+      return 'start_implementation';
+    case 'INVESTIGATION':
+      return 'investigate';
+    case 'DEPLOY':
+      return 'deploy_prod';
+    case 'DEV_ASSIST':
+      return 'dev_assist';
+    case 'INFORMATIONAL':
+      return 'query_codebase';
+    case 'CONVERSATIONAL':
+      return 'chat';
+    case 'MINIOG_DOSSIER':
+      return 'miniog_dossier_self';
+    case 'UNKNOWN':
+    case 'NONE':
+    default:
+      return 'query_codebase';
+  }
 }
 
 /**
@@ -301,4 +357,39 @@ export function evaluateAccess(params: {
     reason,
     denyReason,
   };
+}
+
+/**
+ * Capability-shaped access check. Forward-compatible with the agent-owned
+ * architecture, where each tool the agent can call is gated by a `Capability`
+ * instead of a workflow intent.
+ *
+ * D2 wiring (this PR): bundle storage doesn't exist yet, so this is a thin
+ * wrapper over `evaluateAccess` — the capability is translated to the
+ * minimum legacy tier that grants it (`CAPABILITY_TO_LEGACY_TIER`), and the
+ * tier check runs against the existing `AccessControlConfig`. The three
+ * `AccessDenyReason` buckets + their user-facing copy are preserved exactly,
+ * which is the contract from `[[redesign_access_deny_copy_preserved]]`.
+ *
+ * D3 will invert this: `evaluateCapability` becomes the primary and reads
+ * from the `bundles` table, with `evaluateAccess` reduced to a wrapper that
+ * translates `requiredLevel → capability` before delegating.
+ */
+export function evaluateCapability(params: {
+  config: AppConfig;
+  accessControl?: AccessControlConfig;
+  userId: string;
+  channelId: string;
+  channelType?: string;
+  capability: Capability;
+}): AccessDecision {
+  const requiredLevel = CAPABILITY_TO_LEGACY_TIER[params.capability];
+  return evaluateAccess({
+    config: params.config,
+    accessControl: params.accessControl,
+    userId: params.userId,
+    channelId: params.channelId,
+    channelType: params.channelType,
+    requiredLevel,
+  });
 }
