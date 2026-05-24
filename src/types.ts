@@ -271,6 +271,36 @@ export type AccessControlSettings = {
   groups: Record<AccessGroupKey, AccessGroupSettings>;
 };
 
+/**
+ * Capability bundles (replaces the legacy 5-tier `AccessGroupSettings`).
+ * Mirrors the sidecar `Bundle` shape in `sidecar/src/types/contracts.ts`
+ * and the Rust `BundleRecord` exposed via the Tauri IPC commands
+ * `get_bundles` / `save_bundle` / `delete_bundle`.
+ */
+export type Capability =
+  | 'query_codebase'
+  | 'chat'
+  | 'submit_pr_review'
+  | 'comment_pr'
+  | 'start_implementation'
+  | 'investigate'
+  | 'deploy_prod'
+  | 'dev_assist'
+  | 'miniog_dossier_self'
+  | 'miniog_dossier_admin'
+  | 'manage_access';
+
+export type Bundle = {
+  name: string;
+  slackUserGroupHandle: string;
+  manualUserIds: string;
+  resolvedUserIds: string[];
+  capabilities: Capability[];
+  allowedChannelIds: string[];
+  allowIm: boolean;
+  allowMpim: boolean;
+};
+
 export type AppSettings = {
   slackBotToken: string;
   slackAppToken: string;
