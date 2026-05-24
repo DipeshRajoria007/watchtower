@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { WebClient } from '@slack/web-api';
-import { getAdminUserIds } from '../access/control.js';
+import { evaluateCapability } from '../access/control.js';
 import type { AppConfig, NormalizedTask, WorkflowResult, WorkflowStepLogger } from '../types/contracts.js';
 import { runCodex, getActiveBackendId } from '../codex/runCodex.js';
 import { highReasoningProfile } from '../codex/modelProfiles.js';
@@ -61,10 +61,20 @@ export async function runDeployWorkflow(params: {
     message: 'Running deploy workflow for newton-web production.',
   });
 
-  const adminUserIds = getAdminUserIds(config);
+  // Belt-and-suspenders capability check. The router (`taskRouter.ts:221`)
+  // has already enforced this for the DEPLOY intent before dispatch — this
+  // second check guards against any future caller that reaches the workflow
+  // without passing through the router (e.g. internal triggers, retries).
+  const accessDecision = evaluateCapability({
+    config,
+    userId: task.event.userId,
+    channelId: task.event.channelId,
+    channelType: task.event.channelType,
+    capability: 'deploy_prod',
+  });
 
-  if (!adminUserIds.includes(task.event.userId)) {
-    const msg = 'Deploy to production is restricted to admins.';
+  if (!accessDecision.allowed) {
+    const msg = accessDecision.reason ?? 'Deploy to production is restricted to admins.';
     await slack.chat.postMessage({
       channel: task.event.channelId,
       thread_ts: task.event.threadTs,
@@ -74,7 +84,7 @@ export async function runDeployWorkflow(params: {
       stage: 'deploy.denied',
       message: msg,
       level: 'WARN',
-      data: { userId: task.event.userId },
+      data: { userId: task.event.userId, denyReason: accessDecision.denyReason },
     });
     return {
       workflow: 'DEPLOY',
