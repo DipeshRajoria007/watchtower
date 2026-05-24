@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { z } from 'zod';
 import type { ToolContext, ToolResult, ToolSurface } from './tools/types.js';
 import type { WorkflowStepLogger } from '../types/contracts.js';
+import type { JobStore } from '../state/jobStore.js';
 
 const MODEL_ID = process.env.WATCHTOWER_AGENTIC_MODEL ?? 'claude-opus-4-7';
 const MAX_TOOL_CALLS_DEFAULT = 30;
@@ -15,6 +16,10 @@ export interface RunClaudeAgenticRequest {
   logStep?: WorkflowStepLogger;
   maxToolCalls?: number;
   signal?: AbortSignal;
+  /** Optional job store + jobId; when present each Anthropic API call gets a row in `agent_calls` for cost dashboards. */
+  store?: JobStore;
+  jobId?: string;
+  role?: string;
 }
 
 export interface RunClaudeAgenticResult {
@@ -88,6 +93,7 @@ export async function runClaudeAgentic(request: RunClaudeAgenticRequest): Promis
     }
 
     let response: Anthropic.Messages.Message;
+    const callStartedAt = Date.now();
     try {
       response = await client.messages.create({
         model: MODEL_ID,
@@ -97,6 +103,20 @@ export async function runClaudeAgentic(request: RunClaudeAgenticRequest): Promis
         messages,
       });
     } catch (err) {
+      if (request.store && request.jobId) {
+        try {
+          request.store.recordAgentCall({
+            jobId: request.jobId,
+            role: request.role ?? 'agentic',
+            backend: 'claude-code',
+            model: MODEL_ID,
+            durationMs: Date.now() - callStartedAt,
+            ok: false,
+          });
+        } catch {
+          // recording is best-effort
+        }
+      }
       logStep?.({
         stage: 'agentic.api_error',
         level: 'ERROR',
@@ -119,6 +139,25 @@ export async function runClaudeAgentic(request: RunClaudeAgenticRequest): Promis
     outputTokens += response.usage.output_tokens;
     cacheReadTokens += response.usage.cache_read_input_tokens ?? 0;
     cacheCreationTokens += response.usage.cache_creation_input_tokens ?? 0;
+
+    if (request.store && request.jobId) {
+      try {
+        request.store.recordAgentCall({
+          jobId: request.jobId,
+          role: request.role ?? 'agentic',
+          backend: 'claude-code',
+          model: MODEL_ID,
+          durationMs: Date.now() - callStartedAt,
+          inputTokens: response.usage.input_tokens,
+          outputTokens: response.usage.output_tokens,
+          cacheReadTokens: response.usage.cache_read_input_tokens ?? undefined,
+          cacheCreationTokens: response.usage.cache_creation_input_tokens ?? undefined,
+          ok: true,
+        });
+      } catch {
+        // recording is best-effort
+      }
+    }
 
     const toolUses = response.content.filter(
       (block): block is Anthropic.Messages.ToolUseBlock => block.type === 'tool_use',
