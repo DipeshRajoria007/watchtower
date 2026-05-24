@@ -2585,6 +2585,109 @@ h3 {
   gap: 14px;
 }
 
+.bundle-editor {
+  display: grid;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.bundle-editor-error {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(220, 70, 70, 0.15);
+  border: 1px solid rgba(220, 70, 70, 0.4);
+  color: var(--theme-foreground);
+}
+
+.bundle-editor-add {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.bundle-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--theme-card-border, rgba(255, 255, 255, 0.1));
+  background: var(--theme-card-background, rgba(255, 255, 255, 0.03));
+}
+
+.bundle-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.bundle-card-header strong {
+  font-size: 1.05rem;
+  text-transform: capitalize;
+}
+
+.bundle-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.button-danger {
+  background: rgba(220, 70, 70, 0.2);
+  border-color: rgba(220, 70, 70, 0.4);
+}
+
+.bundle-capabilities {
+  border: 1px solid var(--theme-card-border, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.bundle-capabilities legend {
+  padding: 0 6px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
+.bundle-capability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.bundle-capability {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.bundle-capability:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.bundle-capability input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.bundle-capability small {
+  opacity: 0.7;
+  font-size: 0.8rem;
+}
+
+.bundle-capability-flag {
+  font-style: italic;
+  font-size: 0.78rem;
+  opacity: 0.7;
+}
+
 .settings-summary-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

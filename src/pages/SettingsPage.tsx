@@ -2,7 +2,6 @@ import { useRef, useState } from 'react';
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react';
 import { THEME_FONT_OPTIONS, THEME_PRESETS, resolveAppTheme, resolveThemeFont } from '../lib/theme';
 import type {
-  AccessGroupKey,
   AccessMode,
   AgentBackendId,
   AppSettings,
@@ -11,7 +10,8 @@ import type {
   NotificationAudioTone,
   ThemePresetId,
 } from '../types';
-import { EmptyState, PageIntro, SectionCard, StatusBadge, TabBar } from '../components/primitives';
+import { EmptyState, PageIntro, SectionCard, StatusBadge } from '../components/primitives';
+import { BundleEditor } from '../components/BundleEditor';
 
 type SettingsPageProps = {
   onSettingsChange: (settings: AppSettings) => void;
@@ -68,12 +68,6 @@ type AccessModeOption = {
   label: string;
 };
 
-type AccessGroupCard = {
-  description: string;
-  key: AccessGroupKey;
-  label: string;
-};
-
 const ACCESS_MODE_OPTIONS: AccessModeOption[] = [
   {
     id: 'audit',
@@ -84,29 +78,6 @@ const ACCESS_MODE_OPTIONS: AccessModeOption[] = [
     id: 'enforce',
     label: 'Enforce',
     description: 'Block requests that do not match the configured group and channel rules.',
-  },
-];
-
-const ACCESS_GROUP_CARDS: AccessGroupCard[] = [
-  {
-    key: 'viewer',
-    label: 'Viewer',
-    description: 'Conversational, informational, and unknown-task fallback access.',
-  },
-  {
-    key: 'reviewer',
-    label: 'Reviewer',
-    description: 'PR review access on top of viewer capabilities.',
-  },
-  {
-    key: 'builder',
-    label: 'Builder',
-    description: 'Implementation and owner-autopilot execution access on top of reviewer capabilities.',
-  },
-  {
-    key: 'admin',
-    label: 'Admin',
-    description: 'Deploys, `wt` commands, and plan approvals. Owners always bypass these checks regardless.',
   },
 ];
 
@@ -247,7 +218,6 @@ export function SettingsPage({
   const successNotificationAudioInputRef = useRef<HTMLInputElement | null>(null);
   const failureNotificationAudioInputRef = useRef<HTMLInputElement | null>(null);
   const [activeSection, setActiveSection] = useState<SettingsSection>('appearance');
-  const [activeRole, setActiveRole] = useState<AccessGroupKey>('admin');
 
   if (!settings) {
     return (
@@ -371,9 +341,6 @@ export function SettingsPage({
   const completeSections = sections.filter(section => section.ready).length;
   const slackSection = sections.find(s => s.label === 'Slack Auth')!;
   const repoSection = sections.find(s => s.label === 'Repo Paths')!;
-
-  const activeRoleGroup = settings.accessControl.groups[activeRole];
-  const activeRoleCard = ACCESS_GROUP_CARDS.find(g => g.key === activeRole)!;
 
   return (
     <div className="page-stack settings-page">
@@ -839,8 +806,8 @@ export function SettingsPage({
                 </SectionCard>
 
                 <SectionCard
-                  title="Access Control"
-                  subtitle="Fixed viewer, reviewer, builder, and admin groups with explicit channel and DM scopes."
+                  title="Access Mode"
+                  subtitle="Audit logs would-be denials but lets requests through; Enforce blocks them."
                 >
                   <div className="settings-fields">
                     <label className="field">
@@ -868,175 +835,13 @@ export function SettingsPage({
                       </small>
                     </label>
                   </div>
+                </SectionCard>
 
-                  <div className="access-role-tabs">
-                    <TabBar
-                      value={activeRole}
-                      onChange={setActiveRole}
-                      tabs={ACCESS_GROUP_CARDS.map(group => {
-                        const gs = settings.accessControl.groups[group.key];
-                        const configured =
-                          gs.slackUserGroupHandle.trim() ||
-                          gs.manualUserIds.trim() ||
-                          gs.allowedChannelIds.trim() ||
-                          gs.allowIm ||
-                          gs.allowMpim;
-                        return {
-                          value: group.key,
-                          label: group.label,
-                          count: configured ? 1 : 0,
-                        };
-                      })}
-                    />
-
-                    <article className="access-role-detail">
-                      <div className="access-group-header">
-                        <strong>{activeRoleCard.label}</strong>
-                        <StatusBadge
-                          label={
-                            activeRoleGroup.slackUserGroupHandle.trim() ||
-                            activeRoleGroup.manualUserIds.trim() ||
-                            activeRoleGroup.allowedChannelIds.trim() ||
-                            activeRoleGroup.allowIm ||
-                            activeRoleGroup.allowMpim
-                              ? 'Configured'
-                              : 'Empty'
-                          }
-                          tone={
-                            activeRoleGroup.slackUserGroupHandle.trim() ||
-                            activeRoleGroup.manualUserIds.trim() ||
-                            activeRoleGroup.allowedChannelIds.trim() ||
-                            activeRoleGroup.allowIm ||
-                            activeRoleGroup.allowMpim
-                              ? 'info'
-                              : 'warn'
-                          }
-                        />
-                      </div>
-                      <p className="access-group-copy">{activeRoleCard.description}</p>
-
-                      <div className="settings-fields">
-                        <label className="field">
-                          <span>Slack User Group Handle</span>
-                          <input
-                            type="text"
-                            value={activeRoleGroup.slackUserGroupHandle}
-                            onChange={event =>
-                              updateSettings({
-                                accessControl: {
-                                  ...settings.accessControl,
-                                  groups: {
-                                    ...settings.accessControl.groups,
-                                    [activeRole]: {
-                                      ...activeRoleGroup,
-                                      slackUserGroupHandle: event.target.value,
-                                    },
-                                  },
-                                },
-                              })
-                            }
-                            placeholder={
-                              activeRole === 'admin'
-                                ? 'platform-admins,eng-leads'
-                                : `${activeRole}-team,${activeRole}-ext`
-                            }
-                          />
-                        </label>
-
-                        <label className="field">
-                          <span>{activeRole === 'admin' ? 'Manual User IDs (Break-Glass)' : 'Manual User IDs'}</span>
-                          <input
-                            type="text"
-                            value={activeRoleGroup.manualUserIds}
-                            onChange={event =>
-                              updateSettings({
-                                accessControl: {
-                                  ...settings.accessControl,
-                                  groups: {
-                                    ...settings.accessControl.groups,
-                                    [activeRole]: {
-                                      ...activeRoleGroup,
-                                      manualUserIds: event.target.value,
-                                    },
-                                  },
-                                },
-                              })
-                            }
-                            placeholder="U01234567,U07654321"
-                          />
-                        </label>
-
-                        <label className="field">
-                          <span>Allowed Channel IDs</span>
-                          <input
-                            type="text"
-                            value={activeRoleGroup.allowedChannelIds}
-                            onChange={event =>
-                              updateSettings({
-                                accessControl: {
-                                  ...settings.accessControl,
-                                  groups: {
-                                    ...settings.accessControl.groups,
-                                    [activeRole]: {
-                                      ...activeRoleGroup,
-                                      allowedChannelIds: event.target.value,
-                                    },
-                                  },
-                                },
-                              })
-                            }
-                            placeholder="C01H25RNLJH,C02XXXXXXX"
-                          />
-                        </label>
-                      </div>
-
-                      <div className="access-group-channel-toggles">
-                        <label className="access-toggle">
-                          <input
-                            type="checkbox"
-                            checked={activeRoleGroup.allowIm}
-                            onChange={event =>
-                              updateSettings({
-                                accessControl: {
-                                  ...settings.accessControl,
-                                  groups: {
-                                    ...settings.accessControl.groups,
-                                    [activeRole]: {
-                                      ...activeRoleGroup,
-                                      allowIm: event.target.checked,
-                                    },
-                                  },
-                                },
-                              })
-                            }
-                          />
-                          <span>Allow DM</span>
-                        </label>
-
-                        <label className="access-toggle">
-                          <input
-                            type="checkbox"
-                            checked={activeRoleGroup.allowMpim}
-                            onChange={event =>
-                              updateSettings({
-                                accessControl: {
-                                  ...settings.accessControl,
-                                  groups: {
-                                    ...settings.accessControl.groups,
-                                    [activeRole]: {
-                                      ...activeRoleGroup,
-                                      allowMpim: event.target.checked,
-                                    },
-                                  },
-                                },
-                              })
-                            }
-                          />
-                          <span>Allow MPIM</span>
-                        </label>
-                      </div>
-                    </article>
-                  </div>
+                <SectionCard
+                  title="Capability Bundles"
+                  subtitle="Each bundle grants a set of capabilities to users matched by Slack subteam handle or manual IDs. Bundles are peers — a user gets the union of capabilities across every bundle they belong to."
+                >
+                  <BundleEditor />
                 </SectionCard>
               </div>
             )}
