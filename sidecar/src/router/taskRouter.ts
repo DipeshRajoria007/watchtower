@@ -22,7 +22,6 @@ import { runDeployWorkflow } from '../workflows/deployWorkflow.js';
 import { runImplementationWorkflow } from '../workflows/implementationWorkflow.js';
 import { runInvestigationWorkflow } from '../workflows/investigationWorkflow.js';
 import { runAgenticEntry } from '../agentic/agenticEntry.js';
-import { runConversationalWorkflow } from '../workflows/conversationalWorkflow.js';
 import { runPrReviewWorkflow } from '../workflows/prReviewWorkflow.js';
 import { runUnknownTaskWorkflow } from '../workflows/unknownTaskWorkflow.js';
 import { getWorkflowTemplates } from '../workflows/registry.js';
@@ -331,14 +330,7 @@ export async function routeTask(params: {
   }
 
   if (resolvedIntent === 'CONVERSATIONAL') {
-    return runConversationalWorkflow({
-      task: routedTask,
-      config,
-      slack,
-      logStep,
-      investigationStore: typeof store?.investigationStore === 'function' ? store.investigationStore() : undefined,
-      signal,
-    });
+    return runAgenticEntry({ mode: 'conversational', task: routedTask, config, slack, store, jobId, logStep, signal });
   }
 
   if (resolvedIntent === 'DEV_ASSIST') {

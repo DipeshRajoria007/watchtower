@@ -6,8 +6,7 @@ const runPrReviewWorkflow = vi.fn();
 const runImplementationWorkflow = vi.fn();
 const runDevAssistWorkflow = vi.fn();
 const runDeployWorkflow = vi.fn();
-const runInformationalWorkflow = vi.fn();
-const runConversationalWorkflow = vi.fn();
+const runAgenticEntry = vi.fn();
 const runUnknownTaskWorkflow = vi.fn();
 const classifyWorkflowIntent = vi.fn();
 
@@ -27,12 +26,8 @@ vi.mock('../src/workflows/deployWorkflow.js', () => ({
   runDeployWorkflow,
 }));
 
-vi.mock('../src/workflows/informationalWorkflow.js', () => ({
-  runInformationalWorkflow,
-}));
-
-vi.mock('../src/workflows/conversationalWorkflow.js', () => ({
-  runConversationalWorkflow,
+vi.mock('../src/agentic/agenticEntry.js', () => ({
+  runAgenticEntry,
 }));
 
 vi.mock('../src/workflows/unknownTaskWorkflow.js', () => ({
@@ -200,20 +195,15 @@ beforeEach(() => {
     notifyDesktop: false,
     slackPosted: true,
   });
-  runInformationalWorkflow.mockResolvedValue({
-    workflow: 'INFORMATIONAL',
+  // Both INFORMATIONAL and CONVERSATIONAL now flow through runAgenticEntry,
+  // which is dispatched with the `mode` arg distinguishing them.
+  runAgenticEntry.mockImplementation(async ({ mode }: { mode: 'informational' | 'conversational' }) => ({
+    workflow: mode === 'informational' ? 'INFORMATIONAL' : 'CONVERSATIONAL',
     status: 'SUCCESS',
-    message: 'info ok',
+    message: mode === 'informational' ? 'info ok' : 'chat ok',
     notifyDesktop: false,
     slackPosted: true,
-  });
-  runConversationalWorkflow.mockResolvedValue({
-    workflow: 'CONVERSATIONAL',
-    status: 'SUCCESS',
-    message: 'chat ok',
-    notifyDesktop: false,
-    slackPosted: true,
-  });
+  }));
   runUnknownTaskWorkflow.mockResolvedValue({
     workflow: 'UNKNOWN',
     status: 'SKIPPED',
@@ -349,7 +339,7 @@ describe('routeTask access control', () => {
     });
 
     expect(result.status).toBe('SUCCESS');
-    expect(runConversationalWorkflow).toHaveBeenCalledOnce();
+    expect(runAgenticEntry).toHaveBeenCalledOnce();
     expect(slack.chat.postMessage).not.toHaveBeenCalled();
   });
 
@@ -511,7 +501,7 @@ describe('routeTask investigation resume gate', () => {
 
     expect(classifyWorkflowIntent).toHaveBeenCalledOnce();
     expect(runImplementationWorkflow).not.toHaveBeenCalled();
-    expect(runConversationalWorkflow).toHaveBeenCalledOnce();
+    expect(runAgenticEntry).toHaveBeenCalledOnce();
     expect(result.status).toBe('SUCCESS');
     expect(logStep).not.toHaveBeenCalledWith(expect.objectContaining({ stage: 'router.investigation.resume_gate' }));
   });
@@ -547,7 +537,7 @@ describe('routeTask investigation resume gate', () => {
 
     expect(classifyWorkflowIntent).toHaveBeenCalledOnce();
     expect(runImplementationWorkflow).toHaveBeenCalledOnce(); // original intent honored
-    expect(runConversationalWorkflow).not.toHaveBeenCalled();
+    expect(runAgenticEntry).not.toHaveBeenCalled();
     expect(result.status).toBe('SUCCESS');
     expect(logStep).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -588,7 +578,7 @@ describe('routeTask investigation resume gate', () => {
     });
 
     expect(runImplementationWorkflow).not.toHaveBeenCalled();
-    expect(runConversationalWorkflow).toHaveBeenCalledOnce();
+    expect(runAgenticEntry).toHaveBeenCalledOnce();
   });
 
   it('does not gate sideways/upward overrides regardless of confidence', async () => {
@@ -617,7 +607,7 @@ describe('routeTask investigation resume gate', () => {
     });
 
     expect(runImplementationWorkflow).toHaveBeenCalledOnce();
-    expect(runInformationalWorkflow).not.toHaveBeenCalled();
+    expect(runAgenticEntry).not.toHaveBeenCalled();
   });
 
   it('falls through to the classifier when text is not an affirmation, even with pending findings', async () => {

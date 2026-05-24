@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runImplementationWorkflow } from '../src/workflows/implementationWorkflow.js';
-import { runConversationalWorkflow } from '../src/workflows/conversationalWorkflow.js';
 import { runCodex } from '../src/codex/runCodex.js';
 
 vi.mock('../src/codex/runCodex.js', () => ({
@@ -61,47 +60,6 @@ const config = {
   allowedPrOrg: 'Newton-School',
   multiAgentEnabled: false,
 };
-
-describe('conversationalWorkflow', () => {
-  beforeEach(() => {
-    vi.mocked(runCodex).mockReset();
-  });
-
-  it('replies directly to lightweight presence ping without running codex', async () => {
-    const slack = {
-      chat: {
-        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '123.45' }),
-      },
-    };
-
-    const result = await runConversationalWorkflow({
-      task: {
-        event: {
-          eventId: 'EvOwnerPing',
-          channelId: 'C1',
-          threadTs: '111.22',
-          eventTs: '111.22',
-          userId: 'UOWNER1',
-          text: '<@UBOT1> you there?',
-          rawEvent: {},
-        },
-        mentionDetected: true,
-        mentionType: 'bot',
-        isOwnerAuthor: true,
-        isCoreDevAuthor: true,
-        intent: 'CONVERSATIONAL',
-      },
-      config,
-      slack: slack as unknown as import('@slack/web-api').WebClient,
-    });
-
-    expect(result.status).toBe('SUCCESS');
-    expect(result.workflow).toBe('CONVERSATIONAL');
-    expect(result.message.toLowerCase()).toMatch(/(here|online|present)/);
-    expect(slack.chat.postMessage).toHaveBeenCalledTimes(1);
-    expect(runCodex).not.toHaveBeenCalled();
-  });
-});
 
 describe('implementationWorkflow', () => {
   beforeEach(() => {
