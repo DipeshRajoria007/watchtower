@@ -10,7 +10,7 @@ export interface RunAgenticEntryParams {
   config: AppConfig;
   slack: WebClient;
   store: JobStore;
-  jobId: string;
+  jobId?: string;
   logStep?: WorkflowStepLogger;
   signal?: AbortSignal;
 }
