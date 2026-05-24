@@ -15,7 +15,7 @@ export interface ToolContext {
   config: AppConfig;
   slack: WebClient;
   store: JobStore;
-  jobId: string;
+  jobId?: string;
   logStep?: WorkflowStepLogger;
   signal?: AbortSignal;
 }
