@@ -578,7 +578,10 @@ pub fn run() {
             list_pinned_facts,
             add_pinned_fact,
             remove_pinned_fact,
-            get_user_memories
+            get_user_memories,
+            get_bundles,
+            save_bundle,
+            delete_bundle
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -1820,6 +1823,144 @@ async fn get_user_memories(
         out.push(row.map_err(|err| format!("db row failed: {err}"))?);
     }
     Ok(out)
+}
+
+/// Capability bundle as seen from the desktop UI. Mirrors the sidecar's
+/// `Bundle` interface in `sidecar/src/types/contracts.ts`. `resolved_user_ids`
+/// is NOT persisted in the table (subteam membership lives in Slack); the
+/// sidecar hydrates it after load via `hydrateBundleUserIds`. The UI sees an
+/// empty array on reads and is not expected to send a non-empty one — it's
+/// included here for round-trip type compatibility.
+#[derive(Serialize, Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct BundleRecord {
+    name: String,
+    slack_user_group_handle: String,
+    manual_user_ids: String,
+    #[serde(default)]
+    resolved_user_ids: Vec<String>,
+    capabilities: Vec<String>,
+    allowed_channel_ids: Vec<String>,
+    allow_im: bool,
+    allow_mpim: bool,
+}
+
+/// Notify the sidecar that the bundles table has been edited from the
+/// desktop. The sidecar's per-workflow access check compares this signal's
+/// `updated_at` against its in-memory bundles build time; when newer, it
+/// reloads bundles in place. Safe to call after any bundle mutation;
+/// failures are non-fatal (worst case: stale cache until next restart).
+fn write_access_cache_signal(connection: &Connection) -> Result<(), String> {
+    let now = Utc::now().to_rfc3339();
+    connection
+        .execute(
+            "INSERT INTO access_cache_signals(id, updated_at) VALUES(1, ?)
+             ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at",
+            params![now],
+        )
+        .map_err(|err| format!("access signal write failed: {err}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_bundles(state: State<'_, AppState>) -> Result<Vec<BundleRecord>, String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    let mut stmt = connection
+        .prepare(
+            "SELECT name, slack_user_group_handle, manual_user_ids, capabilities,
+                    allowed_channel_ids, allow_im, allow_mpim
+             FROM bundles
+             ORDER BY name",
+        )
+        .map_err(|err| format!("db prepare bundles failed: {err}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            let capabilities_json: String = row.get(3)?;
+            let allowed_channels_csv: String = row.get(4)?;
+            let allow_im: i64 = row.get(5)?;
+            let allow_mpim: i64 = row.get(6)?;
+            let capabilities: Vec<String> = serde_json::from_str(&capabilities_json).unwrap_or_default();
+            let allowed_channel_ids = allowed_channels_csv
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            Ok(BundleRecord {
+                name: row.get(0)?,
+                slack_user_group_handle: row.get(1)?,
+                manual_user_ids: row.get(2)?,
+                resolved_user_ids: Vec::new(),
+                capabilities,
+                allowed_channel_ids,
+                allow_im: allow_im != 0,
+                allow_mpim: allow_mpim != 0,
+            })
+        })
+        .map_err(|err| format!("db query bundles failed: {err}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|err| format!("db row failed: {err}"))?);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn save_bundle(bundle: BundleRecord, state: State<'_, AppState>) -> Result<(), String> {
+    let name = bundle.name.trim().to_string();
+    if name.is_empty() {
+        return Err("bundle name cannot be empty".to_string());
+    }
+    let capabilities_json = serde_json::to_string(&bundle.capabilities)
+        .map_err(|err| format!("capability encode failed: {err}"))?;
+    let allowed_channels_csv = bundle
+        .allowed_channel_ids
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(",");
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    let now = Utc::now().to_rfc3339();
+    connection
+        .execute(
+            "INSERT INTO bundles(name, slack_user_group_handle, manual_user_ids, capabilities,
+                                 allowed_channel_ids, allow_im, allow_mpim, updated_at)
+             VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(name) DO UPDATE SET
+               slack_user_group_handle = excluded.slack_user_group_handle,
+               manual_user_ids = excluded.manual_user_ids,
+               capabilities = excluded.capabilities,
+               allowed_channel_ids = excluded.allowed_channel_ids,
+               allow_im = excluded.allow_im,
+               allow_mpim = excluded.allow_mpim,
+               updated_at = excluded.updated_at",
+            params![
+                name,
+                bundle.slack_user_group_handle,
+                bundle.manual_user_ids,
+                capabilities_json,
+                allowed_channels_csv,
+                if bundle.allow_im { 1 } else { 0 },
+                if bundle.allow_mpim { 1 } else { 0 },
+                now,
+            ],
+        )
+        .map_err(|err| format!("db save bundle failed: {err}"))?;
+    write_access_cache_signal(&connection)?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_bundle(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    let connection =
+        Connection::open(&*state.db_path).map_err(|err| format!("db open failed: {err}"))?;
+    connection
+        .execute("DELETE FROM bundles WHERE name = ?", params![name])
+        .map_err(|err| format!("db delete bundle failed: {err}"))?;
+    write_access_cache_signal(&connection)?;
+    Ok(())
 }
 
 fn query_runs(connection: &Connection, sql: &str) -> Result<Vec<RunSummary>, String> {
