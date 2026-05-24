@@ -21,7 +21,8 @@ import { runMiniogDossierWorkflow } from '../workflows/miniogDossierWorkflow.js'
 import { runDeployWorkflow } from '../workflows/deployWorkflow.js';
 import { runImplementationWorkflow } from '../workflows/implementationWorkflow.js';
 import { runInvestigationWorkflow } from '../workflows/investigationWorkflow.js';
-import { runAgenticEntry } from '../agentic/agenticEntry.js';
+import { runInformationalWorkflow } from '../workflows/informationalWorkflow.js';
+import { runConversationalWorkflow } from '../workflows/conversationalWorkflow.js';
 import { runPrReviewWorkflow } from '../workflows/prReviewWorkflow.js';
 import { runUnknownTaskWorkflow } from '../workflows/unknownTaskWorkflow.js';
 import { getWorkflowTemplates } from '../workflows/registry.js';
@@ -326,11 +327,18 @@ export async function routeTask(params: {
   }
 
   if (resolvedIntent === 'INFORMATIONAL') {
-    return runAgenticEntry({ mode: 'informational', task: routedTask, config, slack, store, jobId, logStep, signal });
+    return runInformationalWorkflow({ task: routedTask, config, slack, store, logStep, signal });
   }
 
   if (resolvedIntent === 'CONVERSATIONAL') {
-    return runAgenticEntry({ mode: 'conversational', task: routedTask, config, slack, store, jobId, logStep, signal });
+    return runConversationalWorkflow({
+      task: routedTask,
+      config,
+      slack,
+      logStep,
+      investigationStore: typeof store?.investigationStore === 'function' ? store.investigationStore() : undefined,
+      signal,
+    });
   }
 
   if (resolvedIntent === 'DEV_ASSIST') {
