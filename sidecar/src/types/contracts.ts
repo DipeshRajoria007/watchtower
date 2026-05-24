@@ -26,19 +26,40 @@ export type Capability =
   | 'deploy_prod'
   | 'dev_assist'
   | 'miniog_dossier_self'
-  | 'miniog_dossier_admin';
+  | 'miniog_dossier_admin'
+  // Owner-only — the "manage the access-control system itself" capability.
+  // Preserves the legacy `requiredLevel: 'owner'` semantics through the
+  // capability wrapper (without it, admin and owner share identical
+  // capability sets and the wrapper can't distinguish them).
+  | 'manage_access';
 
 /**
  * A named set of capabilities that can be assigned to users via a Slack
  * subteam handle and/or a comma-delimited list of manual user IDs. Bundles
  * are peers (no hierarchy) — a user is granted the union of capabilities
  * across every bundle they belong to.
+ *
+ * Channel scope is per-bundle to preserve the exact `evaluateAccess`
+ * semantics in the legacy `AccessControlConfig` (each tier had its own
+ * `allowedChannelIds`). The forward-facing global `ChannelAcl` model lands
+ * when the legacy types are removed (D6).
  */
 export interface Bundle {
   name: string;
   slackUserGroupHandle: string;
   manualUserIds: string;
+  /**
+   * Resolved user IDs for this bundle — the union of `manualUserIds`
+   * (parsed) and the members of `slackUserGroupHandle` (after Slack subteam
+   * expansion, refreshed every 30 min by `setResolvedGroupMembers`).
+   * Mutating this in place is the expected hot-reload path for live subteam
+   * membership changes.
+   */
+  resolvedUserIds: string[];
   capabilities: Capability[];
+  allowedChannelIds: string[];
+  allowIm: boolean;
+  allowMpim: boolean;
 }
 
 /**
@@ -159,6 +180,14 @@ export interface AppConfig {
   bugFixTimeoutMs: number;
   pmTaskTimeoutMs: number;
   accessControl?: AccessControlConfig;
+  /**
+   * Capability-bundles view of access control. Derived from `accessControl`
+   * at config load (D3) and consumed by `evaluateCapability`. Always
+   * populated when `accessControl` is. Channel scoping lives per-bundle for
+   * legacy parity; `ChannelAcl` becomes the source of truth in D6 alongside
+   * the legacy removal.
+   */
+  bundles?: Bundle[];
 }
 
 export interface SlackEventEnvelope {
