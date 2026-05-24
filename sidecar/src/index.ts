@@ -1,7 +1,12 @@
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { WebClient } from '@slack/web-api';
-import { getAdminUserIds, getConfiguredAccessControl, setResolvedGroupMembers } from './access/control.js';
+import {
+  getAdminUserIds,
+  getConfiguredAccessControl,
+  hydrateBundleUserIds,
+  setResolvedGroupMembers,
+} from './access/control.js';
 import { shouldResumeFromReaction } from './router/investigationResumeGate.js';
 import { loadConfigFromDb, readAgentBackend, readSettingsForAlert, MiniOgRepoRootViolationError } from './config.js';
 import { setActiveBackend } from './codex/runCodex.js';
@@ -65,6 +70,28 @@ try {
 }
 setActiveBackend(config.agentBackend);
 const store = new JobStore(dbPath);
+
+// D5a — bundle storage cutover. Once the bundles table has rows, it becomes
+// the source of truth for capability checks; until then we seed from the
+// D3-derived bundles (config.bundles, populated by mapSettingsToConfig from
+// the legacy AccessControlConfig). After this block, config.bundles always
+// reflects the table.
+let bundlesLoadedAt = new Date().toISOString();
+{
+  const storedBundles = store.getBundles();
+  if (storedBundles.length > 0) {
+    config.bundles = hydrateBundleUserIds(storedBundles, config.ownerSlackUserIds);
+    logger.info({ bundleCount: storedBundles.length }, 'loaded bundles from SQLite (table is source of truth)');
+  } else if (config.bundles && config.bundles.length > 0) {
+    for (const bundle of config.bundles) {
+      store.setBundle(bundle);
+    }
+    logger.info(
+      { bundleCount: config.bundles.length },
+      'seeded bundles table from legacy AccessControlConfig (one-time)',
+    );
+  }
+}
 
 const queue: Array<{ event: SlackEventEnvelope; client: WebClient }> = [];
 let running = 0;
@@ -984,6 +1011,19 @@ async function processEventClaimed(event: SlackEventEnvelope, client: WebClient)
         // so that settings changes take effect without restarting the sidecar.
         const currentBackend = readAgentBackend(dbPath);
         setActiveBackend(currentBackend);
+
+        // D5a — hot-reload bundles if the Tauri UI (or direct SQL) edited
+        // them since the last build. Mirrors the readAgentBackend pattern:
+        // signal-driven (no polling cost when nothing changed).
+        const signalAt = store.getAccessCacheSignalAt();
+        if (signalAt && signalAt > bundlesLoadedAt) {
+          const reloaded = store.getBundles();
+          if (reloaded.length > 0) {
+            config.bundles = hydrateBundleUserIds(reloaded, config.ownerSlackUserIds);
+            bundlesLoadedAt = signalAt;
+            logger.info({ bundleCount: reloaded.length, signalAt }, 'reloaded bundles after access cache signal');
+          }
+        }
 
         const result = await agentCallContext.run({ jobId, store }, () =>
           routeTask({

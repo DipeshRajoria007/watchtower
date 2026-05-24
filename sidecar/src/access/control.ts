@@ -206,6 +206,26 @@ const LEVEL_TO_REPRESENTATIVE_CAPABILITY: Record<AccessLevel, Capability> = {
 };
 
 /**
+ * Resolves `bundle.resolvedUserIds` from `manualUserIds` plus (for admin /
+ * owner bundles) the configured owner user IDs. Slack subteam-handle
+ * expansion happens later via the 30-min `setResolvedGroupMembers` refresh;
+ * this just gives us a sane starting set immediately after a load.
+ *
+ * Mirrors the legacy `toResolvedAccessGroup` semantics: only admin/owner
+ * bundles auto-include `ownerSlackUserIds`. Other bundles (viewer, reviewer,
+ * builder, custom) get only their parsed `manualUserIds` until subteam
+ * resolution runs.
+ */
+export function hydrateBundleUserIds(bundles: Bundle[], ownerSlackUserIds: string[]): Bundle[] {
+  return bundles.map(bundle => {
+    const manualUserIds = parseDelimitedIds(bundle.manualUserIds);
+    const includesOwners = bundle.name === 'admin' || bundle.name === 'owner';
+    const resolvedUserIds = includesOwners ? uniqueList([...ownerSlackUserIds, ...manualUserIds]) : manualUserIds;
+    return { ...bundle, resolvedUserIds };
+  });
+}
+
+/**
  * Builds the capability-bundles view of a legacy `AccessControlConfig`.
  * Called by `mapSettingsToConfig` so `AppConfig.bundles` is always populated
  * when `accessControl` is. Each bundle's `resolvedUserIds` is a snapshot —

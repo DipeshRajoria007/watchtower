@@ -3,7 +3,9 @@ import { z } from 'zod';
 import type {
   AgentBackendId,
   AgentCallRecord,
+  Bundle,
   CallSummarySince,
+  Capability,
   CostSource,
   JobCostSummary,
   JobLogLevel,
@@ -461,6 +463,35 @@ export class JobStore {
       -- sidecar — no IPC channel is required.
       CREATE TABLE IF NOT EXISTS dossier_cache_signals (
         user_id TEXT PRIMARY KEY,
+        updated_at TEXT NOT NULL
+      );
+
+      -- Capability bundles (replacement for the legacy 5-tier access_control_*
+      -- tables introduced in the bundles redesign). Each row is a named set
+      -- of capabilities assigned to users via a Slack subteam handle and/or
+      -- a comma-delimited list of manual user IDs. Bundles are peers (no
+      -- hierarchy); a user is granted the union of capabilities across every
+      -- bundle they belong to. Per-bundle channel scope preserves the exact
+      -- legacy evaluateAccess semantics through the migration.
+      CREATE TABLE IF NOT EXISTS bundles (
+        name TEXT PRIMARY KEY,
+        slack_user_group_handle TEXT NOT NULL DEFAULT '',
+        manual_user_ids TEXT NOT NULL DEFAULT '',
+        capabilities TEXT NOT NULL DEFAULT '[]',
+        allowed_channel_ids TEXT NOT NULL DEFAULT '',
+        allow_im INTEGER NOT NULL DEFAULT 0,
+        allow_mpim INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+
+      -- Signal table used by Tauri commands (save_bundle, delete_bundle) to
+      -- notify the sidecar that the bundles table has been edited. The
+      -- sidecar per-workflow access cache check reads this signal and
+      -- reloads bundles in place when it is newer than the in-memory build.
+      -- Mirrors the dossier_cache_signals + readAgentBackend hot-reload
+      -- patterns (no IPC channel required).
+      CREATE TABLE IF NOT EXISTS access_cache_signals (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
         updated_at TEXT NOT NULL
       );
     `);
@@ -1630,6 +1661,126 @@ export class JobStore {
       )
       .get(input.scope, input.scopeId) as { mode?: PersonalityMode } | undefined;
     return row?.mode ? normalizeStoredPersonalityMode(row.mode) : undefined;
+  }
+
+  /**
+   * Returns every bundle row, sorted by name. Empty array on a fresh install
+   * (the load path in config.ts falls back to deriving from legacy
+   * `accessControl` and persisting via `setBundle` as a one-time seed).
+   */
+  getBundles(): Bundle[] {
+    const rows = this.db
+      .prepare(
+        `SELECT name, slack_user_group_handle, manual_user_ids, capabilities,
+                allowed_channel_ids, allow_im, allow_mpim
+         FROM bundles
+         ORDER BY name`,
+      )
+      .all() as Array<{
+      name: string;
+      slack_user_group_handle: string;
+      manual_user_ids: string;
+      capabilities: string;
+      allowed_channel_ids: string;
+      allow_im: number;
+      allow_mpim: number;
+    }>;
+    return rows.map(row => {
+      let capabilities: Capability[] = [];
+      try {
+        const parsed: unknown = JSON.parse(row.capabilities);
+        if (Array.isArray(parsed)) {
+          capabilities = parsed.filter((c): c is Capability => typeof c === 'string');
+        }
+      } catch {
+        // Malformed JSON shouldn't crash the access path — fall through to
+        // an empty capability set so the bundle effectively grants nothing.
+      }
+      const allowedChannelIds = row.allowed_channel_ids
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+      return {
+        name: row.name,
+        slackUserGroupHandle: row.slack_user_group_handle,
+        manualUserIds: row.manual_user_ids,
+        // resolvedUserIds is rebuilt from the legacy resolution path
+        // (`setResolvedGroupMembers`) — not stored in the table itself
+        // because subteam membership lives in Slack, not in our DB.
+        resolvedUserIds: [],
+        capabilities,
+        allowedChannelIds,
+        allowIm: row.allow_im === 1,
+        allowMpim: row.allow_mpim === 1,
+      };
+    });
+  }
+
+  /**
+   * Upsert a single bundle. Stores `capabilities` as JSON (matching the
+   * `mission_swarm_runs.roles_json` pattern). The `resolvedUserIds` field is
+   * NOT persisted — it's derived at runtime from subteam membership.
+   */
+  setBundle(bundle: Bundle): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO bundles(
+           name, slack_user_group_handle, manual_user_ids, capabilities,
+           allowed_channel_ids, allow_im, allow_mpim, updated_at
+         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET
+           slack_user_group_handle = excluded.slack_user_group_handle,
+           manual_user_ids = excluded.manual_user_ids,
+           capabilities = excluded.capabilities,
+           allowed_channel_ids = excluded.allowed_channel_ids,
+           allow_im = excluded.allow_im,
+           allow_mpim = excluded.allow_mpim,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        bundle.name,
+        bundle.slackUserGroupHandle,
+        bundle.manualUserIds,
+        JSON.stringify(bundle.capabilities),
+        bundle.allowedChannelIds.join(','),
+        bundle.allowIm ? 1 : 0,
+        bundle.allowMpim ? 1 : 0,
+        now,
+      );
+  }
+
+  deleteBundle(name: string): boolean {
+    const result = this.db.prepare(`DELETE FROM bundles WHERE name = ?`).run(name);
+    return result.changes > 0;
+  }
+
+  /**
+   * Returns the timestamp of the most recent access-cache signal, or
+   * undefined if no signal has ever been written. Compared against the
+   * sidecar's in-memory build time to detect when bundles need a reload.
+   */
+  getAccessCacheSignalAt(): string | undefined {
+    const row = this.db.prepare(`SELECT updated_at FROM access_cache_signals WHERE id = 1 LIMIT 1`).get() as
+      | { updated_at?: string }
+      | undefined;
+    return row?.updated_at;
+  }
+
+  /**
+   * Bumps the access-cache signal. Called inside each Tauri command that
+   * edits a bundle (save_bundle, delete_bundle) so the sidecar's per-workflow
+   * reload check fires on the next request.
+   */
+  bumpAccessCacheSignal(): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO access_cache_signals(id, updated_at)
+         VALUES(1, ?)
+         ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`,
+      )
+      .run(now);
   }
 
   upsertMissionStart(input: { channelId: string; threadTs: string; goal: string; ownerUserId: string }): {
