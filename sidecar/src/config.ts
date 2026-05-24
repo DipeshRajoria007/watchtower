@@ -5,6 +5,7 @@ import { z } from 'zod';
 import {
   buildLegacyAccessControlConfig,
   createDefaultAccessControlSettings,
+  deriveBundlesFromLegacy,
   toResolvedAccessControlConfig,
 } from './access/control.js';
 import type { AccessControlSettings, AgentBackendId, AppConfig } from './types/contracts.js';
@@ -367,5 +368,6 @@ function mapSettingsToConfig(settings: SettingsRow, accessControlSettings?: Acce
     bugFixTimeoutMs: settings.bug_fix_timeout_ms,
     pmTaskTimeoutMs: settings.pm_task_timeout_ms,
     accessControl,
+    bundles: deriveBundlesFromLegacy(accessControl),
   };
 }

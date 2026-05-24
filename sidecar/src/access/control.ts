@@ -5,6 +5,7 @@ import type {
   AccessGroupSettings,
   AccessLevel,
   AppConfig,
+  Bundle,
   Capability,
   WorkflowIntent,
 } from '../types/contracts.js';
@@ -139,19 +140,22 @@ export function toResolvedAccessControlConfig(
 }
 
 /**
- * Maps each capability to the *minimum* legacy tier that grants it. Used by
- * the D2 `evaluateCapability` wrapper so capability checks reduce to a tier
- * check while bundle storage is still being wired up (D3). When bundles
- * become the source of truth, this constant is consulted only by the
- * `evaluateAccess` legacy wrapper.
+ * Maps each capability to the *minimum* legacy tier that grants it. Two uses:
+ *
+ * 1. D2 left this in place as the lookup that translates Capability →
+ *    AccessLevel for the wrapped `evaluateAccess` path.
+ * 2. D3 also uses this as the inverse of `LEGACY_TIER_TO_CAPABILITIES`:
+ *    when `deriveBundlesFromLegacy` builds a Bundle for tier T, the bundle's
+ *    capability set is exactly the capabilities that pin to T or any lower
+ *    tier (cumulative).
+ *
+ * `investigate` stays at `viewer` per the D2 parity decision —
+ * `resolveRequiredAccessLevel('INVESTIGATION')` returned `viewer` historically.
  */
 const CAPABILITY_TO_LEGACY_TIER: Record<Capability, AccessLevel> = {
   query_codebase: 'viewer',
   chat: 'viewer',
   miniog_dossier_self: 'viewer',
-  // INVESTIGATION today maps to viewer tier (`resolveRequiredAccessLevel` default).
-  // Keeping `investigate` at viewer preserves strict parity for D2; the seed in D3
-  // mirrors this so existing watchtower.db installs see no behavior change.
   investigate: 'viewer',
   submit_pr_review: 'reviewer',
   comment_pr: 'reviewer',
@@ -159,7 +163,71 @@ const CAPABILITY_TO_LEGACY_TIER: Record<Capability, AccessLevel> = {
   deploy_prod: 'admin',
   dev_assist: 'admin',
   miniog_dossier_admin: 'admin',
+  manage_access: 'owner',
 };
+
+const ALL_CAPABILITIES: Capability[] = Object.keys(CAPABILITY_TO_LEGACY_TIER) as Capability[];
+
+/**
+ * Cumulative tier → capability set. Derived from `CAPABILITY_TO_LEGACY_TIER`
+ * so the two stay coherent: a bundle for tier T includes every capability
+ * pinned at rank ≤ rank(T). `owner` gets every capability so the table is
+ * internally complete even though owner bypass short-circuits the check.
+ */
+export const LEGACY_TIER_TO_CAPABILITIES: Record<AccessGroupKey, Capability[]> = (() => {
+  const result = {} as Record<AccessGroupKey, Capability[]>;
+  for (const tier of ACCESS_GROUP_KEYS) {
+    if (tier === 'owner') {
+      result[tier] = [...ALL_CAPABILITIES];
+      continue;
+    }
+    result[tier] = ALL_CAPABILITIES.filter(cap => ACCESS_RANK[CAPABILITY_TO_LEGACY_TIER[cap]] <= ACCESS_RANK[tier]);
+  }
+  return result;
+})();
+
+/**
+ * Inverse-ish lookup for the `evaluateAccess` wrapper: pick a capability
+ * that is granted by `level` but NOT by any strictly-lower tier. Calling
+ * `evaluateCapability(rep)` then returns the same allowed/denyReason as the
+ * legacy `evaluateAccess(level)` did because the cumulative capability sets
+ * partition tiers exactly. Owner falls back to admin's representative since
+ * the owner bypass short-circuits before the capability check.
+ */
+const LEVEL_TO_REPRESENTATIVE_CAPABILITY: Record<AccessLevel, Capability> = {
+  viewer: 'query_codebase',
+  reviewer: 'submit_pr_review',
+  builder: 'start_implementation',
+  admin: 'deploy_prod',
+  // Owner needs an owner-exclusive capability so `evaluateAccess(requiredLevel: 'owner')`
+  // distinguishes admin from owner. `manage_access` pins to the `owner` tier in
+  // CAPABILITY_TO_LEGACY_TIER, so admin's bundle does NOT grant it.
+  owner: 'manage_access',
+};
+
+/**
+ * Builds the capability-bundles view of a legacy `AccessControlConfig`.
+ * Called by `mapSettingsToConfig` so `AppConfig.bundles` is always populated
+ * when `accessControl` is. Each bundle's `resolvedUserIds` is a snapshot —
+ * `setResolvedGroupMembers` mutates both `accessControl.groups[X].resolvedUserIds`
+ * AND the matching `bundles[X].resolvedUserIds` so live subteam-membership
+ * updates flow through to capability checks without a restart.
+ */
+export function deriveBundlesFromLegacy(accessControl: AccessControlConfig): Bundle[] {
+  return ACCESS_GROUP_KEYS.map(key => {
+    const group = accessControl.groups[key];
+    return {
+      name: key,
+      slackUserGroupHandle: group.slackUserGroupHandle,
+      manualUserIds: group.manualUserIds,
+      resolvedUserIds: [...group.resolvedUserIds],
+      capabilities: [...LEGACY_TIER_TO_CAPABILITIES[key]],
+      allowedChannelIds: [...group.resolvedChannelIds],
+      allowIm: group.allowIm,
+      allowMpim: group.allowMpim,
+    };
+  });
+}
 
 /**
  * Maps a `WorkflowIntent` to the canonical `Capability` that gates the
@@ -278,40 +346,70 @@ export function setResolvedGroupMembers(params: {
 
   accessControl.groups[params.groupKey].resolvedUserIds = nextMembers;
   params.config.accessControl = accessControl;
+
+  // Mirror into the capability-bundles view so live subteam-membership
+  // changes (refreshed every 30 min) propagate to `evaluateCapability`
+  // without a config reload. Bundle name == legacy tier key during the
+  // migration, so the lookup is direct.
+  if (params.config.bundles) {
+    const bundle = params.config.bundles.find(b => b.name === params.groupKey);
+    if (bundle) {
+      bundle.resolvedUserIds = [...nextMembers];
+    }
+  }
 }
 
-function channelAllowed(
-  group: AccessControlConfig['groups'][AccessGroupKey],
-  channelId: string,
-  channelType?: string,
-): boolean {
-  // Owner is channel-unrestricted by design. The owner row's `allowedChannelIds`,
-  // `allowIm`, and `allowMpim` are still hydrated from the DB but have no effect —
-  // owners can act in any channel. Editing those fields (e.g. via direct SQL) is a
-  // no-op; configure who is an owner through `ownerSlackUserIds` instead.
-  if (group.key === 'owner') {
+/**
+ * Channel-allowed predicate against a capability bundle. Owner bundle is
+ * channel-unrestricted (mirrors the owner short-circuit in the legacy
+ * `channelAllowed`); editing channel fields on the owner bundle is a no-op
+ * — configure ownership through `ownerSlackUserIds`.
+ */
+function channelAllowedForBundle(bundle: Bundle, channelId: string, channelType?: string): boolean {
+  if (bundle.name === 'owner') {
     return true;
   }
   if (channelType === 'im') {
-    return group.allowIm;
+    return bundle.allowIm;
   }
   if (channelType === 'mpim') {
-    return group.allowMpim;
+    return bundle.allowMpim;
   }
-
-  return group.resolvedChannelIds.includes(channelId);
+  return bundle.allowedChannelIds.includes(channelId);
 }
 
-export function evaluateAccess(params: {
+/**
+ * Returns the capability-bundles view of access for this config, falling
+ * back to deriving from the legacy `AccessControlConfig` when `config.bundles`
+ * is undefined. The fallback is what keeps legacy test fixtures (and any
+ * caller that builds `AppConfig` by hand) working without changes.
+ */
+function getBundlesForConfig(config: AppConfig): Bundle[] {
+  if (config.bundles) return config.bundles;
+  return deriveBundlesFromLegacy(getConfiguredAccessControl(config));
+}
+
+/**
+ * Capability-shaped access check. Source of truth as of D3 — reads from
+ * `config.bundles` (the capability-bundles view) rather than the legacy
+ * tier-shaped `AccessControlConfig`. The three `AccessDenyReason` buckets
+ * and their user-facing copy are preserved exactly per
+ * `[[redesign_access_deny_copy_preserved]]`.
+ *
+ * `evaluateAccess` is now a thin wrapper that translates `requiredLevel` →
+ * representative `Capability` and delegates here.
+ */
+export function evaluateCapability(params: {
   config: AppConfig;
-  accessControl?: AccessControlConfig;
   userId: string;
   channelId: string;
   channelType?: string;
-  requiredLevel: AccessLevel;
+  capability: Capability;
 }): AccessDecision {
-  const { config, userId, channelId, channelType, requiredLevel } = params;
+  const { config, userId, channelId, channelType, capability } = params;
+  const requiredLevel = CAPABILITY_TO_LEGACY_TIER[capability];
 
+  // 1. Owner bypass — short-circuit before any bundle lookup.
   if (config.ownerSlackUserIds.includes(userId)) {
     return {
       allowed: true,
@@ -322,21 +420,31 @@ export function evaluateAccess(params: {
     };
   }
 
-  const accessControl = params.accessControl ?? getConfiguredAccessControl(config);
-  const userGroups = ACCESS_GROUP_KEYS.filter(key => accessControl.groups[key].resolvedUserIds.includes(userId));
-  const matchedGroups = userGroups.filter(key => channelAllowed(accessControl.groups[key], channelId, channelType));
-  const allowed = matchedGroups.some(key => ACCESS_RANK[key] >= ACCESS_RANK[requiredLevel]);
+  const bundles = getBundlesForConfig(config);
+  const userBundles = bundles.filter(b => b.resolvedUserIds.includes(userId));
+  const matchedBundles = userBundles.filter(b => channelAllowedForBundle(b, channelId, channelType));
+  const grantedCapabilities = new Set(matchedBundles.flatMap(b => b.capabilities));
+  const allowed = grantedCapabilities.has(capability);
+
+  // Bundle names happen to be the 5 legacy tier names during the migration,
+  // so the AccessDecision's userGroups/matchedGroups fields carry the same
+  // string identifiers `taskRouter.ts:250–258` already logs. When bundles
+  // become first-class (D5+), this surface widens to arbitrary bundle names.
+  const userGroups = userBundles.map(b => b.name as AccessGroupKey);
+  const matchedGroups = matchedBundles.map(b => b.name as AccessGroupKey);
 
   let reason: string | undefined;
   let denyReason: AccessDenyReason | undefined;
   if (!allowed) {
     const isDM = channelType === 'im' || channelType === 'mpim';
-    const userMaxRank = userGroups.reduce((max, key) => Math.max(max, ACCESS_RANK[key]), -1);
+    // Among bundles the user belongs to (regardless of channel), do any grant
+    // the requested capability? If yes, the deny is purely about channel scope.
+    const anyBundleGrants = userBundles.some(b => b.capabilities.includes(capability));
 
-    if (userGroups.length === 0) {
+    if (userBundles.length === 0) {
       denyReason = 'NOT_ON_ACCESS_LIST';
       reason = "Sorry, you're not on the access list. Please ask an admin to add you.";
-    } else if (userMaxRank < ACCESS_RANK[requiredLevel]) {
+    } else if (!anyBundleGrants) {
       denyReason = 'INSUFFICIENT_ROLE';
       reason =
         'Sorry, this kind of request needs a higher access level than your role allows. Please contact an admin.';
@@ -360,36 +468,39 @@ export function evaluateAccess(params: {
 }
 
 /**
- * Capability-shaped access check. Forward-compatible with the agent-owned
- * architecture, where each tool the agent can call is gated by a `Capability`
- * instead of a workflow intent.
+ * @deprecated Tier-shaped access check. Now a thin wrapper around
+ * `evaluateCapability` — translates `requiredLevel` → representative
+ * `Capability` and delegates. Removed in D6 once the router cuts over.
  *
- * D2 wiring (this PR): bundle storage doesn't exist yet, so this is a thin
- * wrapper over `evaluateAccess` — the capability is translated to the
- * minimum legacy tier that grants it (`CAPABILITY_TO_LEGACY_TIER`), and the
- * tier check runs against the existing `AccessControlConfig`. The three
- * `AccessDenyReason` buckets + their user-facing copy are preserved exactly,
- * which is the contract from `[[redesign_access_deny_copy_preserved]]`.
- *
- * D3 will invert this: `evaluateCapability` becomes the primary and reads
- * from the `bundles` table, with `evaluateAccess` reduced to a wrapper that
- * translates `requiredLevel → capability` before delegating.
+ * The `accessControl` param is honored when provided (test fixtures that
+ * pass a one-off config without bundles still work via the
+ * `getBundlesForConfig` legacy fallback).
  */
-export function evaluateCapability(params: {
+export function evaluateAccess(params: {
   config: AppConfig;
   accessControl?: AccessControlConfig;
   userId: string;
   channelId: string;
   channelType?: string;
-  capability: Capability;
+  requiredLevel: AccessLevel;
 }): AccessDecision {
-  const requiredLevel = CAPABILITY_TO_LEGACY_TIER[params.capability];
-  return evaluateAccess({
-    config: params.config,
-    accessControl: params.accessControl,
+  // If a caller passed an explicit accessControl override, translate it to
+  // bundles for the duration of this call so the override still wins. This
+  // is exercised by the test fixtures in `accessControl.test.ts`.
+  const effectiveConfig: AppConfig = params.accessControl
+    ? { ...params.config, accessControl: params.accessControl, bundles: deriveBundlesFromLegacy(params.accessControl) }
+    : params.config;
+
+  const capability = LEVEL_TO_REPRESENTATIVE_CAPABILITY[params.requiredLevel];
+  const decision = evaluateCapability({
+    config: effectiveConfig,
     userId: params.userId,
     channelId: params.channelId,
     channelType: params.channelType,
-    requiredLevel,
+    capability,
   });
+
+  // Preserve the legacy `requiredLevel` field on the returned decision —
+  // tests and `taskRouter.ts` both inspect it.
+  return { ...decision, requiredLevel: params.requiredLevel };
 }

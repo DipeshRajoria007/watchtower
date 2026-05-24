@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildLegacyAccessControlConfig,
+  deriveBundlesFromLegacy,
   evaluateAccess,
   evaluateCapability,
   formatAdminMention,
@@ -13,33 +14,10 @@ import {
 import type { AppConfig, Capability, WorkflowIntent } from '../src/types/contracts.js';
 
 function makeConfig(overrides?: Partial<AppConfig>): AppConfig {
-  return {
-    platformPolicy: 'macos_only',
-    bundleTargets: ['app', 'dmg'],
-    ownerSlackUserIds: ['UOWNER1'],
-    coreDevSlackUserIds: ['UOWNER1'],
-    coreDevSlackUserGroup: '',
-    botUserId: 'UBOT1',
-    slackBotToken: 'xoxb-test',
-    slackAppToken: 'xapp-test',
-    bugsAndUpdatesChannelId: 'C-BUILD',
-    allowedChannelsForBugFix: ['C-BUILD'],
-    repoPaths: {
-      newtonWeb: '/Users/dipesh/code/newton-web',
-      newtonApi: '/Users/dipesh/code/newton-api',
-    },
-    unknownTaskPolicy: 'desktop_only',
-    uncertainRepoPolicy: 'desktop_only',
-    unmappedPrRepoPolicy: 'desktop_only',
-    maxConcurrentJobs: 2,
-    repoClassifierThreshold: 0.75,
-    allowedPrOrg: 'Newton-School',
-    multiAgentEnabled: false,
-    agentBackend: 'codex',
-    prReviewTimeoutMs: 120_000,
-    bugFixTimeoutMs: 120_000,
-    pmTaskTimeoutMs: 120_000,
-    accessControl: toResolvedAccessControlConfig(
+  const ownerSlackUserIds = overrides?.ownerSlackUserIds ?? ['UOWNER1'];
+  const accessControl =
+    overrides?.accessControl ??
+    toResolvedAccessControlConfig(
       {
         mode: 'enforce',
         groups: {
@@ -80,8 +58,39 @@ function makeConfig(overrides?: Partial<AppConfig>): AppConfig {
           },
         },
       },
-      ['UOWNER1'],
-    ),
+      ownerSlackUserIds,
+    );
+
+  return {
+    platformPolicy: 'macos_only',
+    bundleTargets: ['app', 'dmg'],
+    ownerSlackUserIds,
+    coreDevSlackUserIds: ['UOWNER1'],
+    coreDevSlackUserGroup: '',
+    botUserId: 'UBOT1',
+    slackBotToken: 'xoxb-test',
+    slackAppToken: 'xapp-test',
+    bugsAndUpdatesChannelId: 'C-BUILD',
+    allowedChannelsForBugFix: ['C-BUILD'],
+    repoPaths: {
+      newtonWeb: '/Users/dipesh/code/newton-web',
+      newtonApi: '/Users/dipesh/code/newton-api',
+    },
+    unknownTaskPolicy: 'desktop_only',
+    uncertainRepoPolicy: 'desktop_only',
+    unmappedPrRepoPolicy: 'desktop_only',
+    maxConcurrentJobs: 2,
+    repoClassifierThreshold: 0.75,
+    allowedPrOrg: 'Newton-School',
+    multiAgentEnabled: false,
+    agentBackend: 'codex',
+    prReviewTimeoutMs: 120_000,
+    bugFixTimeoutMs: 120_000,
+    pmTaskTimeoutMs: 120_000,
+    accessControl,
+    // Production loads bundles via `mapSettingsToConfig`; the test fixture
+    // mirrors that so `setResolvedGroupMembers` has something to sync into.
+    bundles: deriveBundlesFromLegacy(accessControl),
     ...overrides,
   };
 }
@@ -671,5 +680,144 @@ describe('capability-shaped access (D2 wrapper over legacy tiers)', () => {
         });
       }
     }
+  });
+});
+
+describe('capability-bundles read path (D3)', () => {
+  it('evaluateCapability reads from config.bundles directly (no legacy AccessControlConfig needed)', () => {
+    // Synthesize a config with ONLY `bundles` populated — no `accessControl` field.
+    // Proves the bundle read path is independent of the legacy shape.
+    const baseConfigWithBundles: AppConfig = {
+      platformPolicy: 'macos_only',
+      bundleTargets: ['app', 'dmg'],
+      ownerSlackUserIds: ['UOWNER1'],
+      coreDevSlackUserIds: ['UOWNER1'],
+      coreDevSlackUserGroup: '',
+      botUserId: 'UBOT1',
+      slackBotToken: 'xoxb-test',
+      slackAppToken: 'xapp-test',
+      bugsAndUpdatesChannelId: 'C-BUILD',
+      allowedChannelsForBugFix: ['C-BUILD'],
+      repoPaths: {
+        newtonWeb: '/Users/dipesh/code/newton-web',
+        newtonApi: '/Users/dipesh/code/newton-api',
+      },
+      unknownTaskPolicy: 'desktop_only',
+      uncertainRepoPolicy: 'desktop_only',
+      unmappedPrRepoPolicy: 'desktop_only',
+      maxConcurrentJobs: 2,
+      repoClassifierThreshold: 0.75,
+      allowedPrOrg: 'Newton-School',
+      multiAgentEnabled: false,
+      agentBackend: 'codex',
+      prReviewTimeoutMs: 120_000,
+      bugFixTimeoutMs: 120_000,
+      pmTaskTimeoutMs: 120_000,
+      // Intentionally NO accessControl field.
+      bundles: [
+        {
+          name: 'reviewer',
+          slackUserGroupHandle: '',
+          manualUserIds: 'UONLYREVIEW',
+          resolvedUserIds: ['UONLYREVIEW'],
+          capabilities: ['query_codebase', 'submit_pr_review', 'comment_pr', 'investigate'],
+          allowedChannelIds: ['C-REVIEW'],
+          allowIm: false,
+          allowMpim: false,
+        },
+      ],
+    };
+
+    // User in the reviewer bundle, in the right channel, requesting a capability the bundle grants.
+    const allowedDecision = evaluateCapability({
+      config: baseConfigWithBundles,
+      userId: 'UONLYREVIEW',
+      channelId: 'C-REVIEW',
+      capability: 'submit_pr_review',
+    });
+    expect(allowedDecision.allowed).toBe(true);
+    expect(allowedDecision.ownerBypass).toBe(false);
+    expect(allowedDecision.matchedGroups).toEqual(['reviewer']);
+
+    // Same user, same channel, but a capability the reviewer bundle doesn't grant.
+    const insufficientDecision = evaluateCapability({
+      config: baseConfigWithBundles,
+      userId: 'UONLYREVIEW',
+      channelId: 'C-REVIEW',
+      capability: 'deploy_prod',
+    });
+    expect(insufficientDecision.allowed).toBe(false);
+    expect(insufficientDecision.denyReason).toBe('INSUFFICIENT_ROLE');
+
+    // Same user, capability the bundle grants, but a channel the bundle isn't enabled in.
+    const wrongChannelDecision = evaluateCapability({
+      config: baseConfigWithBundles,
+      userId: 'UONLYREVIEW',
+      channelId: 'C-OTHER',
+      capability: 'submit_pr_review',
+    });
+    expect(wrongChannelDecision.allowed).toBe(false);
+    expect(wrongChannelDecision.denyReason).toBe('CHANNEL_NOT_ENABLED');
+
+    // Owner bypass still fires even though there's no owner bundle defined.
+    const ownerDecision = evaluateCapability({
+      config: baseConfigWithBundles,
+      userId: 'UOWNER1',
+      channelId: 'C-ANYTHING',
+      capability: 'deploy_prod',
+    });
+    expect(ownerDecision.allowed).toBe(true);
+    expect(ownerDecision.ownerBypass).toBe(true);
+
+    // User in zero bundles → NOT_ON_ACCESS_LIST.
+    const noBundleDecision = evaluateCapability({
+      config: baseConfigWithBundles,
+      userId: 'UNOBODY',
+      channelId: 'C-REVIEW',
+      capability: 'submit_pr_review',
+    });
+    expect(noBundleDecision.allowed).toBe(false);
+    expect(noBundleDecision.denyReason).toBe('NOT_ON_ACCESS_LIST');
+  });
+
+  it('AccessDecision.userGroups / matchedGroups carry bundle names matching legacy tier identifiers', () => {
+    // Router logs these fields (`taskRouter.ts:250-258`). Bundle names == legacy
+    // tier names during the migration, so log output stays identical.
+    const config = makeConfig();
+    const decision = evaluateCapability({
+      config,
+      userId: 'UADMIN',
+      channelId: 'C-ADMIN',
+      capability: 'deploy_prod',
+    });
+    expect(decision.allowed).toBe(true);
+    expect(decision.userGroups).toContain('admin');
+    expect(decision.matchedGroups).toContain('admin');
+  });
+
+  it('setResolvedGroupMembers syncs the matching bundle so live subteam changes propagate', () => {
+    const config = makeConfig({ ownerSlackUserIds: [] });
+    // Promote UNEW into the admin tier via setResolvedGroupMembers (simulates the
+    // 30-min subteam refresh in `index.ts`).
+    setResolvedGroupMembers({
+      config,
+      groupKey: 'admin',
+      members: ['UNEW'],
+    });
+
+    // Legacy view sees the new member.
+    expect(config.accessControl?.groups.admin.resolvedUserIds).toContain('UNEW');
+    // Bundle view sees it too — without this sync, evaluateCapability would
+    // silently miss the live subteam update.
+    expect(config.bundles?.find(b => b.name === 'admin')?.resolvedUserIds).toContain('UNEW');
+
+    // And the capability check honors it.
+    const decision = evaluateCapability({
+      config,
+      userId: 'UNEW',
+      channelId: 'C-ADMIN',
+      capability: 'deploy_prod',
+    });
+    expect(decision.allowed).toBe(true);
   });
 });
