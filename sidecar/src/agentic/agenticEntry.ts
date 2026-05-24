@@ -90,6 +90,9 @@ export async function runAgenticEntry(params: RunAgenticEntryParams): Promise<Wo
     toolContext: { task, config, slack, store, jobId, logStep, signal },
     logStep,
     signal,
+    store,
+    jobId,
+    role: mode === 'informational' ? 'agentic_informational' : 'agentic_conversational',
   });
 
   logStep?.({
