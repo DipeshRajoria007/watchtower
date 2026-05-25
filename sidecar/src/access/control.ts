@@ -308,6 +308,18 @@ export function resolveRequiredAccessLevel(intent: WorkflowIntent): AccessLevel 
 }
 
 export function getAdminUserIds(config: AppConfig): string[] {
+  // Post-D5 the `bundles` table is the source of truth for membership —
+  // prefer it. The legacy `accessControl` view is only used as fallback
+  // when bundles aren't loaded (fresh install / hand-built test fixture).
+  if (config.bundles && config.bundles.length > 0) {
+    const adminBundle = config.bundles.find(b => b.name === 'admin');
+    const ownerBundle = config.bundles.find(b => b.name === 'owner');
+    return uniqueList([
+      ...config.ownerSlackUserIds,
+      ...(adminBundle?.resolvedUserIds ?? []),
+      ...(ownerBundle?.resolvedUserIds ?? []),
+    ]);
+  }
   if (config.accessControl) {
     return uniqueList([
       ...config.ownerSlackUserIds,
