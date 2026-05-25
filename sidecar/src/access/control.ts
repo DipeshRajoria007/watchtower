@@ -358,7 +358,14 @@ export function setResolvedGroupMembers(params: {
   members: string[];
 }): void {
   const accessControl = getConfiguredAccessControl(params.config);
-  const manualUserIds = parseDelimitedIds(accessControl.groups[params.groupKey].manualUserIds);
+  // Post-D5 the `bundles` table is the source of truth for membership — the
+  // desktop bundle editor writes there, not into `access_control_groups`.
+  // Read `manualUserIds` from the bundle when present so the 30-min subteam
+  // refresh doesn't overwrite freshly-added members with stale legacy data.
+  // Falls back to the legacy table only when no matching bundle exists
+  // (e.g. fresh install before bundles are seeded).
+  const bundle = params.config.bundles?.find(b => b.name === params.groupKey);
+  const manualUserIds = parseDelimitedIds(bundle?.manualUserIds ?? accessControl.groups[params.groupKey].manualUserIds);
   const includesOwners = params.groupKey === 'admin' || params.groupKey === 'owner';
   const nextMembers = includesOwners
     ? uniqueList([...params.config.ownerSlackUserIds, ...manualUserIds, ...params.members])
@@ -371,11 +378,8 @@ export function setResolvedGroupMembers(params: {
   // changes (refreshed every 30 min) propagate to `evaluateCapability`
   // without a config reload. Bundle name == legacy tier key during the
   // migration, so the lookup is direct.
-  if (params.config.bundles) {
-    const bundle = params.config.bundles.find(b => b.name === params.groupKey);
-    if (bundle) {
-      bundle.resolvedUserIds = [...nextMembers];
-    }
+  if (bundle) {
+    bundle.resolvedUserIds = [...nextMembers];
   }
 }
 
